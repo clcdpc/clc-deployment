@@ -1,6 +1,6 @@
 # Shared toolkit and companion releases
 
-The repository uses one version for the PowerShell toolkit and `Clc.Deployment.AspNetCore`. The published [v0.1.0-beta.2 release](https://github.com/clcdpc/clc-deployment/releases/tag/v0.1.0-beta.2) comes from `ace6d5a735bfdfd5f926936f07dfb03f0614f9f6`. The release tag is authoritative: `v0.1.0-beta.2` builds both artifacts as `0.1.0-beta.2`; `v0.1.0` builds both as `0.1.0`. Do not edit `VERSION` or the source module manifest to release. They retain the untagged development fallback.
+The repository uses one version for the PowerShell toolkit and `Clc.Deployment.AspNetCore`. See [Releases](https://github.com/clcdpc/clc-deployment/releases) for versions actually published from this clean-history repository. The release tag is authoritative: for example, `v0.1.0-beta.3` builds both artifacts as `0.1.0-beta.3`, and `v0.1.0` builds both as `0.1.0`. Do not edit `VERSION` or the source module manifest to release; they retain the untagged development fallback.
 
 ## Version identity
 
@@ -36,6 +36,6 @@ Maintain these controls and verify them before publication:
 - Protect `v*` tags with a repository ruleset: restrict who may create them, prohibit updates/deletion, and apply the organization's required review/bypass policy. Require reviewed changes to the release workflow and version/build metadata on `master`.
 - Verify the repository plan and organization policy support the required environment reviewers and tag rules. The workflow does not create or weaken these settings.
 
-The current repository, toolkit source and companion package use the [MIT License](../LICENSE), matching the companion package expression. The previously published `v0.1.0-beta.2` artifacts remain licensed under AGPL-3.0-only. A published version does not approve toolkit installation, release execution or consumer adoption. Consumer acceptance remains application-owned, and actual Windows Server 2022/IIS qualification remains **NOT RUN**.
+The current repository, toolkit source and companion package use the [MIT License](../LICENSE), matching the companion package expression. The previously published `0.1.0-beta.2` artifacts came from the predecessor repository and remain licensed under AGPL-3.0-only; their source revision is not part of this repository. A published version does not approve toolkit installation, release execution or consumer adoption. Consumer acceptance remains application-owned, and actual Windows Server 2022/IIS qualification remains **NOT RUN**.
 
 Draft releases are located through the release collection because GitHub's tag endpoint does not return them. Asset uploads refresh the same release by ID, so retries resume the existing draft without creating or mistaking a second release.
