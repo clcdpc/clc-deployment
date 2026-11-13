@@ -1,0 +1,17 @@
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 1,
+  "recordKind": "target",
+  "targetId": "example",
+  "applicationId": "probe",
+  "environmentName": "example-dev",
+  "runtimeEnvironment": "Production",
+  "siteName": "example-site",
+  "applicationPoolName": "example-pool",
+  "applicationRoot": "C:\\synthetic\\application",
+  "operationalConfigPath": "C:\\synthetic\\config\\application.json",
+  "dataProtectionRoot": "C:\\synthetic\\keys",
+  "artifactInboxRoot": "C:\\synthetic\\inbox",
+  "runtimeIdentitySid": "S-1-5-20",
+  "readinessUri": "https://synthetic.invalid/health/ready"
+}

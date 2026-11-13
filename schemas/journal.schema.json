@@ -1,0 +1,865 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "journal",
+  "$comment": "Untrusted contract shape only. Strict UTF-8, <=4 MiB (validation 8 KiB/readiness 4 KiB), depth <=32, integer tokens, duplicate/case-duplicate properties, native SID/date validity and semantic inventory checks are enforced by the PowerShell parser; schemas cannot authenticate records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "attemptId",
+    "targetKey",
+    "targetSnapshot",
+    "executingToolkit",
+    "policyGeneration",
+    "policySha256",
+    "approvalSnapshot",
+    "candidate",
+    "previous",
+    "initialPoolState",
+    "initialTargetEmpty",
+    "phase",
+    "outcome",
+    "liveMutationIntent",
+    "intent",
+    "observation",
+    "nativeCall",
+    "configuration",
+    "backup",
+    "recovery",
+    "publishedGeneration",
+    "createdUtc",
+    "updatedUtc",
+    "failure"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-file-iis-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 2
+    },
+    "recordKind": {
+      "const": "journal"
+    },
+    "attemptId": {
+      "$ref": "#/$defs/guid"
+    },
+    "targetKey": {
+      "$ref": "#/$defs/hash"
+    },
+    "targetSnapshot": {
+      "$ref": "#/$defs/targetSnapshot"
+    },
+    "executingToolkit": {
+      "$ref": "#/$defs/toolkit"
+    },
+    "policyGeneration": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854776000
+    },
+    "policySha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "approvalSnapshot": {
+      "$ref": "#/$defs/approvalSnapshot"
+    },
+    "candidate": {
+      "$ref": "#/$defs/release"
+    },
+    "previous": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/previous"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "initialPoolState": {
+      "enum": [
+        "Started",
+        "Stopped"
+      ]
+    },
+    "initialTargetEmpty": {
+      "type": "boolean"
+    },
+    "phase": {
+      "enum": [
+        "Prepared",
+        "Mutating",
+        "RecoveryRequired",
+        "Completed"
+      ]
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "enum": [
+            "Deployed",
+            "NoOp",
+            "FailedPreserved",
+            "RestoredPrevious",
+            "AcceptedCandidate",
+            "RestoredEmpty"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "liveMutationIntent": {
+      "type": "boolean"
+    },
+    "intent": {
+      "$ref": "#/$defs/intent"
+    },
+    "observation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/observation"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nativeCall": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/nativeCall"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "configuration": {
+      "$ref": "#/$defs/configuration"
+    },
+    "backup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/backup"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recovery": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/recovery"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "publishedGeneration": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "createdUtc": {
+      "$ref": "#/$defs/utc"
+    },
+    "updatedUtc": {
+      "$ref": "#/$defs/utc"
+    },
+    "failure": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/failure"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "Completed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "type": "string"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "outcome": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "initialTargetEmpty": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "previous": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "previous": {
+            "$ref": "#/$defs/previous"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "guid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 36,
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "hash": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "targetSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "machineIdentity",
+        "siteName",
+        "applicationPoolName",
+        "rootIdentities"
+      ],
+      "properties": {
+        "machineIdentity": {
+          "$ref": "#/$defs/machine"
+        },
+        "siteName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+        },
+        "applicationPoolName": {
+          "$ref": "#/$defs/pool"
+        },
+        "rootIdentities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "applicationRoot",
+            "operationalConfigPath",
+            "dataProtectionRoot",
+            "controlRoot",
+            "artifactInboxRoot"
+          ],
+          "properties": {
+            "applicationRoot": {
+              "$ref": "#/$defs/rootIdentity"
+            },
+            "operationalConfigPath": {
+              "$ref": "#/$defs/rootIdentity"
+            },
+            "dataProtectionRoot": {
+              "$ref": "#/$defs/rootIdentity"
+            },
+            "controlRoot": {
+              "$ref": "#/$defs/rootIdentity"
+            },
+            "artifactInboxRoot": {
+              "$ref": "#/$defs/rootIdentity"
+            }
+          }
+        }
+      }
+    },
+    "machine": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/guid"
+        },
+        {
+          "not": {
+            "const": "ffffffff-ffff-ffff-ffff-ffffffffffff"
+          }
+        }
+      ]
+    },
+    "pool": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+    },
+    "rootIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "volumeId",
+        "fileId",
+        "canonicalPath"
+      ],
+      "properties": {
+        "volumeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 49,
+          "pattern": "^\\\\\\\\\\?\\\\volume\\{[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\\}\\\\$"
+        },
+        "fileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "pattern": "^[a-f0-9]{16}$"
+        },
+        "canonicalPath": {
+          "$ref": "#/$defs/path"
+        }
+      }
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z]:\\\\[^\\u0000-\\u001f\\u007f-\\u009f/:*?\"<>|~]+$",
+      "not": {
+        "pattern": "(?:^|\\\\)(?:\\.{1,2}|\\.[cC][lL][cC]-[^\\\\]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^\\\\]*)?)(?:\\\\|$)|[. ](?:\\\\|$)|\\\\(?:\\\\|$)"
+      }
+    },
+    "toolkit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sourceCommit",
+        "distributionSha256",
+        "inventorySha256"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "sourceCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "distributionSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "inventorySha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "approvalSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approvalId",
+        "sha256",
+        "lineageId",
+        "releaseSequence"
+      ],
+      "properties": {
+        "approvalId": {
+          "$ref": "#/$defs/id"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "lineageId": {
+          "$ref": "#/$defs/id"
+        },
+        "releaseSequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        }
+      }
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approvalId",
+        "applicationId",
+        "releaseId",
+        "sourceCommit",
+        "archiveSha256",
+        "manifestSha256",
+        "inventorySha256"
+      ],
+      "properties": {
+        "approvalId": {
+          "$ref": "#/$defs/id"
+        },
+        "applicationId": {
+          "$ref": "#/$defs/id"
+        },
+        "releaseId": {
+          "$ref": "#/$defs/id"
+        },
+        "sourceCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "archiveSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "manifestSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "inventorySha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "previous": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generation",
+        "attemptId",
+        "approvalSnapshot",
+        "release",
+        "configuration"
+      ],
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "attemptId": {
+          "$ref": "#/$defs/guid"
+        },
+        "approvalSnapshot": {
+          "$ref": "#/$defs/approvalSnapshot"
+        },
+        "release": {
+          "$ref": "#/$defs/release"
+        },
+        "configuration": {
+          "$ref": "#/$defs/configuration"
+        }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "privateSha256",
+        "revision",
+        "keyStoreCompatibilityId",
+        "runtimeEnvironment"
+      ],
+      "properties": {
+        "privateSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "keyStoreCompatibilityId": {
+          "$ref": "#/$defs/code"
+        },
+        "runtimeEnvironment": {
+          "$ref": "#/$defs/environment"
+        }
+      }
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "environment": {
+      "enum": [
+        "Production",
+        "Staging"
+      ]
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "operation",
+        "recordedUtc"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "operation": {
+          "enum": [
+            "Stage",
+            "Validate",
+            "Stop",
+            "Backup",
+            "Replace",
+            "Start",
+            "CheckReady",
+            "PublishCurrent",
+            "Complete"
+          ]
+        },
+        "recordedUtc": {
+          "$ref": "#/$defs/utc"
+        }
+      }
+    },
+    "utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 28,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?Z$",
+      "format": "date-time"
+    },
+    "observation": {
+      "type": "object",
+      "description": "Operation-specific historical evidence. Started permits zero or one worker; Stopped requires zero; Ready and successful application terminals require Started with one. Unknown cannot verify an operation. Failure diagnostics are separate.",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "result",
+        "observedPoolState",
+        "workerCount",
+        "observedUtc"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "result": {
+          "$ref": "#/$defs/code"
+        },
+        "observedPoolState": {
+          "enum": [
+            "Started",
+            "Stopped",
+            "Unknown"
+          ]
+        },
+        "workerCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "observedUtc": {
+          "$ref": "#/$defs/utc"
+        }
+      }
+    },
+    "nativeCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "callId",
+        "operation",
+        "launchState",
+        "processId",
+        "creationUtc",
+        "exitCode"
+      ],
+      "properties": {
+        "callId": {
+          "$ref": "#/$defs/guid"
+        },
+        "operation": {
+          "enum": [
+            "Validate",
+            "Stop",
+            "Start"
+          ]
+        },
+        "launchState": {
+          "enum": [
+            "Intent",
+            "Started",
+            "Exited"
+          ]
+        },
+        "processId": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "creationUtc": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/nativeUtc"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "launchState": {
+                "const": "Intent"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "processId": {
+                "type": "null"
+              },
+              "creationUtc": {
+                "type": "null"
+              },
+              "exitCode": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "processId": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4294967295
+              },
+              "creationUtc": {
+                "$ref": "#/$defs/nativeUtc"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "launchState": {
+                "const": "Exited"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exitCode": {
+                "type": "integer",
+                "minimum": -2147483648,
+                "maximum": 2147483647
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "exitCode": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "nativeUtc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 28,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{7}Z$",
+      "format": "date-time",
+      "$comment": "UTC process FILETIME, year >= 1601; exact seven fractional digits."
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verified",
+        "indexSha256",
+        "inventorySha256",
+        "priorEmpty"
+      ],
+      "properties": {
+        "verified": {
+          "type": "boolean"
+        },
+        "indexSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "inventorySha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "priorEmpty": {
+          "type": "boolean"
+        }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "mode",
+        "reason",
+        "originalJournalSha256",
+        "executingToolkit",
+        "policyGeneration",
+        "policySha256",
+        "baselineGeneration"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "mode": {
+          "enum": [
+            "RestorePrevious",
+            "AcceptCandidate",
+            "RestoreEmpty"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"
+        },
+        "originalJournalSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "executingToolkit": {
+          "$ref": "#/$defs/toolkit"
+        },
+        "policyGeneration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "policySha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "baselineGeneration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854776000
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "nextAction",
+        "observedPoolState",
+        "workerCount"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/code"
+        },
+        "nextAction": {
+          "$ref": "#/$defs/code"
+        },
+        "observedPoolState": {
+          "enum": [
+            "Started",
+            "Stopped",
+            "Unknown"
+          ]
+        },
+        "workerCount": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

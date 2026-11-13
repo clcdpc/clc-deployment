@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Fixed elevated V1 model: distinct infrastructure approval and elevated local administrator deployment accounts; separate nonadministrator runtime. No selectable privilege policy or automatic group membership changes.",
+  "type": "object", "additionalProperties": false,
+  "required": ["formatVersion", "templateOnly", "campaignId", "disposable", "machineIdentity", "computerName", "authorizationReference", "ownedRoot", "evidenceRoot", "applicationRoot", "operationalConfigPath", "dataProtectionRoot", "artifactInboxRoot", "siteName", "poolName", "targetId", "alternateTargetId", "infrastructureSid", "deploymentSid", "runtimeSid", "runtimeEnvironment", "readinessUri", "certificateThumbprint", "dotnetPath", "appcmdPath", "capacityBytes", "toolkit", "probeReleases"],
+  "properties": {
+    "formatVersion": { "const": 1 }, "templateOnly": { "type": "boolean" }, "disposable": { "const": true },
+    "campaignId": { "$ref": "#/$defs/id" }, "machineIdentity": { "type": "string", "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$" },
+    "computerName": { "type": "string", "pattern": "^[A-Za-z0-9-]{1,63}$" }, "authorizationReference": { "$ref": "#/$defs/id" },
+    "ownedRoot": { "$ref": "#/$defs/path" }, "evidenceRoot": { "$ref": "#/$defs/path" }, "applicationRoot": { "$ref": "#/$defs/path" },
+    "operationalConfigPath": { "$ref": "#/$defs/path" }, "dataProtectionRoot": { "$ref": "#/$defs/path" }, "artifactInboxRoot": { "$ref": "#/$defs/path" },
+    "siteName": { "type": "string", "pattern": "^clc-t4-[a-z0-9-]{1,50}$" }, "poolName": { "type": "string", "pattern": "^clc-t4-[a-z0-9-]{1,50}$" },
+    "targetId": { "$ref": "#/$defs/id" }, "alternateTargetId": { "$ref": "#/$defs/id" },
+    "infrastructureSid": { "$ref": "#/$defs/sid", "description": "Independent administrative approval account; may share BUILTIN Administrators with deployment." }, "deploymentSid": { "$ref": "#/$defs/sid", "description": "Shared CLC deployment account on managed servers; an enabled administrator token is mandatory." }, "runtimeSid": { "$ref": "#/$defs/sid", "description": "Existing application-specific nonadministrator account, including group-derived authority checks." },
+    "runtimeEnvironment": { "enum": ["Production", "Staging"] },
+    "readinessUri": { "type": "string", "maxLength": 256, "pattern": "^https://[^/?#@]+/health/ready$" },
+    "certificateThumbprint": { "type": "string", "pattern": "^[A-F0-9]{40}$" },
+    "dotnetPath": { "$ref": "#/$defs/path" }, "appcmdPath": { "$ref": "#/$defs/path" }, "capacityBytes": { "type": "integer", "minimum": 1073741824, "maximum": 1099511627776 },
+    "toolkit": { "type": "object", "additionalProperties": false, "required": ["version", "sourceCommit", "distributionSha256", "inventorySha256"], "properties": { "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-[a-z0-9.-]+$" }, "sourceCommit": { "$ref": "#/$defs/commit" }, "distributionSha256": { "$ref": "#/$defs/hash" }, "inventorySha256": { "$ref": "#/$defs/hash" } } },
+    "probeReleases": { "type": "object", "additionalProperties": false, "required": ["initial", "newer"], "properties": { "initial": { "$ref": "#/$defs/release" }, "newer": { "$ref": "#/$defs/release" } } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,49}$" }, "path": { "type": "string", "maxLength": 240, "pattern": "^[A-Za-z]:\\\\[^\\u0000-\\u001f]+$" },
+    "sid": { "type": "string", "pattern": "^S-1-[0-9]+(-[0-9]+)+$" }, "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "commit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "release": { "type": "object", "additionalProperties": false, "required": ["approvalId", "releaseId", "sourceCommit", "archiveSha256", "manifestSha256"], "properties": { "approvalId": { "$ref": "#/$defs/id" }, "releaseId": { "$ref": "#/$defs/id" }, "sourceCommit": { "$ref": "#/$defs/commit" }, "archiveSha256": { "$ref": "#/$defs/hash" }, "manifestSha256": { "$ref": "#/$defs/hash" } } }
+  }
+}

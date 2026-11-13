@@ -1,0 +1,182 @@
+name: build-test-publish
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  foundation:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    outputs:
+      release_artifact_name: ${{ steps.release_bundle.outputs.artifact_name }}
+      release_run_attempt: ${{ steps.release_bundle.outputs.run_attempt }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+      - name: Validate shared release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          CLC_RELEASE_TAG: ${{ github.ref_name }}
+          CLC_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          & tools/Test-SharedReleaseTag.ps1 -RepositoryRoot $PWD.Path -Tag $env:CLC_RELEASE_TAG -SourceCommit $env:CLC_SOURCE_COMMIT
+      - name: Provision exact verified test dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lock = Get-Content -LiteralPath tools/dependencies.lock.json -Raw | ConvertFrom-Json -AsHashtable
+          $dependencyRoot = Join-Path $env:RUNNER_TEMP ('clc-foundation-tools-' + [guid]::NewGuid().ToString('D'))
+          [void][IO.Directory]::CreateDirectory($dependencyRoot)
+          $pwshZip = Join-Path $dependencyRoot 'pwsh.zip'
+          $pesterZip = Join-Path $dependencyRoot 'pester.nupkg'
+          Invoke-WebRequest -Uri $lock.powershell.url -OutFile $pwshZip -TimeoutSec 120
+          if ((Get-FileHash -LiteralPath $pwshZip -Algorithm SHA256).Hash.ToLowerInvariant() -cne $lock.powershell.sha256) { throw 'PowerShell distribution digest mismatch' }
+          Invoke-WebRequest -Uri $lock.pester.url -OutFile $pesterZip -TimeoutSec 120
+          if ((Get-FileHash -LiteralPath $pesterZip -Algorithm SHA256).Hash.ToLowerInvariant() -cne $lock.pester.sha256) { throw 'Pester distribution digest mismatch' }
+          $actual512 = [Convert]::ToBase64String([Security.Cryptography.SHA512]::HashData([IO.File]::ReadAllBytes($pesterZip)))
+          if ($actual512 -cne $lock.pester.sha512Base64) { throw 'Pester official feed digest mismatch' }
+          $pwshRoot = Join-Path $dependencyRoot 'pwsh'
+          $pesterRoot = Join-Path $dependencyRoot 'pester'
+          [IO.Compression.ZipFile]::ExtractToDirectory($pwshZip,$pwshRoot)
+          [IO.Compression.ZipFile]::ExtractToDirectory($pesterZip,$pesterRoot)
+          "CLC_FOUNDATION_PWSH=$pwshRoot\pwsh.exe" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          "CLC_FOUNDATION_PESTER=$pesterRoot\Pester.psd1" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
+          $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+          $env:DOTNET_NOLOGO = '1'
+          $sdk = & tools/Initialize-ProbeSdk.ps1 -DestinationRoot (Join-Path $dependencyRoot 'probe-sdk')
+          "CLC_T4_DOTNET=$($sdk.dotnetPath)" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          'DOTNET_GENERATE_ASPNET_CERTIFICATE=false' | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          'DOTNET_CLI_TELEMETRY_OPTOUT=1' | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          'DOTNET_NOLOGO=1' | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Pack and test Clc.Deployment.AspNetCore
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: pwsh
+        run: |
+          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-ClcDeploymentAspNetCore.ps1 -DotnetPath $env:CLC_T4_DOTNET -OutputRoot (Join-Path $env:RUNNER_TEMP 'clc-deployment-aspnetcore')
+          if ($LASTEXITCODE -ne 0) { throw 'Packed Clc.Deployment.AspNetCore verification failed' }
+          foreach ($version in @('1.2.3','2.0.0-beta.1')) {
+            & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-ClcDeploymentAspNetCore.ps1 -DotnetPath $env:CLC_T4_DOTNET -OutputRoot (Join-Path $env:RUNNER_TEMP ('clc-companion-' + $version)) -ReleaseVersion $version
+            if ($LASTEXITCODE -ne 0) { throw 'Tag-version package verification failed' }
+          }
+      - name: Complete offline and Windows-native toolkit and enrollment suite
+        shell: pwsh
+        run: |
+          $env:TEMP = $env:RUNNER_TEMP
+          $env:TMP = $env:RUNNER_TEMP
+          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-Foundation.ps1 -PesterManifestPath $env:CLC_FOUNDATION_PESTER
+          if ($LASTEXITCODE -ne 0) { throw 'Foundation verification failed' }
+      - name: Exact committed candidate distribution and probe releases
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: pwsh
+        run: |
+          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-Candidate.ps1 -DotnetPath $env:CLC_T4_DOTNET -OutputRoot (Join-Path $env:RUNNER_TEMP 'clc-t4-candidate') -ProducerRunId $env:GITHUB_RUN_ID -ProducerRunAttempt $env:GITHUB_RUN_ATTEMPT -ProducerJob foundation
+          if ($LASTEXITCODE -ne 0) { throw 'Candidate verification failed' }
+      - name: Build and test shared release artifacts
+        id: release_bundle
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          CLC_RELEASE_TAG: ${{ github.ref_name }}
+          CLC_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          $artifactName = 'clc-release-' + $env:GITHUB_SHA + '-' + $env:GITHUB_RUN_ATTEMPT
+          "artifact_name=$artifactName" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "run_attempt=$env:GITHUB_RUN_ATTEMPT" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/New-SharedReleaseArtifacts.ps1 -RepositoryRoot $PWD.Path -Tag $env:CLC_RELEASE_TAG -SourceCommit $env:CLC_SOURCE_COMMIT -DotnetPath $env:CLC_T4_DOTNET -BundleRoot (Join-Path $env:RUNNER_TEMP 'clc-shared-release') -ProducerRunId $env:GITHUB_RUN_ID -ProducerRunAttempt ([int]$env:GITHUB_RUN_ATTEMPT) -ProducerJob foundation -ArtifactName $artifactName
+          if ($LASTEXITCODE -ne 0) { throw 'Shared release artifact build and verification failed' }
+      - name: Retain candidate identity and exact unapproved bytes
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
+        with:
+          name: t4-candidate-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clc-t4-candidate/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Retain tested shared release bytes
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
+        with:
+          name: ${{ steps.release_bundle.outputs.artifact_name }}
+          path: ${{ runner.temp }}/clc-shared-release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  publish:
+    needs: foundation
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-2022
+    timeout-minutes: 30
+    environment: nuget-production
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+      - name: Download the exact tested artifact from this workflow run
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0, Node.js 24
+        with:
+          name: ${{ needs.foundation.outputs.release_artifact_name }}
+          path: ${{ runner.temp }}/clc-shared-release
+      - name: Verify source, tag, package and toolkit bytes
+        shell: pwsh
+        env:
+          CLC_RELEASE_TAG: ${{ github.ref_name }}
+          CLC_SOURCE_COMMIT: ${{ github.sha }}
+          CLC_ARTIFACT_NAME: ${{ needs.foundation.outputs.release_artifact_name }}
+          CLC_PRODUCER_RUN_ATTEMPT: ${{ needs.foundation.outputs.release_run_attempt }}
+        run: |
+          & tools/Test-SharedReleaseArtifacts.ps1 -RepositoryRoot $PWD.Path -BundleRoot (Join-Path $env:RUNNER_TEMP 'clc-shared-release') -Tag $env:CLC_RELEASE_TAG -SourceCommit $env:CLC_SOURCE_COMMIT -ArtifactName $env:CLC_ARTIFACT_NAME -ProducerRunId ([long]$env:GITHUB_RUN_ID) -ProducerRunAttempt ([int]$env:CLC_PRODUCER_RUN_ATTEMPT)
+      - name: Provision pinned .NET SDK for package push
+        shell: pwsh
+        run: |
+          $sdk = & tools/Initialize-ProbeSdk.ps1 -DestinationRoot (Join-Path $env:RUNNER_TEMP 'release-sdk')
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned .NET SDK setup failed' }
+          "CLC_RELEASE_DOTNET=$($sdk.dotnetPath)" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Check immutable publication state
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLC_RELEASE_TAG: ${{ github.ref_name }}
+          CLC_SOURCE_COMMIT: ${{ github.sha }}
+          CLC_ARTIFACT_NAME: ${{ needs.foundation.outputs.release_artifact_name }}
+          CLC_PRODUCER_RUN_ATTEMPT: ${{ needs.foundation.outputs.release_run_attempt }}
+        run: |
+          & tools/Publish-SharedRelease.ps1 -RepositoryRoot $PWD.Path -BundleRoot (Join-Path $env:RUNNER_TEMP 'clc-shared-release') -Tag $env:CLC_RELEASE_TAG -SourceCommit $env:CLC_SOURCE_COMMIT -ArtifactName $env:CLC_ARTIFACT_NAME -ProducerRunId ([long]$env:GITHUB_RUN_ID) -ProducerRunAttempt ([int]$env:CLC_PRODUCER_RUN_ATTEMPT) -Repository $env:GITHUB_REPOSITORY -PreflightOnly
+      - name: Obtain short-lived NuGet publishing key
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: mfields
+      - name: Publish exact package and toolkit bytes
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLC_NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          CLC_RELEASE_TAG: ${{ github.ref_name }}
+          CLC_SOURCE_COMMIT: ${{ github.sha }}
+          CLC_ARTIFACT_NAME: ${{ needs.foundation.outputs.release_artifact_name }}
+          CLC_PRODUCER_RUN_ATTEMPT: ${{ needs.foundation.outputs.release_run_attempt }}
+        run: |
+          & tools/Publish-SharedRelease.ps1 -RepositoryRoot $PWD.Path -BundleRoot (Join-Path $env:RUNNER_TEMP 'clc-shared-release') -Tag $env:CLC_RELEASE_TAG -SourceCommit $env:CLC_SOURCE_COMMIT -ArtifactName $env:CLC_ARTIFACT_NAME -ProducerRunId ([long]$env:GITHUB_RUN_ID) -ProducerRunAttempt ([int]$env:CLC_PRODUCER_RUN_ATTEMPT) -Repository $env:GITHUB_REPOSITORY

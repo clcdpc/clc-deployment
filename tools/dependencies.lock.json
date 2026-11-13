@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "reviewedUtc": "2026-10-10T19:08:30Z",
+  "powershell": {
+    "version": "7.6.6",
+    "repository": "PowerShell/PowerShell",
+    "release": "v7.6.6",
+    "url": "https://github.com/PowerShell/PowerShell/releases/download/v7.6.6/PowerShell-7.6.6-win-x64.zip",
+    "sha256": "02fe458be20493fbdf43f61ea20610b811ee6c738ab1676c61b9cfcd1a33c860",
+    "authority": "https://api.github.com/repos/PowerShell/PowerShell/releases/tags/v7.6.6",
+    "authentication": "Release asset digest read from official GitHub API over HTTPS before acquisition."
+  },
+  "pester": {
+    "version": "5.7.1",
+    "repository": "pester/Pester",
+    "sourceCommit": "dc45b7481fffc4f6c2ff1a74edebaad03ce1efcb",
+    "url": "https://www.powershellgallery.com/api/v2/package/Pester/5.7.1",
+    "sha256": "4a27904c6814a5fbe4758f8e49861f6a1994aee77b71165a5c43c0371ba6c580",
+    "sha512Base64": "TZlqSN2UgW0mtOnmk1ro5sy8Gfg5DqOCY0XxIeHOKufM4WNptRfBkM6tBev/AxI/gmarvTVWBK3V8SnCTc8oAg==",
+    "authority": "https://www.powershellgallery.com/api/v2/Packages(Id='Pester',Version='5.7.1')",
+    "authentication": "PackageHash SHA512 read independently from official Gallery feed over HTTPS, checked before extraction/import. SHA256 and extracted file pins derived only after that check.",
+    "files": {
+      "_rels/.rels": "067f897eb9992b08d4459ab028d6f3d3e435ee41684770e181d34afe60eb0b03",
+      "[Content_Types].xml": "bf33b85c63217a01343b5d8bc807da7554ab48254c402729b5a8deaa052e4edb",
+      "bin/net452/Pester.dll": "6c5a4c127c4dc600e746b3d6eac40ad5f28974779efcd618e0d923113f3b971d",
+      "bin/net452/Pester.pdb": "23912407d111bb8b1ab75244cf8bfb534f5e4a7e51320444bb492821ccdb347f",
+      "bin/netstandard2.0/Pester.dll": "fb994a81040741ca9d1f4e5b74cbad563a61f65f5af43602958be1dbae9c851f",
+      "bin/netstandard2.0/Pester.pdb": "f526bb03c0f67733561408ddba8dd390c29516bbe321aaff4e8a0c98f1deb149",
+      "en-US/about_Pester.help.txt": "5eb70b28e54b1000cbd9e49dded8bd9c0a8fc29364c450a1b586a6f657e57b01",
+      "en-US/about_PesterConfiguration.help.txt": "9bd878e921fecedcdedb0cd076463aeb7a4065f34dcf614a11a8fc0880bd43e9",
+      "package/services/metadata/core-properties/b51a9567097247bda9c1495b19f7c607.psmdcp": "aade52071ebe33bfc07ef7c02e9dec4d83ae05d61dde884ea9898b9657705881",
+      "Pester.Format.ps1xml": "94c598f75cc09b8905e2b1c9c2c72ab000d589a317770dc6d65bc4a8df376cae",
+      "Pester.nuspec": "431f75ea7dc060a6e3e52f922c1bec1b733a873e962989ae950d70c7b82bd628",
+      "Pester.ps1": "01b03d7ca5f727de93b65d8a2b172d1f06ef306a62915893333302aaca57bca7",
+      "Pester.psd1": "c6dce1cdd85a9236a9a628dcaaf3e6f07b0ac4173fb25f620fa466f4402ec341",
+      "Pester.psm1": "49e9e839447703f7b6a6a320a3c65a6dd5a17f4e33372fe02c7d32ad26a2d3ca",
+      "PesterConfiguration.Format.ps1xml": "c270400765fe97e9933f1554ac2d78a57bba685db0bf1884869286c88034f316",
+      "schemas/Cobertura/coverage-loose.dtd": "face94d4975a0e7d01b376f9fb2fba298be61a3ca3b108799749df408d4bfefc",
+      "schemas/JaCoCo/report.dtd": "7effc41ffc755dbb2f4626653753ad7d533050f1685260e219951d6e9e5a2a94",
+      "schemas/JUnit4/junit_schema_4.xsd": "db8a5fc7e72267f3983a3470d4fa532a0f9349df4dad699df9e2527b40690b94",
+      "schemas/NUnit25/nunit_schema_2.5.xsd": "19baf3e207534c770ffb6c7d470e84f22a55271f684d29f4ec34c50308d98db7",
+      "schemas/NUnit3/TestDefinitions.xsd": "67e39db6a3251ba20a1bbdec215168b50f95c8055801652f0f760553e6120a82",
+      "schemas/NUnit3/TestFilterDefinitions.xsd": "fbe91c35957f34e3bb2b815edd0445e9cd92dfe5fd2dd734f38b13204f59175d",
+      "schemas/NUnit3/TestResult.xsd": "ce31e0cbd6be23c01a253570cef92c10a5689b8d184d3f3a74f2097703d3fc5b"
+    }
+  },
+  "checkout": {
+    "version": "v5.0.0",
+    "repository": "actions/checkout",
+    "sourceCommit": "08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+    "actionSha256": "11b63452f6e43ffb5ab8bfdaaafb8a915b354318e3ad9bce4eb0686b9e380f90",
+    "distributionSha256": "6769d238b2e76faece94dd5fcd4f5c737b0e8d2480c4a8a9db21761b7ec52321",
+    "authority": "https://api.github.com/repos/actions/checkout/git/ref/tags/v5.0.0",
+    "authentication": "Official upstream ref resolved through authenticated GitHub API. action.yml and bundled dist/index.js inspected at this commit; workflow executes the immutable commit."
+  }
+}

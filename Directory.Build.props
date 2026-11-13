@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <ClcReleaseVersion Condition="'$(ClcReleaseVersion)' == ''">$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</ClcReleaseVersion>
+    <Version>$(ClcReleaseVersion)</Version>
+    <PackageVersion>$(ClcReleaseVersion)</PackageVersion>
+  </PropertyGroup>
+</Project>

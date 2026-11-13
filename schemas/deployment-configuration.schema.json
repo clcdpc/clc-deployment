@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "deployment-configuration",
+  "$comment": "Shape only. Strict UTF-8, integer tokens, duplicates, physical identity, access, exact-byte bindings and independent authority require the PowerShell verifier.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "targetId",
+    "applicationId",
+    "environmentName",
+    "runtimeEnvironment",
+    "siteName",
+    "applicationPoolName",
+    "applicationRoot",
+    "operationalConfigPath",
+    "dataProtectionRoot",
+    "artifactInboxRoot",
+    "runtimeIdentitySid",
+    "readinessUri",
+    "runtimeAccountName",
+    "enrollmentRoot"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-host-enrollment-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "recordKind": {
+      "const": "deployment-configuration"
+    },
+    "targetId": {
+      "$ref": "#/$defs/id"
+    },
+    "applicationId": {
+      "$ref": "#/$defs/id"
+    },
+    "environmentName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "runtimeEnvironment": {
+      "$ref": "#/$defs/environment"
+    },
+    "siteName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "applicationPoolName": {
+      "$ref": "#/$defs/pool"
+    },
+    "applicationRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "operationalConfigPath": {
+      "$ref": "#/$defs/path"
+    },
+    "dataProtectionRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "artifactInboxRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "runtimeIdentitySid": {
+      "$ref": "#/$defs/sid"
+    },
+    "readinessUri": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^https://[^/?#@]+/health/ready$"
+    },
+    "runtimeAccountName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f\"/;]+$"
+    },
+    "enrollmentRoot": {
+      "$ref": "#/$defs/path"
+    }
+  },
+  "$defs": {
+    "environment": {
+      "enum": [
+        "Production",
+        "Staging"
+      ]
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z]:\\\\[^\\u0000-\\u001f\\u007f-\\u009f/:*?\"<>|~]+$",
+      "not": {
+        "pattern": "(?:^|\\\\)(?:\\.{1,2}|\\.[cC][lL][cC]-[^\\\\]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^\\\\]*)?)(?:\\\\|$)|[. ](?:\\\\|$)|\\\\(?:\\\\|$)"
+      }
+    },
+    "pool": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+    },
+    "sid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 184,
+      "pattern": "^S-1-(0|[1-9][0-9]*)(-(0|[1-9][0-9]*)){1,15}$"
+    }
+  }
+}

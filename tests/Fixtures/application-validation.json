@@ -1,0 +1,11 @@
+{
+  "validationContractVersion": 1,
+  "valid": true,
+  "applicationId": "probe",
+  "releaseId": "probe-example-001",
+  "sourceCommit": "0000000000000000000000000000000000000000",
+  "runtimeEnvironment": "Production",
+  "configurationRevision": "example-001",
+  "keyStoreCompatibilityId": "probe-example",
+  "errorCodes": []
+}

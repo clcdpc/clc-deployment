@@ -1,0 +1,29 @@
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 1,
+  "recordKind": "release-approval",
+  "approvalId": "example-001",
+  "targetId": "example",
+  "enabled": true,
+  "applicationId": "probe",
+  "releaseId": "probe-example-001",
+  "sourceRepository": "synthetic/probe",
+  "sourceCommit": "0000000000000000000000000000000000000000",
+  "lineageId": "example",
+  "releaseSequence": 1,
+  "releaseZipSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "manifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "provenance": {
+    "workflowPath": ".github/workflows/build.yml",
+    "runId": 1,
+    "runAttempt": 1,
+    "buildJob": "build",
+    "artifactId": 1,
+    "transportSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "authorization": {
+    "authoritySid": "S-1-5-18",
+    "reference": "example-change-001",
+    "approvedUtc": "2026-01-01T00:00:00.0000000Z"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 1,
+  "recordKind": "release-metadata",
+  "applicationId": "probe",
+  "releaseId": "probe-example-001",
+  "source": {
+    "repository": "synthetic/probe",
+    "commit": "0000000000000000000000000000000000000000"
+  },
+  "build": {
+    "workflowPath": ".github/workflows/build.yml",
+    "runId": 1,
+    "runAttempt": 1,
+    "job": "build",
+    "sdkVersion": "10.0.100",
+    "dependencyLockSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "builder": {
+    "module": "CLC.Deployment",
+    "version": "0.1.0-dev.1",
+    "sourceCommit": "0000000000000000000000000000000000000000",
+    "distributionSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "runtime": {
+    "framework": "net10.0",
+    "rid": "win-x64",
+    "architecture": "x64",
+    "hostingModel": "inprocess",
+    "workerLimit": 1
+  },
+  "changeKind": "files-only",
+  "validation": {
+    "contractVersion": 1,
+    "entryPoint": "Probe.dll"
+  },
+  "readinessContractVersion": 1
+}

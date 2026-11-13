@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "application-validation",
+  "$comment": "Untrusted contract shape only. Strict UTF-8, <=4 MiB (validation 8 KiB/readiness 4 KiB), depth <=32, integer tokens, duplicate/case-duplicate properties, native SID/date validity and semantic inventory checks are enforced by the PowerShell parser; schemas cannot authenticate records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "validationContractVersion",
+    "valid",
+    "applicationId",
+    "releaseId",
+    "sourceCommit",
+    "runtimeEnvironment",
+    "configurationRevision",
+    "keyStoreCompatibilityId",
+    "errorCodes"
+  ],
+  "properties": {
+    "validationContractVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "valid": {
+      "type": "boolean"
+    },
+    "applicationId": {
+      "$ref": "#/$defs/id"
+    },
+    "releaseId": {
+      "$ref": "#/$defs/id"
+    },
+    "sourceCommit": {
+      "$ref": "#/$defs/commit"
+    },
+    "runtimeEnvironment": {
+      "$ref": "#/$defs/environment"
+    },
+    "configurationRevision": {
+      "$ref": "#/$defs/revision"
+    },
+    "keyStoreCompatibilityId": {
+      "$ref": "#/$defs/code"
+    },
+    "errorCodes": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/code"
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "environment": {
+      "enum": [
+        "Production",
+        "Staging"
+      ]
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    }
+  }
+}

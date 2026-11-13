@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "host-policy",
+  "$comment": "Untrusted contract shape only. Strict UTF-8, <=4 MiB (validation 8 KiB/readiness 4 KiB), depth <=32, integer tokens, duplicate/case-duplicate properties, native SID/date validity and semantic inventory checks are enforced by the PowerShell parser; schemas cannot authenticate records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "generation",
+    "machineIdentity",
+    "activeToolkit",
+    "targetCatalogRoot",
+    "approvalCatalogRoot",
+    "controlStateRoot",
+    "lockRoot",
+    "dotnetPath",
+    "appcmdPath",
+    "infrastructureOwnerSids",
+    "deploymentSids"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-file-iis-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "recordKind": {
+      "const": "host-policy"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854776000
+    },
+    "machineIdentity": {
+      "$ref": "#/$defs/machine"
+    },
+    "activeToolkit": {
+      "$ref": "#/$defs/activeToolkit"
+    },
+    "targetCatalogRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "approvalCatalogRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "controlStateRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "lockRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "dotnetPath": {
+      "$ref": "#/$defs/path"
+    },
+    "appcmdPath": {
+      "$ref": "#/$defs/path"
+    },
+    "infrastructureOwnerSids": {
+      "$ref": "#/$defs/sids"
+    },
+    "deploymentSids": {
+      "$ref": "#/$defs/sids"
+    }
+  },
+  "$defs": {
+    "machine": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/guid"
+        },
+        {
+          "not": {
+            "const": "ffffffff-ffff-ffff-ffff-ffffffffffff"
+          }
+        }
+      ]
+    },
+    "guid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 36,
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "activeToolkit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sourceCommit",
+        "distributionSha256",
+        "inventorySha256",
+        "moduleManifestPath"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "sourceCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "distributionSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "inventorySha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "moduleManifestPath": {
+          "$ref": "#/$defs/path"
+        }
+      }
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "hash": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z]:\\\\[^\\u0000-\\u001f\\u007f-\\u009f/:*?\"<>|~]+$",
+      "not": {
+        "pattern": "(?:^|\\\\)(?:\\.{1,2}|\\.[cC][lL][cC]-[^\\\\]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^\\\\]*)?)(?:\\\\|$)|[. ](?:\\\\|$)|\\\\(?:\\\\|$)"
+      }
+    },
+    "sids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/sid"
+      },
+      "uniqueItems": true,
+      "$comment": "SecurityIdentifier must parse and round trip canonically."
+    },
+    "sid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 184,
+      "pattern": "^S-1-(0|[1-9][0-9]*)(-(0|[1-9][0-9]*)){1,15}$"
+    }
+  }
+}

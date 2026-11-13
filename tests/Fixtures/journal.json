@@ -1,0 +1,124 @@
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 2,
+  "recordKind": "journal",
+  "attemptId": "11111111-1111-1111-1111-111111111111",
+  "targetKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "targetSnapshot": {
+    "machineIdentity": "11111111-1111-1111-1111-111111111111",
+    "siteName": "example-site",
+    "applicationPoolName": "example-pool",
+    "rootIdentities": {
+      "applicationRoot": {
+        "volumeId": "\\\\?\\volume{11111111-1111-1111-1111-111111111111}\\",
+        "fileId": "0000000000000001",
+        "canonicalPath": "C:\\synthetic\\applicationRoot"
+      },
+      "operationalConfigPath": {
+        "volumeId": "\\\\?\\volume{11111111-1111-1111-1111-111111111111}\\",
+        "fileId": "0000000000000001",
+        "canonicalPath": "C:\\synthetic\\operationalConfigPath"
+      },
+      "dataProtectionRoot": {
+        "volumeId": "\\\\?\\volume{11111111-1111-1111-1111-111111111111}\\",
+        "fileId": "0000000000000001",
+        "canonicalPath": "C:\\synthetic\\dataProtectionRoot"
+      },
+      "controlRoot": {
+        "volumeId": "\\\\?\\volume{11111111-1111-1111-1111-111111111111}\\",
+        "fileId": "0000000000000001",
+        "canonicalPath": "C:\\synthetic\\controlRoot"
+      },
+      "artifactInboxRoot": {
+        "volumeId": "\\\\?\\volume{11111111-1111-1111-1111-111111111111}\\",
+        "fileId": "0000000000000001",
+        "canonicalPath": "C:\\synthetic\\artifactInboxRoot"
+      }
+    }
+  },
+  "executingToolkit": {
+    "version": "0.1.0-dev.1",
+    "sourceCommit": "0000000000000000000000000000000000000000",
+    "distributionSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inventorySha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "policyGeneration": 1,
+  "policySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "approvalSnapshot": {
+    "approvalId": "example-001",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "lineageId": "example",
+    "releaseSequence": 1
+  },
+  "candidate": {
+    "approvalId": "example-001",
+    "applicationId": "probe",
+    "releaseId": "probe-example-001",
+    "sourceCommit": "0000000000000000000000000000000000000000",
+    "archiveSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "manifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inventorySha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "previous": null,
+  "initialPoolState": "Stopped",
+  "initialTargetEmpty": true,
+  "phase": "RecoveryRequired",
+  "outcome": null,
+  "liveMutationIntent": true,
+  "intent": {
+    "sequence": 1,
+    "operation": "Stop",
+    "recordedUtc": "2026-01-01T00:00:00.0000000Z"
+  },
+  "observation": {
+    "sequence": 1,
+    "result": "Stopped",
+    "observedPoolState": "Stopped",
+    "workerCount": 0,
+    "observedUtc": "2026-01-01T00:00:00.0000000Z"
+  },
+  "nativeCall": {
+    "callId": "11111111-1111-1111-1111-111111111111",
+    "operation": "Stop",
+    "launchState": "Exited",
+    "processId": 1,
+    "creationUtc": "2026-01-01T00:00:00.0000000Z",
+    "exitCode": 0
+  },
+  "configuration": {
+    "privateSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "revision": "example-001",
+    "keyStoreCompatibilityId": "probe-example",
+    "runtimeEnvironment": "Production"
+  },
+  "backup": {
+    "verified": true,
+    "indexSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inventorySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "priorEmpty": true
+  },
+  "recovery": {
+    "sequence": 1,
+    "mode": "RestoreEmpty",
+    "reason": "example-incident-001",
+    "originalJournalSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "executingToolkit": {
+      "version": "0.1.0-dev.1",
+      "sourceCommit": "0000000000000000000000000000000000000000",
+      "distributionSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "inventorySha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "policyGeneration": 2,
+    "policySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "baselineGeneration": 0
+  },
+  "publishedGeneration": 1,
+  "createdUtc": "2026-01-01T00:00:00.0000000Z",
+  "updatedUtc": "2026-01-01T00:00:00.0000000Z",
+  "failure": {
+    "code": "Clc.RecoveryRequired",
+    "nextAction": "OperatorReview",
+    "observedPoolState": "Stopped",
+    "workerCount": 0
+  }
+}

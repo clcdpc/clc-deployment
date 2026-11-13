@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Clc.Deployment.AspNetCore" Version="[$(ClcReleaseVersion)]" />
+    <AssemblyMetadata Include="Clc.ApplicationId" Value="companion-tests" />
+    <AssemblyMetadata Include="Clc.ReleaseId" Value="companion-tests-001" />
+    <AssemblyMetadata Include="Clc.SourceCommit" Value="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" />
+    <AssemblyMetadata Include="Clc.IdentityKind" Value="Release" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PackageId>Clc.Deployment.AspNetCore</PackageId>
+    <AssemblyName>Clc.Deployment.AspNetCore</AssemblyName>
+    <RootNamespace>Clc.Deployment.AspNetCore</RootNamespace>
+    <Authors>Central Library Consortium</Authors>
+    <Copyright>Copyright (c) Central Library Consortium</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Description>ASP.NET Core plumbing for the CLC file deployment validation and readiness contracts.</Description>
+    <PackageTags>clc;deployment;aspnetcore</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/clcdpc/clc-deployment</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <IsPackable>true</IsPackable>
+    <Deterministic>true</Deterministic>
+    <DeterministicTimestamp>1980-01-01T00:00:00Z</DeterministicTimestamp>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <None Include="../../docs/aspnetcore-integration.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+</Project>

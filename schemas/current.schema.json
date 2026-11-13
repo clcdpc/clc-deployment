@@ -1,0 +1,380 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "current",
+  "$comment": "Untrusted contract shape only. Strict UTF-8, <=4 MiB (validation 8 KiB/readiness 4 KiB), depth <=32, integer tokens, duplicate/case-duplicate properties, native SID/date validity and semantic inventory checks are enforced by the PowerShell parser; schemas cannot authenticate records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "generation",
+    "targetKey",
+    "targetSnapshot",
+    "attemptId",
+    "recoverySequence",
+    "approvalSnapshot",
+    "release",
+    "executingToolkit",
+    "configuration",
+    "hostObservationSha256",
+    "readiness",
+    "completedUtc"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-file-iis-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "recordKind": {
+      "const": "current"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854776000
+    },
+    "targetKey": {
+      "$ref": "#/$defs/hash"
+    },
+    "targetSnapshot": {
+      "$ref": "#/$defs/targetSnapshot"
+    },
+    "attemptId": {
+      "$ref": "#/$defs/guid"
+    },
+    "recoverySequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854776000
+    },
+    "approvalSnapshot": {
+      "$ref": "#/$defs/approvalSnapshot"
+    },
+    "release": {
+      "$ref": "#/$defs/release"
+    },
+    "executingToolkit": {
+      "$ref": "#/$defs/toolkit"
+    },
+    "configuration": {
+      "$ref": "#/$defs/configuration"
+    },
+    "hostObservationSha256": {
+      "description": "Digest of checked stable target/hosting/runtime/environment configuration; excludes transient pool state, worker count and PIDs. Live state and readiness require separate operation-specific verification.",
+      "$ref": "#/$defs/hash"
+    },
+    "readiness": {
+      "$ref": "#/$defs/readySnapshot"
+    },
+    "completedUtc": {
+      "$ref": "#/$defs/utc"
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "targetSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "machineIdentity",
+        "siteName",
+        "applicationPoolName",
+        "rootIdentities"
+      ],
+      "properties": {
+        "machineIdentity": {
+          "$ref": "#/$defs/machine"
+        },
+        "siteName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+        },
+        "applicationPoolName": {
+          "$ref": "#/$defs/pool"
+        },
+        "rootIdentities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "applicationRoot",
+            "operationalConfigPath",
+            "dataProtectionRoot",
+            "controlRoot",
+            "artifactInboxRoot"
+          ],
+          "properties": {
+            "applicationRoot": {
+              "$ref": "#/$defs/rootIdentity"
+            },
+            "operationalConfigPath": {
+              "$ref": "#/$defs/rootIdentity"
+            },
+            "dataProtectionRoot": {
+              "$ref": "#/$defs/rootIdentity"
+            },
+            "controlRoot": {
+              "$ref": "#/$defs/rootIdentity"
+            },
+            "artifactInboxRoot": {
+              "$ref": "#/$defs/rootIdentity"
+            }
+          }
+        }
+      }
+    },
+    "machine": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/guid"
+        },
+        {
+          "not": {
+            "const": "ffffffff-ffff-ffff-ffff-ffffffffffff"
+          }
+        }
+      ]
+    },
+    "guid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 36,
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "pool": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+    },
+    "rootIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "volumeId",
+        "fileId",
+        "canonicalPath"
+      ],
+      "properties": {
+        "volumeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 49,
+          "pattern": "^\\\\\\\\\\?\\\\volume\\{[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\\}\\\\$"
+        },
+        "fileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16,
+          "pattern": "^[a-f0-9]{16}$"
+        },
+        "canonicalPath": {
+          "$ref": "#/$defs/path"
+        }
+      }
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z]:\\\\[^\\u0000-\\u001f\\u007f-\\u009f/:*?\"<>|~]+$",
+      "not": {
+        "pattern": "(?:^|\\\\)(?:\\.{1,2}|\\.[cC][lL][cC]-[^\\\\]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^\\\\]*)?)(?:\\\\|$)|[. ](?:\\\\|$)|\\\\(?:\\\\|$)"
+      }
+    },
+    "approvalSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approvalId",
+        "sha256",
+        "lineageId",
+        "releaseSequence"
+      ],
+      "properties": {
+        "approvalId": {
+          "$ref": "#/$defs/id"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "lineageId": {
+          "$ref": "#/$defs/id"
+        },
+        "releaseSequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        }
+      }
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approvalId",
+        "applicationId",
+        "releaseId",
+        "sourceCommit",
+        "archiveSha256",
+        "manifestSha256",
+        "inventorySha256"
+      ],
+      "properties": {
+        "approvalId": {
+          "$ref": "#/$defs/id"
+        },
+        "applicationId": {
+          "$ref": "#/$defs/id"
+        },
+        "releaseId": {
+          "$ref": "#/$defs/id"
+        },
+        "sourceCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "archiveSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "manifestSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "inventorySha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "toolkit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sourceCommit",
+        "distributionSha256",
+        "inventorySha256"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "sourceCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "distributionSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "inventorySha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "privateSha256",
+        "revision",
+        "keyStoreCompatibilityId",
+        "runtimeEnvironment"
+      ],
+      "properties": {
+        "privateSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "keyStoreCompatibilityId": {
+          "$ref": "#/$defs/code"
+        },
+        "runtimeEnvironment": {
+          "$ref": "#/$defs/environment"
+        }
+      }
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "environment": {
+      "enum": [
+        "Production",
+        "Staging"
+      ]
+    },
+    "readySnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "releaseId",
+        "sourceCommit",
+        "runtimeEnvironment",
+        "configurationRevision",
+        "checkedUtc"
+      ],
+      "properties": {
+        "releaseId": {
+          "$ref": "#/$defs/id"
+        },
+        "sourceCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "runtimeEnvironment": {
+          "$ref": "#/$defs/environment"
+        },
+        "configurationRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "checkedUtc": {
+          "$ref": "#/$defs/utc"
+        }
+      }
+    },
+    "utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 28,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?Z$",
+      "format": "date-time"
+    }
+  }
+}

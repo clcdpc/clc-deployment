@@ -1,0 +1,6 @@
+**/bin/
+**/obj/
+artifacts/
+tests/Qualification/Evidence/*
+!tests/Qualification/Evidence/.gitkeep
+tests/Qualification/Configuration/local*.json

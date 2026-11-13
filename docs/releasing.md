@@ -1,0 +1,41 @@
+# Shared toolkit and companion releases
+
+The repository uses one version for the PowerShell toolkit and `Clc.Deployment.AspNetCore`. The published [v0.1.0-beta.2 release](https://github.com/clcdpc/clc-deployment/releases/tag/v0.1.0-beta.2) comes from `ace6d5a735bfdfd5f926936f07dfb03f0614f9f6`. The release tag is authoritative: `v0.1.0-beta.2` builds both artifacts as `0.1.0-beta.2`; `v0.1.0` builds both as `0.1.0`. Do not edit `VERSION` or the source module manifest to release. They retain the untagged development fallback.
+
+## Version identity
+
+The accepted format is a bounded SemVer subset: three numeric core components that fit PowerShell's `System.Version`, optionally followed by dot-separated prerelease identifiers. Numeric components and numeric prerelease identifiers cannot have leading zeroes. Build metadata (`+...`) is not supported. A stable module manifest omits `PrivateData.PSData.Prerelease`; the module reports its core version without a trailing hyphen. A prerelease manifest stores only the prerelease portion in that field.
+
+The tag verifier validates the version, clean checkout and exact tag target commit before building. The release builder passes that version to .NET packaging and packed-package tests and stamps the output PowerShell manifest without modifying the checkout. Untagged builds retain the development version.
+
+The release bundle contains exactly:
+
+| Output | Identity and checks |
+| --- | --- |
+| `CLC.Deployment-<version>.zip` | Toolkit source commit, module version, source/module inventories and SHA-256; the module manifest links to the root MIT license; checked by the existing independent distribution verifier and extracted without activation for byte verification |
+| `Clc.Deployment.AspNetCore.<version>.nupkg` | Package ID, version, `MIT`, repository URL and source commit; tested from an isolated local NuGet feed/cache using the actual packed bytes, including a second locked restore |
+| `release-manifest.json` | Exact tag, commit, workflow run/attempt/job, artifact name, both SHA-256 values, NuGet content hash and honest `actualIis: NOT RUN` status |
+
+The toolkit builder verifies committed source bytes before stamping the output manifest. Distribution verification checks every substantive module file against its source inventory and checks the generated manifest version against the expected release version. Source and output inventories retain their respective hashes. The package and toolkit are built once from the same clean tag commit. The tag workflow tests those exact bytes and passes them to the publication job; that job verifies the full bundle again and does not rebuild either artifact. Publishing only creates the NuGet version and a GitHub Release. It does not install a toolkit, change a host pin, migrate an application or deploy an app.
+
+## Workflow and retry behavior
+
+The existing [build-test-publish workflow](../.github/workflows/build-test-publish.yaml) remains the only CI/release path. Pull requests run on GitHub-hosted Windows Server 2022 with read-only repository permissions. A `v*` push first validates exact tag/version/commit identity, runs the foundation suite, packs and tests the companion package, builds and verifies the toolkit, and tests probe releases against that prebuilt toolkit. The build job retains the exact three-file bundle as a same-run Actions artifact. A separate `nuget-production` job downloads that artifact, rechecks every identity and hash, and publishes it.
+
+The publish job checks NuGet for the exact package version before pushing. Because NuGet.org repository-signs uploaded packages, it verifies the downloaded package identity and every non-signature ZIP entry against the locally tested package, allowing only the standard `.signature.p7s` entry to differ. A real identity or content difference is a hard failure; the workflow never uses `--skip-duplicate` or overwrites a NuGet version. After a successful push it reports `submitted-processing` and continues with the GitHub Release immediately. This means NuGet accepted the tested package, not that signing/indexing or download verification has finished. A rejected push succeeds only if the existing downloadable package matches; an unavailable pending version or content mismatch stops the run. Retry a pending duplicate after NuGet finishes processing. This comparison applies only to NuGet's repository-signed package; local workflow artifacts and GitHub Release assets continue to require exact SHA-256 matches. The publisher creates or resumes a draft GitHub Release, uploads only missing assets after checking all existing asset bytes, confirms the exact complete asset set, and only then publishes the draft. A rerun can skip a matching NuGet version and resume a compatible draft. A different package or release asset, an unexpected asset, or an incomplete already-published release requires operator inspection and is never replaced automatically. NuGet publication is immutable and cannot be rolled back by this workflow.
+
+The repository-wide Actions permission is `contents: read`. Only the tag-only publish job has `contents: write` and `id-token: write`. NuGet's [trusted publishing](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing) exchanges GitHub OIDC for a short-lived publishing key. The workflow passes it to the pinned `NuGet/login` action and the package push; it has no long-lived NuGet API key. The workflow pattern follows the organization's [`clcdpc/rest-client` package workflow at a fixed revision](https://github.com/clcdpc/rest-client/blob/acfd54fd513a7033e8742bcf98ece5f9ad0bc082/.github/workflows/build-test-publish.yaml).
+
+## External setup required
+
+Maintain these controls and verify them before publication:
+
+- Confirm the organization owns and controls the `Clc.Deployment.AspNetCore` NuGet package ID and has assigned its maintainers.
+- Configure NuGet.org trusted publishing for `clcdpc/clc-deployment`, workflow file `build-test-publish.yaml` (NuGet's policy form takes the filename without `.github/workflows/`), and the `nuget-production` GitHub environment. The workflow uses NuGet profile `mfields`, matching the other packages; no username secret or durable API key is needed.
+- Create the exact GitHub `nuget-production` environment. Require an independent reviewer, prevent self-review and administrator bypass where available, and limit deployments to approved `v*` tags.
+- Protect `v*` tags with a repository ruleset: restrict who may create them, prohibit updates/deletion, and apply the organization's required review/bypass policy. Require reviewed changes to the release workflow and version/build metadata on `master`.
+- Verify the repository plan and organization policy support the required environment reviewers and tag rules. The workflow does not create or weaken these settings.
+
+The current repository, toolkit source and companion package use the [MIT License](../LICENSE), matching the companion package expression. The previously published `v0.1.0-beta.2` artifacts remain licensed under AGPL-3.0-only. A published version does not approve toolkit installation, release execution or consumer adoption. Consumer acceptance remains application-owned, and actual Windows Server 2022/IIS qualification remains **NOT RUN**.
+
+Draft releases are located through the release collection because GitHub's tag endpoint does not return them. Asset uploads refresh the same release by ID, so retries resume the existing draft without creating or mistaking a second release.

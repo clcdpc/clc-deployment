@@ -1,0 +1,12 @@
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 1,
+  "recordKind": "backup-index",
+  "attemptId": "11111111-1111-1111-1111-111111111111",
+  "targetKey": "0000000000000000000000000000000000000000000000000000000000000000",
+  "priorEmpty": true,
+  "priorApprovalId": null,
+  "priorManifestSha256": null,
+  "files": [],
+  "inventorySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

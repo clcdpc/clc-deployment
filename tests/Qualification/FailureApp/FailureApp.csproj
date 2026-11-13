@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><RuntimeIdentifier>win-x64</RuntimeIdentifier><SelfContained>false</SelfContained><UseAppHost>false</UseAppHost>
+    <AspNetCoreHostingModel>inprocess</AspNetCoreHostingModel><AssemblyName>ClcQualificationProbe</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile><Deterministic>true</Deterministic><DebugType>none</DebugType><DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../ProbeApp/ProbeConfiguration.cs" Link="ProbeConfiguration.cs" />
+    <AssemblyMetadata Include="ApplicationId" Value="clc-qualification-probe" /><AssemblyMetadata Include="ReleaseId" Value="$(ProbeReleaseId)" />
+    <AssemblyMetadata Include="SourceCommit" Value="$(ProbeSourceCommit)" /><AssemblyMetadata Include="FailureKind" Value="$(ProbeFailureKind)" />
+  </ItemGroup>
+  <Target Name="RequireNegativeFixtureIdentity" BeforeTargets="CoreCompile">
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ProbeReleaseId)', '^[a-z0-9][a-z0-9-]{0,63}$'))" Text="An immutable fixture release ID is required." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ProbeSourceCommit)', '^[a-f0-9]{40}$'))" Text="An exact source commit is required." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ProbeFailureKind)', '^(WrongRelease|WrongSource|WrongRevision|Redirect|Authentication|Cookie|Timeout|Unavailable|StartupFailure)$'))" Text="Select a fixed negative fixture at build time." />
+  </Target>
+</Project>

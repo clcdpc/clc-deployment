@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "target",
+  "$comment": "Untrusted contract shape only. Strict UTF-8, <=4 MiB (validation 8 KiB/readiness 4 KiB), depth <=32, integer tokens, duplicate/case-duplicate properties, native SID/date validity and semantic inventory checks are enforced by the PowerShell parser; schemas cannot authenticate records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "targetId",
+    "applicationId",
+    "environmentName",
+    "runtimeEnvironment",
+    "siteName",
+    "applicationPoolName",
+    "applicationRoot",
+    "operationalConfigPath",
+    "dataProtectionRoot",
+    "artifactInboxRoot",
+    "runtimeIdentitySid",
+    "readinessUri"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-file-iis-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "recordKind": {
+      "const": "target"
+    },
+    "targetId": {
+      "$ref": "#/$defs/id"
+    },
+    "applicationId": {
+      "$ref": "#/$defs/id"
+    },
+    "environmentName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "runtimeEnvironment": {
+      "$ref": "#/$defs/environment"
+    },
+    "siteName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+    },
+    "applicationPoolName": {
+      "$ref": "#/$defs/pool"
+    },
+    "applicationRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "operationalConfigPath": {
+      "$ref": "#/$defs/path"
+    },
+    "dataProtectionRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "artifactInboxRoot": {
+      "$ref": "#/$defs/path"
+    },
+    "runtimeIdentitySid": {
+      "$ref": "#/$defs/sid"
+    },
+    "readinessUri": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^https://[^/?#@]+/health/ready$"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "environment": {
+      "enum": [
+        "Production",
+        "Staging"
+      ]
+    },
+    "pool": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z]:\\\\[^\\u0000-\\u001f\\u007f-\\u009f/:*?\"<>|~]+$",
+      "not": {
+        "pattern": "(?:^|\\\\)(?:\\.{1,2}|\\.[cC][lL][cC]-[^\\\\]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^\\\\]*)?)(?:\\\\|$)|[. ](?:\\\\|$)|\\\\(?:\\\\|$)"
+      }
+    },
+    "sid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 184,
+      "pattern": "^S-1-(0|[1-9][0-9]*)(-(0|[1-9][0-9]*)){1,15}$"
+    }
+  }
+}

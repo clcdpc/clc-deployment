@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "release-metadata",
+  "$comment": "Untrusted contract shape only. Strict UTF-8, <=4 MiB (validation 8 KiB/readiness 4 KiB), depth <=32, integer tokens, duplicate/case-duplicate properties, native SID/date validity and semantic inventory checks are enforced by the PowerShell parser; schemas cannot authenticate records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "applicationId",
+    "releaseId",
+    "source",
+    "build",
+    "builder",
+    "runtime",
+    "changeKind",
+    "validation",
+    "readinessContractVersion"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-file-iis-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "recordKind": {
+      "const": "release-metadata"
+    },
+    "applicationId": {
+      "$ref": "#/$defs/id"
+    },
+    "releaseId": {
+      "$ref": "#/$defs/id"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "build": {
+      "$ref": "#/$defs/build"
+    },
+    "builder": {
+      "$ref": "#/$defs/builder"
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtime"
+    },
+    "changeKind": {
+      "const": "files-only"
+    },
+    "validation": {
+      "$ref": "#/$defs/validation"
+    },
+    "readinessContractVersion": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "commit"
+      ],
+      "properties": {
+        "repository": {
+          "$ref": "#/$defs/repository"
+        },
+        "commit": {
+          "$ref": "#/$defs/commit"
+        }
+      }
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9_-]+/[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflowPath",
+        "runId",
+        "runAttempt",
+        "job",
+        "sdkVersion",
+        "dependencyLockSha256"
+      ],
+      "properties": {
+        "workflowPath": {
+          "$ref": "#/$defs/workflow"
+        },
+        "runId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "runAttempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "job": {
+          "$ref": "#/$defs/code"
+        },
+        "sdkVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "dependencyLockSha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "workflow": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^\\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]*\\.ya?ml$"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "hash": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "builder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module",
+        "version",
+        "sourceCommit",
+        "distributionSha256"
+      ],
+      "properties": {
+        "module": {
+          "const": "CLC.Deployment"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "sourceCommit": {
+          "$ref": "#/$defs/commit"
+        },
+        "distributionSha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "framework",
+        "rid",
+        "architecture",
+        "hostingModel",
+        "workerLimit"
+      ],
+      "properties": {
+        "framework": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^net[1-9][0-9]*\\.[0-9]+$"
+        },
+        "rid": {
+          "const": "win-x64"
+        },
+        "architecture": {
+          "const": "x64"
+        },
+        "hostingModel": {
+          "const": "inprocess"
+        },
+        "workerLimit": {
+          "type": "integer",
+          "const": 1
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "entryPoint"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "integer",
+          "const": 1
+        },
+        "entryPoint": {
+          "$ref": "#/$defs/dll"
+        }
+      }
+    },
+    "dll": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*\\.dll$",
+      "not": {
+        "pattern": "(?:^|/)(?:\\.{1,2}|\\.[cC][lL][cC]-[^/]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*)?)(?:/|$)|\\.(?:/|$)"
+      }
+    }
+  }
+}

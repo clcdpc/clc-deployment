@@ -1,0 +1,26 @@
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 1,
+  "recordKind": "host-policy",
+  "generation": 1,
+  "machineIdentity": "11111111-1111-1111-1111-111111111111",
+  "activeToolkit": {
+    "version": "0.1.0-dev.1",
+    "sourceCommit": "0000000000000000000000000000000000000000",
+    "distributionSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "inventorySha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "moduleManifestPath": "C:\\synthetic\\toolkit\\CLC.Deployment.psd1"
+  },
+  "targetCatalogRoot": "C:\\synthetic\\targets",
+  "approvalCatalogRoot": "C:\\synthetic\\approvals",
+  "controlStateRoot": "C:\\synthetic\\control",
+  "lockRoot": "C:\\synthetic\\locks",
+  "dotnetPath": "C:\\synthetic\\runtime\\dotnet.exe",
+  "appcmdPath": "C:\\synthetic\\IIS\\appcmd.exe",
+  "infrastructureOwnerSids": [
+    "S-1-5-18"
+  ],
+  "deploymentSids": [
+    "S-1-5-19"
+  ]
+}

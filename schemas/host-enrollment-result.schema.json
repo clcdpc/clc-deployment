@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "host-enrollment-result",
+  "$comment": "Shape only. Strict UTF-8, integer tokens, duplicates, physical identity, access, exact-byte binding and independent authority require the PowerShell verifier.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "HostState",
+    "Code",
+    "NextAction",
+    "TargetId",
+    "ActiveToolkitVersion",
+    "ActiveToolkitSourceCommit",
+    "ObservedPoolState",
+    "WorkerCount",
+    "ToolkitInitialized",
+    "TargetInitialized",
+    "InitializationPerformed",
+    "ReadyForDeployment",
+    "RequiresOperatorIntervention",
+    "ApplicationReleaseApproved",
+    "ApplicationReadinessVerified",
+    "PlannedOperations",
+    "ResourceKindsToCreate"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-host-enrollment-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "recordKind": {
+      "const": "host-enrollment-result"
+    },
+    "HostState": {
+      "enum": [
+        "ToolkitNotInitialized",
+        "TargetNotEnrolled",
+        "Ready",
+        "Incomplete",
+        "DriftDetected",
+        "RecoveryRequired"
+      ]
+    },
+    "Code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "NextAction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "TargetId": {
+      "$ref": "#/$defs/id"
+    },
+    "ActiveToolkitVersion": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/version"
+        }
+      ]
+    },
+    "ActiveToolkitSourceCommit": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/commit"
+        }
+      ]
+    },
+    "ObservedPoolState": {
+      "enum": [
+        "Unknown",
+        "Started",
+        "Stopped",
+        "Starting",
+        "Stopping"
+      ]
+    },
+    "WorkerCount": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        }
+      ]
+    },
+    "ToolkitInitialized": {
+      "type": "boolean"
+    },
+    "TargetInitialized": {
+      "type": "boolean"
+    },
+    "InitializationPerformed": {
+      "type": "boolean"
+    },
+    "ReadyForDeployment": {
+      "type": "boolean"
+    },
+    "RequiresOperatorIntervention": {
+      "type": "boolean"
+    },
+    "ApplicationReleaseApproved": {
+      "type": "boolean"
+    },
+    "ApplicationReadinessVerified": {
+      "type": "boolean"
+    },
+    "PlannedOperations": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 6,
+      "items": {
+        "enum": [
+          "install-toolkit",
+          "enroll-target",
+          "configure-iis",
+          "create-site",
+          "create-pool",
+          "first-cutover"
+        ]
+      }
+    },
+    "ResourceKindsToCreate": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 12,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    }
+  },
+  "$defs": {
+    "commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    }
+  }
+}

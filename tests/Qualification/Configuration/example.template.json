@@ -1,0 +1,16 @@
+{
+  "formatVersion": 1, "templateOnly": true, "campaignId": "example", "disposable": true,
+  "machineIdentity": "00000000-0000-0000-0000-000000000000", "computerName": "DISPOSABLE-EXAMPLE", "authorizationReference": "example-change",
+  "ownedRoot": "C:\\cq\\example", "evidenceRoot": "C:\\qe\\example", "applicationRoot": "C:\\cq\\example\\app",
+  "operationalConfigPath": "C:\\cq\\example\\config\\probe.json", "dataProtectionRoot": "C:\\cq\\example\\keys", "artifactInboxRoot": "C:\\cq\\example\\inbox",
+  "siteName": "clc-t4-example", "poolName": "clc-t4-example", "targetId": "probe", "alternateTargetId": "probe-alias",
+  "infrastructureSid": "S-1-5-21-1-2-3-1001", "deploymentSid": "S-1-5-21-1-2-3-1002", "runtimeSid": "S-1-5-21-1-2-3-1003",
+  "runtimeEnvironment": "Production",
+  "readinessUri": "https://probe.example.invalid:4443/health/ready", "certificateThumbprint": "0000000000000000000000000000000000000000",
+  "dotnetPath": "C:\\Program Files\\dotnet\\dotnet.exe", "appcmdPath": "C:\\Windows\\System32\\inetsrv\\appcmd.exe", "capacityBytes": 8589934592,
+  "toolkit": { "version": "0.1.0-dev.1", "sourceCommit": "0000000000000000000000000000000000000000", "distributionSha256": "0000000000000000000000000000000000000000000000000000000000000000", "inventorySha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+  "probeReleases": {
+    "initial": { "approvalId": "probe-initial", "releaseId": "probe-initial", "sourceCommit": "0000000000000000000000000000000000000000", "archiveSha256": "0000000000000000000000000000000000000000000000000000000000000000", "manifestSha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+    "newer": { "approvalId": "probe-newer", "releaseId": "probe-newer", "sourceCommit": "0000000000000000000000000000000000000000", "archiveSha256": "0000000000000000000000000000000000000000000000000000000000000000", "manifestSha256": "0000000000000000000000000000000000000000000000000000000000000000" }
+  }
+}

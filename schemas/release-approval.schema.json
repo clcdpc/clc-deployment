@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "release-approval",
+  "$comment": "Untrusted contract shape only. Strict UTF-8, <=4 MiB (validation 8 KiB/readiness 4 KiB), depth <=32, integer tokens, duplicate/case-duplicate properties, native SID/date validity and semantic inventory checks are enforced by the PowerShell parser; schemas cannot authenticate records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "approvalId",
+    "targetId",
+    "enabled",
+    "applicationId",
+    "releaseId",
+    "sourceRepository",
+    "sourceCommit",
+    "lineageId",
+    "releaseSequence",
+    "releaseZipSha256",
+    "manifestSha256",
+    "provenance",
+    "authorization"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-file-iis-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "recordKind": {
+      "const": "release-approval"
+    },
+    "approvalId": {
+      "$ref": "#/$defs/id"
+    },
+    "targetId": {
+      "$ref": "#/$defs/id"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "applicationId": {
+      "$ref": "#/$defs/id"
+    },
+    "releaseId": {
+      "$ref": "#/$defs/id"
+    },
+    "sourceRepository": {
+      "$ref": "#/$defs/repository"
+    },
+    "sourceCommit": {
+      "$ref": "#/$defs/commit"
+    },
+    "lineageId": {
+      "$ref": "#/$defs/id"
+    },
+    "releaseSequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854776000
+    },
+    "releaseZipSha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "manifestSha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflowPath",
+        "runId",
+        "runAttempt",
+        "buildJob",
+        "artifactId",
+        "transportSha256"
+      ],
+      "properties": {
+        "workflowPath": {
+          "$ref": "#/$defs/workflow"
+        },
+        "runId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "runAttempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "buildJob": {
+          "$ref": "#/$defs/code"
+        },
+        "artifactId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854776000
+        },
+        "transportSha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authoritySid",
+        "reference",
+        "approvedUtc"
+      ],
+      "properties": {
+        "authoritySid": {
+          "$ref": "#/$defs/sid"
+        },
+        "reference": {
+          "$ref": "#/$defs/code"
+        },
+        "approvedUtc": {
+          "$ref": "#/$defs/utc"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9_-]+/[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "hash": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "workflow": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^\\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]*\\.ya?ml$"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "sid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 184,
+      "pattern": "^S-1-(0|[1-9][0-9]*)(-(0|[1-9][0-9]*)){1,15}$"
+    },
+    "utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 28,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?Z$",
+      "format": "date-time"
+    }
+  }
+}

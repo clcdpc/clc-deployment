@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "backup-index",
+  "$comment": "Untrusted contract shape only. Strict UTF-8, <=4 MiB (validation 8 KiB/readiness 4 KiB), depth <=32, integer tokens, duplicate/case-duplicate properties, native SID/date validity and semantic inventory checks are enforced by the PowerShell parser; schemas cannot authenticate records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "attemptId",
+    "targetKey",
+    "priorEmpty",
+    "priorApprovalId",
+    "priorManifestSha256",
+    "files",
+    "inventorySha256"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-file-iis-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "recordKind": {
+      "const": "backup-index"
+    },
+    "attemptId": {
+      "$ref": "#/$defs/guid"
+    },
+    "targetKey": {
+      "$ref": "#/$defs/hash"
+    },
+    "priorEmpty": {
+      "type": "boolean"
+    },
+    "priorApprovalId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "priorManifestSha256": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "files": {
+      "$ref": "#/$defs/files"
+    },
+    "inventorySha256": {
+      "$ref": "#/$defs/hash"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "priorEmpty": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "priorApprovalId": {
+            "type": "null"
+          },
+          "priorManifestSha256": {
+            "type": "null"
+          },
+          "files": {
+            "maxItems": 0
+          },
+          "inventorySha256": {
+            "const": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "priorApprovalId": {
+            "$ref": "#/$defs/id"
+          },
+          "priorManifestSha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "files": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "guid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 36,
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "hash": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "files": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 19999,
+      "items": {
+        "$ref": "#/$defs/file"
+      },
+      "$comment": "Runtime additionally enforces ordinal sort, case uniqueness, no file/prefix collisions, total <= 1 GiB, and matching inventory SHA-256."
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "length",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/payloadPath"
+        },
+        "length": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 268435456
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "payloadPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^application/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$",
+      "not": {
+        "pattern": "(?:^|/)(?:\\.{1,2}|\\.[cC][lL][cC]-[^/]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*)?)(?:/|$)|\\.(?:/|$)"
+      }
+    }
+  }
+}
