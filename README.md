@@ -8,6 +8,8 @@ Infrastructure independently installs/pins the toolkit and Windows/.NET/IIS comp
 
 Applications own publishing/provenance, configuration semantics and revisions, key compatibility, readiness, database compatibility and business services. The toolkit replaces only managed application files. Database deployment, DACPACs, Hangfire installation, subscription data and application features remain consumer-owned.
 
+An optional infrastructure-owned [standing deployment policy](docs/automated-deployments.md) admits successive tag-authorized releases from an exact trusted GitHub Actions producer. Admission authenticates a signed receipt and creates a protected exact approval for the same engine. DEV and production remain separately scoped; enrollment, initial baseline, toolkit changes and exceptional recovery retain independent authorization.
+
 An unexpected OS reboot during physical replacement may leave mixed files and require manual recovery. Pending state does not prevent IIS activation after reboot or an external start; there is no startup interception or unattended activation fence. After replacement begins, failures attempt a bounded stop and retain recovery material. Recovery requires an explicit operator choice, compatible approved material and proven helper exit; file restoration never establishes database rollback safety.
 
 The repository, PowerShell toolkit and ASP.NET Core companion source are licensed under [MIT](LICENSE). See [Releases](https://github.com/clcdpc/clc-deployment/releases) for releases published from this clean-history repository. The previously published `0.1.0-beta.2` artifacts came from its predecessor repository and remain AGPL-3.0-only; they are not MIT-licensed builds. Publication does not approve installation or deployment.
@@ -21,6 +23,7 @@ The repository, PowerShell toolkit and ASP.NET Core companion source are license
 | [Installation](docs/installation.md) | Authenticate, verify and install an exact toolkit distribution |
 | [Host enrollment](docs/host-enrollment.md) | Separately authorized infrastructure setup |
 | [GitHub setup](docs/github-setup.md) | Consumer workflow controls and privileged runner admission |
+| [Automated deployments](docs/automated-deployments.md) | Standing policy, signed provenance and the ssrs-web integration contract |
 | [ASP.NET Core integration](docs/aspnetcore-integration.md) | Application-side validator and readiness plumbing |
 | [Deployment and recovery](docs/deployment.md) | Commands, safeguards, failure boundaries and explicit recovery |
 | [IIS verification](docs/iis-verification.md) | Rollout prerequisites, seven practical checks and remaining unrun gates |

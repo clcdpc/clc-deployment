@@ -383,7 +383,8 @@ function Assert-ClcRecord {
     if ($Value -isnot [Collections.IDictionary] -or -not $Value.Contains('contractFamily') -or -not $Value.Contains('schemaVersion') -or -not $Value.Contains('recordKind')) {
         Stop-ClcError Clc.UnsupportedContract
     }
-    if ($Value.contractFamily -cne 'clc-file-iis-v1' -or $Value.schemaVersion -isnot [long] -or $Value.schemaVersion -ne $(if ($Kind -ceq 'journal') {2} else {1}) -or $Value.recordKind -cne $Kind) { Stop-ClcError Clc.UnsupportedContract }
+    $versions=if ($Kind -ceq 'journal') {@(2)} elseif ($Kind -ceq 'release-approval') {@(1,2)} else {@(1)}
+    if ($Value.contractFamily -cne 'clc-file-iis-v1' -or $Value.schemaVersion -isnot [long] -or $Value.schemaVersion -notin $versions -or $Value.recordKind -cne $Kind) { Stop-ClcError Clc.UnsupportedContract }
     switch -CaseSensitive ($Kind) {
         release-metadata { Assert-ClcPackage $Value }
         release-manifest { Assert-ClcPackage $Value -Manifest }
@@ -411,7 +412,9 @@ function Assert-ClcRecord {
             if (-not [Uri]::TryCreate($Value.readinessUri, [UriKind]::Absolute, [ref] $uri) -or $uri.Host.Length -eq 0 -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or $uri.AbsolutePath -cne '/health/ready') { Stop-ClcError Clc.InvalidContract }
         }
         release-approval {
-            Assert-ClcObject $Value @('contractFamily','schemaVersion','recordKind','approvalId','targetId','enabled','applicationId','releaseId','sourceRepository','sourceCommit','lineageId','releaseSequence','releaseZipSha256','manifestSha256','provenance','authorization')
+            $keys=@('contractFamily','schemaVersion','recordKind','approvalId','targetId','enabled','applicationId','releaseId','sourceRepository','sourceCommit','lineageId','releaseSequence','releaseZipSha256','manifestSha256','provenance','authorization')
+            if ($Value.schemaVersion -eq 2) { $keys+='admission' }
+            Assert-ClcObject $Value $keys
             foreach ($key in @('approvalId','targetId','applicationId','releaseId','lineageId')) { Assert-ClcId $Value[$key] }
             Assert-ClcBoolean $Value.enabled
             Assert-ClcRepository $Value.sourceRepository
@@ -428,7 +431,16 @@ function Assert-ClcRecord {
             Assert-ClcSid $Value.authorization.authoritySid
             Assert-ClcCode $Value.authorization.reference
             Assert-ClcTimestamp $Value.authorization.approvedUtc
+            if ($Value.schemaVersion -eq 2) {
+                Assert-ClcObject $Value.admission @('standingAuthorizationId','standingAuthorizationSha256','tag','bundleSha256')
+                Assert-ClcId $Value.admission.standingAuthorizationId
+                Assert-ClcHash $Value.admission.standingAuthorizationSha256
+                Assert-ClcHash $Value.admission.bundleSha256
+                $null=Get-ClcDeploymentTag $Value.admission.tag
+            }
         }
+        standing-authorization { Assert-ClcStandingAuthorization $Value }
+        automated-provenance { Assert-ClcAutomatedProvenance $Value }
         journal { Assert-ClcJournal $Value }
         current {
             Assert-ClcObject $Value @('contractFamily','schemaVersion','recordKind','generation','targetKey','targetSnapshot','attemptId','recoverySequence','approvalSnapshot','release','executingToolkit','configuration','hostObservationSha256','readiness','completedUtc')

@@ -17,6 +17,8 @@ Restore-ClcIisDeployment -TargetId example -AttemptId '<latest-attempt-guid>' -M
 
 These are nonoperational placeholders. Public commands accept no credentials, callbacks, arbitrary target/state paths or trust-bypass flag. The independently protected enabled approval supplies the expected hashes; an inspection result, manifest, caller expectation or release name never authorizes code. Deployment never provisions credentials or operational configuration.
 
+For an already deployed baseline, infrastructure may separately enable [tag-authorized routine deployment](automated-deployments.md). `Invoke-ClcIisDeployment -TargetId $target -StandingAuthorizationId $standing -ReleaseTag $tag` authenticates a signed producer receipt and publishes exact authority under the same lock before this sequence. Revoked/changed policy blocks routine use of its generated approvals, including direct exact-ID retries. Existing manual approval commands need no standing policy or verifier.
+
 ## Deployment sequence and safeguards
 
 1. Resolve the protected target/release approval using the fixed installed toolkit context, verify the toolkit and acquire one fail-fast exclusive OS file handle for the actual machine/pool. Read that pool's state and reject unresolved attempts. Never delete a lock file or infer completion from its age or released handle.
@@ -46,6 +48,8 @@ An OS reboot during physical replacement is an explicitly accepted operational l
 ## Explicit recovery
 
 `Restore-ClcIisDeployment` requires the exact latest attempt, an explicit mode and a nonsecret incident/change reason. It takes the same lock, rechecks protected approvals, target identity, unchanged compatible external configuration and helper quiescence. It retains a before-recovery snapshot and never guesses an arbitrary backup path.
+
+When the selected recovery release has an automatically generated approval, also supply `-RecoveryApprovalId` selecting an independent normal schema-1 approval with matching exact release/target/source/lineage/provenance/hashes. Standing authority does not authorize recovery. Preserve the generated approval and journal bytes; a revoked standing policy does not prevent this separately approved recovery. Existing manually approved recovery is unchanged.
 
 | Mode | Required material and outcome |
 | --- | --- |

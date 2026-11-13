@@ -28,7 +28,10 @@
     },
     "schemaVersion": {
       "type": "integer",
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "recordKind": {
       "const": "release-approval"
@@ -125,6 +128,30 @@
           "$ref": "#/$defs/utc"
         }
       }
+    },
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "standingAuthorizationId",
+        "standingAuthorizationSha256",
+        "tag",
+        "bundleSha256"
+      ],
+      "properties": {
+        "standingAuthorizationId": {
+          "$ref": "#/$defs/id"
+        },
+        "standingAuthorizationSha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "tag": {
+          "$ref": "#/$defs/tag"
+        },
+        "bundleSha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
     }
   },
   "$defs": {
@@ -176,6 +203,40 @@
       "maxLength": 28,
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?Z$",
       "format": "date-time"
+    },
+    "absolutePath": {
+      "type": "string",
+      "maxLength": 240,
+      "pattern": "^[A-Za-z]:\\\\[^\\x00-\\x1f\\x7f/:*?\"<>|]+$",
+      "minLength": 4
+    },
+    "tag": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^v(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})(-(dev|beta|rc)\\.([1-9][0-9]{0,3}))?$"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 2
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "admission"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "admission"
+          ]
+        }
+      }
+    }
+  ]
 }

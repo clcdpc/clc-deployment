@@ -7,16 +7,16 @@ Describe 'Candidate public API and honest inspection' {
         foreach ($command in $commands) {
             $expected = switch ($command.Name) {
                 New-ClcRelease { @('MetadataPath','OutputPath','PublishRoot') }
-                Test-ClcRelease { @('ArchivePath') }
-                Invoke-ClcIisDeployment { @('AllowDowngrade','Reason','ReleaseApprovalId','TargetId') }
-                Restore-ClcIisDeployment { @('AttemptId','Mode','Reason','TargetId') }
+                Test-ClcRelease { @('ArchivePath','ReleaseTag') }
+                Invoke-ClcIisDeployment { @('AllowDowngrade','Reason','ReleaseApprovalId','ReleaseTag','StandingAuthorizationId','TargetId') }
+                Restore-ClcIisDeployment { @('AttemptId','Mode','Reason','RecoveryApprovalId','TargetId') }
             }
             $actual = @($command.Parameters.Keys | Where-Object { $common -cnotcontains $_ } | Sort-Object)
             $actual | Should -Be $expected
             foreach ($parameter in $expected) {
                 $type=switch ($parameter) { AllowDowngrade {[switch]}; AttemptId {[guid]}; default {[string]} }
                 $command.Parameters[$parameter].ParameterType | Should -Be $type
-                $mandatory=-not ($command.Name -ceq 'Invoke-ClcIisDeployment' -and $parameter -cin @('AllowDowngrade','Reason'))
+                $mandatory=-not (($command.Name -ceq 'Invoke-ClcIisDeployment' -and $parameter -cin @('AllowDowngrade','Reason')) -or $parameter -ceq 'RecoveryApprovalId')
                 @($command.Parameters[$parameter].Attributes | Where-Object { $_ -is [Management.Automation.ParameterAttribute] })[0].Mandatory | Should -Be $mandatory
             }
         }
@@ -27,6 +27,14 @@ Describe 'Candidate public API and honest inspection' {
         $manifest.PrivateData.PSData.Prerelease | Should -Be 'dev.1'
         $manifest.PrivateData.PSData.LicenseUri | Should -Be 'https://github.com/clcdpc/clc-deployment/blob/master/LICENSE'
         & (Get-Module CLC.Deployment) { Get-ClcToolkitVersion } | Should -Be '0.1.0-dev.1'
+    }
+    It 'offers read-only tag classification and rejects mixed authorization parameter sets' {
+        $tag=Test-ClcRelease -ReleaseTag v1.2.3-dev.4
+        $tag.channel | Should -BeExactly DEV
+        $tag.releaseId | Should -BeExactly v1-2-3-dev-4
+        $tag.authorizedForDeployment | Should -BeFalse
+        Test-TestRejection { Test-ClcRelease -ReleaseTag v1.0.0 -ArchivePath x } '*'
+        Test-TestRejection { Invoke-ClcIisDeployment -TargetId x -StandingAuthorizationId x -ReleaseTag v1.0.0 -AllowDowngrade -Reason incident } '*'
     }
     It 'returns exact PackageResult and ReleaseInspection field sets without authorization material' {
         $workspace = New-TestWorkspace

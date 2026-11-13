@@ -57,6 +57,7 @@ function Invoke-ClcRecoveryCore {
             $null=Get-ClcTreeInventory $source $candidate.manifest.files
         }
     }
+    Assert-ClcAutomatedRecoveryAuthority $Session $selected
     $sequence=if ($null -eq $j.recovery) {1L} else {$j.recovery.sequence+1L}
     if ($sequence -le 0) { Stop-ClcError Clc.StatePersistenceFailed }
     New-ClcOwnedDirectory $lock (Join-Path $lock.identity.controlRoot ('attempts\'+$AttemptId))

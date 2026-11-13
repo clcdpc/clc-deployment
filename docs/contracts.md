@@ -7,11 +7,15 @@ The [schemas](../schemas) and `Private/Contracts.ps1` define exact fields/types/
 ```powershell
 New-ClcRelease -PublishRoot <publish-directory> -MetadataPath <release-metadata.json> -OutputPath <new-release.zip>
 Test-ClcRelease -ArchivePath <release.zip>
+Test-ClcRelease -ReleaseTag <vMAJOR.MINOR.PATCH[-dev.N|-beta.N|-rc.N]>
 Invoke-ClcIisDeployment -TargetId <safe-id> -ReleaseApprovalId <safe-id> [-AllowDowngrade -Reason <change-id>]
-Restore-ClcIisDeployment -TargetId <safe-id> -AttemptId <latest-guid> -Mode RestorePrevious|AcceptCandidate|RestoreEmpty -Reason <change-id>
+Invoke-ClcIisDeployment -TargetId <safe-id> -StandingAuthorizationId <safe-id> -ReleaseTag <tag>
+Restore-ClcIisDeployment -TargetId <safe-id> -AttemptId <latest-guid> -Mode RestorePrevious|AcceptCandidate|RestoreEmpty -Reason <change-id> [-RecoveryApprovalId <safe-id>]
 ```
 
 These are the only exports. Paths use literal semantics; IDs match lowercase `[a-z0-9][a-z0-9-]{0,63}`. Reason is a nonsecret lowercase safe ID of at most 128 characters, required with AllowDowngrade and rejected otherwise. Restore requires a nonempty GUID. No credentials, callbacks, policy overrides, caller journal paths, approval objects or trust-bypass flags are accepted.
+
+Test's tag-only set returns tag/releaseId/channel/releaseSequence/authorizedForDeployment=false without file or host access. Invoke's Automated set cannot combine with exact selection/downgrade flags. Restore's optional RecoveryApprovalId selects an independently authored schema-1 exact approval when the selected recovery release was automatically admitted. See the [automation contract](automated-deployments.md).
 
 | Command | Result/effects |
 | --- | --- |
@@ -26,7 +30,7 @@ Errors terminate with stable `Clc.*` IDs and safe attempt/pool/worker/retained-p
 
 UTF-8 JSON rejects duplicate/case-ambiguous keys, unknown/missing fields, coercion, comments, nonintegral numbers, unsupported versions and trailing data. Required fields are nonnull except explicit nullable fields. IDs/hashes/GUIDs/source commits/timestamps are canonical. Shapes do not confer authority.
 
-Package/metadata/policy/target/approval/current/backup retain `contractFamily=clc-file-iis-v1`, schemaVersion 1 and their exact recordKind. The simplified `journal` uses schemaVersion **2**; v1 journals and per-file ownership records are unsupported. Application validation/readiness retain their own integer contractVersion fields. Infrastructure enrollment retains its separate `clc-host-enrollment-v1`/1 contracts.
+Package/metadata/policy/target/current/backup and manual approvals retain `contractFamily=clc-file-iis-v1`, schemaVersion 1 and their exact recordKind. Generated release approvals use schemaVersion 2, adding the exact admission object; both approval versions are supported. New standing-authorization and automated-provenance records use the same family/version 1. The simplified `journal` uses schemaVersion **2**; v1 journals and per-file ownership records are unsupported. Application validation/readiness retain their own integer contractVersion fields. Infrastructure enrollment retains its separate `clc-host-enrollment-v1`/1 contracts.
 
 Records/manifest/metadata: 4 MiB; ZIP compressed/expanded: 1 GiB; entries: 20,000; individual file: 256 MiB; expansion: 100:1; relative/full paths: 240 characters. Enforce actual streamed lengths. Lock fails fast. Helpers: 30 seconds; stop/start: 60 each; readiness: 120 overall/5 per request/2-second poll; archive/stage/backup/replace: 300 each. Synchronous OS calls can return late, after which further effects/success refuse.
 
@@ -47,6 +51,8 @@ Host policy keeps generation/machineIdentity/activeToolkit/targetCatalogRoot/app
 Target keeps targetId/applicationId/environmentName/runtimeEnvironment/siteName/applicationPoolName/applicationRoot/operationalConfigPath/dataProtectionRoot/artifactInboxRoot/runtimeIdentitySid/readinessUri. Roots are disjoint existing canonical local NTFS objects; mutable OS directories, aliases/reparse/hard links/named streams refuse. Configuration is an external protected regular file. Runtime is a distinct nonadministrator with effective protected-resource write isolation. Deployment requires its authorized SID and enabled elevated administrator token. Independent approval against that administrator is procedural.
 
 Release approval keeps approvalId/targetId/enabled/applicationId/releaseId/sourceRepository/sourceCommit/lineageId/releaseSequence/releaseZipSha256/manifestSha256/provenance/authorization. Provenance binds workflowPath/runId/runAttempt/buildJob/artifactId/transportSha256; authorization binds authoritySid/reference/approvedUtc. Select only exact `<approvalId>.zip` from the target inbox and match approved ZIP/manifest/source/build facts. Downgrade/incomparable lineage requires AllowDowngrade/reason; same sequence with different artifact identity rejects.
+
+Schema-2 approval adds admission.standingAuthorizationId/standingAuthorizationSha256/tag/bundleSha256. Routine execution requires the original exact enabled standing policy and cannot use AllowDowngrade. Only trusted installed admission code creates these records after authenticating the protected verifier, signing identity, certificate facts and exact signed package/target facts. No migration affects old approvals, current/journal snapshots or retained manifests/backups. Standing authority alone cannot authorize exceptional recovery.
 
 Comprehensive preflight checks dedicated sole IIS root application/site/pool, physical root/runtime SID, max one worker, disabled overlap, x64 .NET/ANCM, environment, actual HTTPS binding and required path/access observations. Started with zero/one workers permits idle preflight. Backup/replacement requires Stopped/zero workers; ready success requires Started/exactly one worker. Inner copy operations check affected paths and current stopped state, without full host scans.
 

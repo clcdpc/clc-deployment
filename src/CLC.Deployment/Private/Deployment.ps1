@@ -16,6 +16,7 @@ function Assert-ClcEffectAuthority {
     foreach ($release in @($Session.release,$Session.previousRelease)) {
         if ($null -ne $release) { Assert-ClcApprovedReleaseUnchanged $lock.context $release }
     }
+    if ($Session.ContainsKey('recoveryApproval')) { Assert-ClcHeldRecordUnchanged $lock.context $Session.recoveryApproval 'Clc.ApprovalMismatch' }
     Assert-ClcConfigurationUnchanged $Session
     Assert-ClcStableIisObservation $lock.targetFile.record $actual.iis $lock.identity.snapshot.applicationPoolName
     if ((Get-ClcIisConfigurationHash $actual.iis) -cne $Session.iisConfigurationSha256) { Stop-ClcError Clc.HostPreflightFailed }
@@ -118,7 +119,15 @@ function Invoke-ClcDeploymentCore {
     $lock=$Session.lock; $decision=Get-ClcReconciliationDecision $lock
     if ($decision.classification -cnotin @('Clean','EmptyRecoveryNeedsVerification')) { Stop-ClcError Clc.RecoveryRequired }
     $state=$lock.state
-    $Session.release=Read-ClcApprovedRelease $lock.context $lock.targetFile.record.targetId $ReleaseApprovalId
+    if ($Session.ContainsKey('admittedRelease')) {
+        # Admission authenticated these exact held bytes under this same lock.
+        # This private handoff avoids a second archive inspection; public callers
+        # cannot supply an approval, inspection result or session object.
+        $Session.release=$Session.admittedRelease
+        if ($Session.release.approvalFile.record.approvalId -cne $ReleaseApprovalId) { Stop-ClcError Clc.ApprovalMismatch }
+        Assert-ClcApprovedReleaseUnchanged $lock.context $Session.release
+    } else { $Session.release=Read-ClcApprovedRelease $lock.context $lock.targetFile.record.targetId $ReleaseApprovalId }
+    if ($AllowDowngrade -and $Session.release.approvalFile.record.schemaVersion -eq 2) { Stop-ClcError Clc.DowngradeRejected }
     $Session.previousRelease=$null; $Session.replacementBegun=$false; $Session.baselineFiles=@()
     $Session.configuration=Open-ClcConfiguration $lock
     $hostFacts=Get-ClcHostPreflight $lock.context $lock.targetFile $lock.identity $Session.release.manifest.runtime.framework

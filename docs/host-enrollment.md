@@ -142,7 +142,9 @@ Failure retains backup/index, authorization intent, partial installation and act
 
 ## Consumer workflow and remaining gates
 
-Any consumer workflow must use independently authenticated enrollment tooling and the installed toolkit, recheck its target and approvals, and retain application-specific prerequisites in its own repository. `ReadyForDeployment` alone does not establish an enabled application release; `Invoke-ClcIisDeployment` resolves and rechecks its independent approval before execution. This repository does not define or attest a consumer's workflow admission, release selection, or application-specific readiness requirements.
+Optional [standing release admission](automated-deployments.md) is a separate infrastructure policy installed after a successful independently approved baseline. Enrollment never creates that policy, its verifier dependency or release approvals. Standing authority cannot authorize first cutover, empty-target deployment, setup or toolkit upgrades.
+
+Any consumer workflow must use independently authenticated enrollment tooling and the installed toolkit, recheck its target and approvals, and retain application-specific prerequisites in its own repository. `ReadyForDeployment` alone does not establish an enabled application release; `Invoke-ClcIisDeployment` resolves and rechecks its independent approval before execution. The optional automation contract defines shared tag/receipt admission, while application-specific workflow controls and readiness requirements remain consumer-owned and unqualified here.
 
 Do not run privileged code from arbitrary PR checkouts, use pull_request_target to execute contributors, attach deployment credentials to ordinary CI, deploy on clc-linux, approve a triggering artifact automatically or add a privileged deployment job to this repository's verification workflow. Build/release production remains separate from the privileged host path.
 

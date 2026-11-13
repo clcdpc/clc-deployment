@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "reviewedDate": "2026-11-13",
+  "repository": "cli/cli",
+  "version": "2.97.0",
+  "sourceCommit": "55dbb4dc6b7edb10b48e3d7fc5bccd32318d1b55",
+  "url": "https://github.com/cli/cli/releases/download/v2.97.0/gh_2.97.0_windows_amd64.zip",
+  "archiveSha256": "35d7fe05c4dd1411ffda1e73dfc7c6f44b75c936ca51fa6595c657fdc0350cec",
+  "executableRelativePath": "bin/gh.exe",
+  "executableSha256": "e2efa10a5d2ce93cac9bc4b676932b62947c0967c01c8f2c3a9cb4437ad358d3",
+  "authority": "https://api.github.com/repos/cli/cli/releases/tags/v2.97.0",
+  "authentication": "Archive digest obtained from the official GitHub release API over HTTPS, compared before extraction; executable digest derived from those verified bytes. Infrastructure independently authenticates acquisition and pins exact executable and trusted-root bytes in protected standing policy. No runtime acquisition or installation."
+}
