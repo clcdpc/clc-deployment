@@ -47,6 +47,7 @@ function Read-ClcApprovedRelease {
     $target = $targetFile.record; $approval = $approvalFile.record
     if (-not $approval.enabled) { Stop-ClcError Clc.ApprovalDisabled }
     if ($approval.targetId -cne $TargetId -or $approval.applicationId -cne $target.applicationId) { Stop-ClcError Clc.ApprovalMismatch }
+    $standing=if ($approval.schemaVersion -eq 2) { Read-ClcActiveStandingForApproval $Context $target $approvalFile } else { $null }
     $null = Add-ClcProtectedPathPin $Context $target.artifactInboxRoot -Directory -Mutable -RuntimeSid $target.runtimeIdentitySid
     $archiveRoot=$target.artifactInboxRoot
     if ($null -ne $Lock) {
@@ -84,7 +85,7 @@ function Read-ClcApprovedRelease {
     Assert-ClcHeldRecordUnchanged $Context $approvalFile 'Clc.ApprovalMismatch'
     $archive.sha256=$inspection.archiveSha256; $archive.length=$archive.stream.Length
     return @{ targetFile=$targetFile; approvalFile=$approvalFile; archive=$archive; manifest=$manifest; manifestBytes=$manifestBytes;
-        inspection=$inspection; approvalVerified=$true; authorizedForDeployment=$false }
+        inspection=$inspection; approvalVerified=$true; authorizedForDeployment=$false; standing=$standing }
 }
 
 function Assert-ClcApprovedReleaseUnchanged {
@@ -92,6 +93,7 @@ function Assert-ClcApprovedReleaseUnchanged {
     Assert-ClcHeldRecordUnchanged $Context $Release.targetFile 'Clc.HostPreflightFailed'
     Assert-ClcHeldRecordUnchanged $Context $Release.approvalFile 'Clc.ApprovalMismatch'
     if (-not $Release.approvalFile.record.enabled) { Stop-ClcError Clc.ApprovalDisabled }
+    if ($Release.ContainsKey('standing') -and $null -ne $Release.standing) { Assert-ClcHeldRecordUnchanged $Context $Release.standing 'Clc.StandingAuthorizationRejected' }
     if ($null -eq $Release.archive) { return }
     $archive=$Release.archive
     if ($archive.stream.SafeFileHandle.IsClosed -or $archive.stream.SafeFileHandle.IsInvalid -or

@@ -1,0 +1,20 @@
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 1,
+  "recordKind": "standing-authorization",
+  "standingAuthorizationId": "example-dev",
+  "enabled": true,
+  "targetId": "example",
+  "applicationId": "example",
+  "environmentName": "DEV",
+  "channel": "DEV",
+  "sourceRepository": "synthetic/example",
+  "lineageId": "probe-main",
+  "authorization": {
+    "approvedUtc": "2026-11-13T00:00:00Z",
+    "authoritySid": "S-1-5-18",
+    "reference": "synthetic-standing"
+  },
+  "buildWorkflowPath": ".github/workflows/release.yml",
+  "buildJob": "build"
+}

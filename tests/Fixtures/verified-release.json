@@ -1,0 +1,21 @@
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 1,
+  "recordKind": "verified-release",
+  "targetId": "example",
+  "applicationId": "probe",
+  "releaseId": "v1-0-0-dev-2",
+  "sourceRepository": "synthetic/probe",
+  "sourceCommit": "0000000000000000000000000000000000000000",
+  "releaseZipSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "manifestSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "provenance": {
+    "workflowPath": ".github/workflows/build.yml",
+    "runId": 1,
+    "runAttempt": 1,
+    "buildJob": "build",
+    "artifactId": 1,
+    "transportSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "tag": "v1.0.0-dev.2"
+}

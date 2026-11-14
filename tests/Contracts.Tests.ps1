@@ -1,5 +1,5 @@
 BeforeDiscovery {
-    $recordCases = @('release-metadata','release-manifest','host-policy','target','release-approval','journal','current','backup-index','application-validation','readiness') | ForEach-Object { @{ Kind=$_ } }
+    $recordCases = @('release-metadata','release-manifest','host-policy','target','release-approval','standing-authorization','verified-release','release-tag-binding','journal','current','backup-index','application-validation','readiness') | ForEach-Object { @{ Kind=$_ } }
 }
 BeforeAll { . "$PSScriptRoot/Support.ps1" }
 Describe 'Strict UTF-8 versioned contract shapes' {

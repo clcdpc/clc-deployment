@@ -4,13 +4,15 @@ function Restore-ClcIisDeployment {
         [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $TargetId,
         [Parameter(Mandatory)][guid] $AttemptId,
         [Parameter(Mandatory)][ValidateSet('RestorePrevious','AcceptCandidate','RestoreEmpty')][string] $Mode,
-        [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,127}$')][string] $Reason
+        [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,127}$')][string] $Reason,
+        [ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $RecoveryApprovalId
     )
     $context=$null; $lock=$null; $session=@{}
     try {
         if ($AttemptId -eq [guid]::Empty) { Stop-ClcError Clc.InvalidContract }
         $context=Open-ClcTrustedContext
         $lock=Enter-ClcDeploymentLock $context $TargetId; $session.lock=$lock
+        $session.recoveryApprovalId=$RecoveryApprovalId
         $outcome=Invoke-ClcRecoveryCore $session $AttemptId.ToString('D') $Mode $Reason
         $j=$outcome.state.journal.record; $releaseId=$null; $generation=0L
         if ($null -ne $outcome.state.current) { $releaseId=$outcome.state.current.record.release.releaseId; $generation=$outcome.state.current.record.generation }
