@@ -24,7 +24,10 @@
     },
     "schemaVersion": {
       "type": "integer",
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "recordKind": {
       "const": "release-metadata"
@@ -48,7 +51,10 @@
       "$ref": "#/$defs/runtime"
     },
     "changeKind": {
-      "const": "files-only"
+      "enum": [
+        "files-only",
+        "application-deployment"
+      ]
     },
     "validation": {
       "$ref": "#/$defs/validation"
@@ -56,6 +62,9 @@
     "readinessContractVersion": {
       "type": "integer",
       "const": 1
+    },
+    "hooks": {
+      "$ref": "#/$defs/hooks"
     }
   },
   "$defs": {
@@ -125,7 +134,11 @@
           "$ref": "#/$defs/version"
         },
         "dependencyLockSha256": {
-          "$ref": "#/$defs/hash"
+          "anyOf": [
+            { "$ref": "#/$defs/hash" },
+            { "type": "null" }
+          ],
+          "$comment": "V2: actual NuGet lock digest when present, explicit null when independently qualified without lock evidence. V1 requires a digest."
         }
       }
     },
@@ -234,6 +247,109 @@
       "not": {
         "pattern": "(?:^|/)(?:\\.{1,2}|\\.[cC][lL][cC]-[^/]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*)?)(?:/|$)|\\.(?:/|$)"
       }
+    },
+    "hookPath": {
+      "type": "string",
+      "maxLength": 240,
+      "pattern": "^hooks/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$",
+      "not": {
+        "pattern": "(?:^|/)(?:\\.{1,2}|\\.[cC][lL][cC]-[^/]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*)?)(?:/|$)|\\.(?:/|$)"
+      }
+    },
+    "hookEntryPoint": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/hookPath"
+        },
+        {
+          "pattern": "\\.ps1$"
+        }
+      ]
+    },
+    "hookStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "entryPoint"
+      ],
+      "properties": {
+        "stage": {
+          "enum": [
+            "Preflight",
+            "BeforeStop",
+            "AfterStop",
+            "AfterStart"
+          ]
+        },
+        "entryPoint": {
+          "$ref": "#/$defs/hookEntryPoint"
+        }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "stages",
+        "planningEntryPoint"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "integer",
+          "const": 1
+        },
+        "stages": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/hookStage"
+          }
+        },
+        "planningEntryPoint": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/hookEntryPoint"
+            }
+          ]
+        }
+      },
+      "$comment": "Runtime requires at least one declared entry point, unique lifecycle stages, and a planning entry point distinct from lifecycle entry points. Package verification is not hook execution authorization."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "changeKind": {
+            "const": "files-only"
+          },
+          "build": {
+            "properties": {
+              "dependencyLockSha256": { "$ref": "#/$defs/hash" }
+            }
+          },
+          "hooks": false
+        }
+      },
+      "else": {
+        "properties": {
+          "changeKind": {
+            "const": "application-deployment"
+          }
+        }
+      }
+    }
+  ]
 }

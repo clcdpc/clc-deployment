@@ -23,7 +23,10 @@
     },
     "schemaVersion": {
       "type": "integer",
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "recordKind": {
       "const": "standing-authorization"
@@ -48,7 +51,8 @@
     "channel": {
       "enum": [
         "DEV",
-        "Production"
+        "Production",
+        "Test"
       ]
     },
     "sourceRepository": {
@@ -82,6 +86,32 @@
     },
     "buildJob": {
       "$ref": "#/$defs/code"
+    },
+    "sourcePolicy": {
+      "type": "object",
+      "required": [
+        "integrationBranch",
+        "allowUnmergedDevTags",
+        "allowSnapshots",
+        "allowTestTags"
+      ],
+      "properties": {
+        "allowTestTags": {
+          "type": "boolean"
+        },
+        "allowUnmergedDevTags": {
+          "type": "boolean"
+        },
+        "allowSnapshots": {
+          "type": "boolean"
+        },
+        "integrationBranch": {
+          "type": "string",
+          "maxLength": 100,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_/-]*$"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -142,5 +172,36 @@
       "minLength": 4
     }
   },
-  "title": "standing-authorization"
+  "title": "standing-authorization",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 2
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "sourcePolicy"
+          ]
+        },
+        "properties": {
+          "channel": {
+            "enum": [
+              "DEV",
+              "Production"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sourcePolicy"
+        ]
+      }
+    }
+  ]
 }

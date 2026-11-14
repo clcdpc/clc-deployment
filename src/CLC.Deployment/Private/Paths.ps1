@@ -183,7 +183,7 @@ function Assert-ClcPathComponent {
 }
 
 function Assert-ClcArchiveName {
-    param($Name, [switch] $PayloadOnly, [switch] $Directory, [switch] $AllowTemporary)
+    param($Name, [switch] $PayloadOnly, [switch] $Directory, [switch] $AllowTemporary, [switch] $HookOnly)
     if ($Name -isnot [string] -or $Name.Length -gt 240 -or $Name.Length -eq 0) { Stop-ClcError Clc.UnsafeArchive }
     if ($Directory) {
         if (-not $Name.EndsWith('/')) { Stop-ClcError Clc.UnsafeArchive }
@@ -191,6 +191,7 @@ function Assert-ClcArchiveName {
     }
     foreach ($part in $Name.Split('/')) { Assert-ClcPathComponent $part Clc.UnsafeArchive -Ascii -AllowTemporary:$AllowTemporary }
     if ($PayloadOnly -and (-not $Name.StartsWith('application/', [StringComparison]::Ordinal) -or $Name.Length -eq 12)) { Stop-ClcError Clc.UnsafeArchive }
+    if ($HookOnly -and (-not $Name.StartsWith('hooks/', [StringComparison]::Ordinal) -or $Name.Length -eq 6)) { Stop-ClcError Clc.UnsafeArchive }
 }
 
 function Get-ClcNamePrefixes {

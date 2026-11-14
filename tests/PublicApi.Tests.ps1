@@ -6,17 +6,17 @@ Describe 'Candidate public API and honest inspection' {
         $common = @('Verbose','Debug','ErrorAction','WarningAction','InformationAction','ProgressAction','ErrorVariable','WarningVariable','InformationVariable','OutVariable','OutBuffer','PipelineVariable')
         foreach ($command in $commands) {
             $expected = switch ($command.Name) {
-                New-ClcRelease { @('MetadataPath','OutputPath','PublishRoot') }
+                New-ClcRelease { @('HookRoot','MetadataPath','OutputPath','PublishRoot') }
                 Test-ClcRelease { @('ArchivePath','ReleaseTag') }
-                Invoke-ClcIisDeployment { @('AllowDowngrade','ArchivePath','Reason','ReleaseApprovalId','ReleaseTag','StandingAuthorizationId','TargetId','VerifiedReleasePath') }
-                Restore-ClcIisDeployment { @('AttemptId','Mode','Reason','RecoveryApprovalId','TargetId') }
+                Invoke-ClcIisDeployment { @('AllowDowngrade','ArchivePath','Operation','Reason','ReleaseApprovalId','ReleaseTag','StandingAuthorizationId','TargetId','VerifiedReleasePath') }
+                Restore-ClcIisDeployment { @('AttemptId','Mode','PersistentStateApprovalId','Reason','RecoveryApprovalId','TargetId') }
             }
             $actual = @($command.Parameters.Keys | Where-Object { $common -cnotcontains $_ } | Sort-Object)
             $actual | Should -Be $expected
             foreach ($parameter in $expected) {
                 $type=switch ($parameter) { AllowDowngrade {[switch]}; AttemptId {[guid]}; default {[string]} }
                 $command.Parameters[$parameter].ParameterType | Should -Be $type
-                $mandatory=-not (($command.Name -ceq 'Invoke-ClcIisDeployment' -and $parameter -cin @('AllowDowngrade','Reason')) -or $parameter -ceq 'RecoveryApprovalId')
+                $mandatory=-not (($command.Name -ceq 'Invoke-ClcIisDeployment' -and $parameter -cin @('AllowDowngrade','Reason','Operation')) -or $parameter -cin @('RecoveryApprovalId','PersistentStateApprovalId','HookRoot'))
                 @($command.Parameters[$parameter].Attributes | Where-Object { $_ -is [Management.Automation.ParameterAttribute] })[0].Mandatory | Should -Be $mandatory
             }
         }

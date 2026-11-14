@@ -166,6 +166,7 @@ function Assert-ClcToolkit {
 function Assert-ClcPackage {
     param($Value, [switch] $Manifest)
     $keys = @('contractFamily','schemaVersion','recordKind','applicationId','releaseId','source','build','builder','runtime','changeKind','validation','readinessContractVersion')
+    if ($Value.schemaVersion -eq 2 -and $Value.Contains('hooks')) { $keys+='hooks' }
     if ($Manifest) { $keys += 'files','inventorySha256' }
     Assert-ClcObject $Value $keys
     Assert-ClcId $Value.applicationId
@@ -179,7 +180,9 @@ function Assert-ClcPackage {
     Assert-ClcInteger $Value.build.runAttempt 1
     Assert-ClcCode $Value.build.job
     Assert-ClcVersion $Value.build.sdkVersion
-    Assert-ClcHash $Value.build.dependencyLockSha256
+    # V1 retains its required lock digest. In V2, explicit null records an
+    # independently qualified build without NuGet lock evidence.
+    if ($Value.schemaVersion -ne 2 -or $null -ne $Value.build.dependencyLockSha256) { Assert-ClcHash $Value.build.dependencyLockSha256 }
     Assert-ClcObject $Value.builder @('module','version','sourceCommit','distributionSha256')
     Assert-ClcEnum $Value.builder.module @('CLC.Deployment')
     Assert-ClcVersion $Value.builder.version
@@ -191,7 +194,8 @@ function Assert-ClcPackage {
     Assert-ClcEnum $Value.runtime.architecture @('x64')
     Assert-ClcEnum $Value.runtime.hostingModel @('inprocess')
     Assert-ClcInteger $Value.runtime.workerLimit 1 1
-    Assert-ClcEnum $Value.changeKind @('files-only')
+    Assert-ClcEnum $Value.changeKind $(if ($Value.schemaVersion -eq 2) {@('application-deployment')} else {@('files-only')})
+    if ($Value.Contains('hooks')) { Assert-ClcHookManifest $Value.hooks -Manifest:$Manifest }
     Assert-ClcObject $Value.validation @('contractVersion','entryPoint')
     Assert-ClcInteger $Value.validation.contractVersion 1 1
     Assert-ClcText $Value.validation.entryPoint 240 '^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.dll$'
@@ -199,6 +203,11 @@ function Assert-ClcPackage {
     Assert-ClcInteger $Value.readinessContractVersion 1 1
     if ($Manifest) {
         Assert-ClcFiles $Value.files
+        if ($Value.Contains('hooks')) {
+            $all=@($Value.files)+@($Value.hooks.files)
+            $total=0L; foreach ($file in $all) { $total+=$file.length }
+            if ($all.Count -ge 20000 -or $total -gt 1073741824) { Stop-ClcError Clc.InvalidContract }
+        }
         Assert-ClcHash $Value.inventorySha256
         if ($Value.inventorySha256 -cne (Get-ClcInventoryHash $Value.files)) { Stop-ClcError Clc.HashMismatch }
         if (@($Value.files.path) -cnotcontains ('application/' + $Value.validation.entryPoint)) { Stop-ClcError Clc.InvalidContract }
@@ -206,14 +215,14 @@ function Assert-ClcPackage {
 }
 
 function Assert-ClcFiles {
-    param($Value)
+    param($Value,[switch] $HookAssets)
     if ($Value -isnot [object[]] -or $Value.Count -gt 19999) { Stop-ClcError Clc.InvalidContract }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $prior = $null
     $total = 0L
     foreach ($file in $Value) {
         Assert-ClcObject $file @('path','length','sha256')
-        Assert-ClcArchiveName $file.path -PayloadOnly
+        if ($HookAssets) { Assert-ClcHookAssetName $file.path } else { Assert-ClcArchiveName $file.path -PayloadOnly }
         if (-not $seen.Add($file.path) -or ($null -ne $prior -and [StringComparer]::Ordinal.Compare($prior, $file.path) -ge 0)) { Stop-ClcError Clc.InvalidContract }
         foreach ($prefix in (Get-ClcNamePrefixes $file.path)) { if ($seen.Contains($prefix)) { Stop-ClcError Clc.InvalidContract } }
         Assert-ClcInteger $file.length 0 268435456
@@ -273,7 +282,10 @@ function Assert-ClcReadySnapshot {
 
 function Assert-ClcJournal {
     param($Value)
-    Assert-ClcObject $Value @('contractFamily','schemaVersion','recordKind','attemptId','targetKey','targetSnapshot','executingToolkit','policyGeneration','policySha256','approvalSnapshot','candidate','previous','initialPoolState','initialTargetEmpty','phase','outcome','liveMutationIntent','intent','observation','nativeCall','configuration','backup','recovery','publishedGeneration','createdUtc','updatedUtc','failure')
+    $keys=@('contractFamily','schemaVersion','recordKind','attemptId','targetKey','targetSnapshot','executingToolkit','policyGeneration','policySha256','approvalSnapshot','candidate','previous','initialPoolState','initialTargetEmpty','phase','outcome','liveMutationIntent','intent','observation','nativeCall','configuration','backup','recovery','publishedGeneration','createdUtc','updatedUtc','failure')
+    if ($Value.schemaVersion -eq 3) { $keys+='hooks' }
+    Assert-ClcObject $Value $keys
+    if ($Value.schemaVersion -eq 3) { Assert-ClcHookJournal $Value.hooks }
     Assert-ClcGuid $Value.attemptId
     Assert-ClcHash $Value.targetKey
     Assert-ClcTargetSnapshot $Value.targetSnapshot
@@ -287,7 +299,13 @@ function Assert-ClcJournal {
     Assert-ClcBoolean $Value.initialTargetEmpty
     Assert-ClcBoolean $Value.liveMutationIntent
     Assert-ClcEnum $Value.phase @('Prepared','Mutating','RecoveryRequired','Completed')
-    if ($null -ne $Value.outcome) { Assert-ClcEnum $Value.outcome @('Deployed','NoOp','FailedPreserved','RestoredPrevious','AcceptedCandidate','RestoredEmpty') }
+    if ($null -ne $Value.outcome) {
+        $outcomes=@('Deployed','NoOp','FailedPreserved','RestoredPrevious','AcceptedCandidate','RestoredEmpty')
+        if ($Value.schemaVersion -eq 3) { $outcomes+='Planned' }
+        Assert-ClcEnum $Value.outcome $outcomes
+        if ($Value.outcome -ceq 'FailedPreserved' -and (Test-ClcExternalMutationIntent $Value)) { Stop-ClcError Clc.InvalidContract }
+        if ($Value.outcome -ceq 'Planned' -and ($null -eq $Value.hooks -or $Value.hooks.operation -cne 'ValidateOnly' -or $Value.hooks.executions.Count -ne 1 -or $Value.hooks.executions[0].status -cne 'Succeeded' -or $Value.liveMutationIntent)) { Stop-ClcError Clc.InvalidContract }
+    }
     if (($Value.phase -ceq 'Completed') -ne ($null -ne $Value.outcome)) { Stop-ClcError Clc.InvalidContract }
     if (($null -eq $Value.previous) -ne $Value.initialTargetEmpty) { Stop-ClcError Clc.InvalidContract }
     if ($null -ne $Value.previous) {
@@ -300,7 +318,7 @@ function Assert-ClcJournal {
     }
     Assert-ClcObject $Value.intent @('sequence','operation','recordedUtc')
     Assert-ClcInteger $Value.intent.sequence 1
-    Assert-ClcEnum $Value.intent.operation @('Stage','Validate','Stop','Backup','Replace','Start','CheckReady','PublishCurrent','Complete')
+    Assert-ClcEnum $Value.intent.operation $(if ($Value.schemaVersion -eq 3) {@('Stage','Validate','Stop','Backup','Replace','Start','CheckReady','PublishCurrent','Complete','Hook')} else {@('Stage','Validate','Stop','Backup','Replace','Start','CheckReady','PublishCurrent','Complete')})
     Assert-ClcTimestamp $Value.intent.recordedUtc
     if ($null -ne $Value.observation) {
         Assert-ClcObject $Value.observation @('sequence','result','observedPoolState','workerCount','observedUtc')
@@ -314,7 +332,7 @@ function Assert-ClcJournal {
         $native = $Value.nativeCall
         Assert-ClcObject $native @('callId','operation','launchState','processId','creationUtc','exitCode')
         Assert-ClcGuid $native.callId
-        Assert-ClcEnum $native.operation @('Validate','Stop','Start')
+        Assert-ClcEnum $native.operation $(if ($Value.schemaVersion -eq 3) {@('Validate','Stop','Start','Hook')} else {@('Validate','Stop','Start')})
         Assert-ClcEnum $native.launchState @('Intent','Started','Exited')
         if ($native.launchState -ceq 'Intent') {
             if ($null -ne $native.processId -or $null -ne $native.creationUtc -or $null -ne $native.exitCode) { Stop-ClcError Clc.InvalidContract }
@@ -334,7 +352,14 @@ function Assert-ClcJournal {
     }
     if ($null -ne $Value.recovery) {
         $recovery = $Value.recovery
-        Assert-ClcObject $recovery @('sequence','mode','reason','originalJournalSha256','executingToolkit','policyGeneration','policySha256','baselineGeneration')
+        $recoveryKeys=@('sequence','mode','reason','originalJournalSha256','executingToolkit','policyGeneration','policySha256','baselineGeneration')
+        if ($Value.schemaVersion -eq 3) { $recoveryKeys+='persistentStateApproval' }
+        Assert-ClcObject $recovery $recoveryKeys
+        if ($Value.schemaVersion -eq 3 -and $null -ne $recovery.persistentStateApproval) {
+            Assert-ClcObject $recovery.persistentStateApproval @('approvalId','sha256')
+            Assert-ClcId $recovery.persistentStateApproval.approvalId
+            Assert-ClcHash $recovery.persistentStateApproval.sha256
+        }
         Assert-ClcInteger $recovery.sequence 1
         Assert-ClcEnum $recovery.mode @('RestorePrevious','AcceptCandidate','RestoreEmpty')
         Assert-ClcText $recovery.reason 128 '^[a-z0-9][a-z0-9-]{0,127}$'
@@ -358,6 +383,7 @@ function Assert-ClcJournal {
 
 function Assert-ClcRecord {
     param($Value, [string] $Kind)
+    if ($Kind -ceq 'hook-result') { Assert-ClcHookResult $Value; return }
     if ($Kind -cin @('application-validation','readiness')) {
         $keys = @('applicationId','releaseId','sourceCommit','runtimeEnvironment','configurationRevision')
         if ($Kind -ceq 'readiness') { $keys += 'readinessContractVersion','status' }
@@ -383,9 +409,11 @@ function Assert-ClcRecord {
     if ($Value -isnot [Collections.IDictionary] -or -not $Value.Contains('contractFamily') -or -not $Value.Contains('schemaVersion') -or -not $Value.Contains('recordKind')) {
         Stop-ClcError Clc.UnsupportedContract
     }
-    $versions=if ($Kind -ceq 'journal') {@(2)} elseif ($Kind -ceq 'release-approval') {@(1,2)} else {@(1)}
+    $versions=if ($Kind -ceq 'journal') {@(2,3)} elseif ($Kind -ceq 'release-approval') {@(1,2,3)} elseif ($Kind -cin @('standing-authorization','verified-release','release-metadata','release-manifest')) {@(1,2)} else {@(1)}
     if ($Value.contractFamily -cne 'clc-file-iis-v1' -or $Value.schemaVersion -isnot [long] -or $Value.schemaVersion -notin $versions -or $Value.recordKind -cne $Kind) { Stop-ClcError Clc.UnsupportedContract }
     switch -CaseSensitive ($Kind) {
+        hook-policy { Assert-ClcHookPolicy $Value }
+        persistent-state-approval { Assert-ClcPersistentStateApproval $Value }
         release-metadata { Assert-ClcPackage $Value }
         release-manifest { Assert-ClcPackage $Value -Manifest }
         host-policy {
@@ -413,7 +441,7 @@ function Assert-ClcRecord {
         }
         release-approval {
             $keys=@('contractFamily','schemaVersion','recordKind','approvalId','targetId','enabled','applicationId','releaseId','sourceRepository','sourceCommit','lineageId','releaseSequence','releaseZipSha256','manifestSha256','provenance','authorization')
-            if ($Value.schemaVersion -eq 2) { $keys+='admission' }
+            if ($Value.schemaVersion -ge 2) { $keys+='admission' }
             Assert-ClcObject $Value $keys
             foreach ($key in @('approvalId','targetId','applicationId','releaseId','lineageId')) { Assert-ClcId $Value[$key] }
             Assert-ClcBoolean $Value.enabled
@@ -431,12 +459,20 @@ function Assert-ClcRecord {
             Assert-ClcSid $Value.authorization.authoritySid
             Assert-ClcCode $Value.authorization.reference
             Assert-ClcTimestamp $Value.authorization.approvedUtc
-            if ($Value.schemaVersion -eq 2) {
-                Assert-ClcObject $Value.admission @('standingAuthorizationId','standingAuthorizationSha256','tag','verifiedReleaseSha256')
+            if ($Value.schemaVersion -ge 2) {
+                $admissionKeys=@('standingAuthorizationId','standingAuthorizationSha256','tag','verifiedReleaseSha256')
+                if ($Value.schemaVersion -eq 3) { $admissionKeys+='sourceIdentity' }
+                Assert-ClcObject $Value.admission $admissionKeys
                 Assert-ClcId $Value.admission.standingAuthorizationId
                 Assert-ClcHash $Value.admission.standingAuthorizationSha256
                 Assert-ClcHash $Value.admission.verifiedReleaseSha256
-                $null=Get-ClcDeploymentTag $Value.admission.tag
+                if ($Value.schemaVersion -eq 3) {
+                    Assert-ClcSourceIdentity $Value.admission.sourceIdentity
+                    $source=$Value.admission.sourceIdentity
+                    if ($source.reference -cne $Value.admission.tag -or $source.releaseId -cne $Value.releaseId -or
+                        $source.sourceCommit -cne $Value.sourceCommit -or $source.repository -cne $Value.sourceRepository -or
+                        $source.sequence -ne $Value.releaseSequence) { Stop-ClcError Clc.InvalidContract }
+                } else { $null=Get-ClcDeploymentTag $Value.admission.tag }
             }
         }
         standing-authorization { Assert-ClcStandingAuthorization $Value }

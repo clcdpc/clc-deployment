@@ -1,0 +1,78 @@
+name: Shared application build
+on:
+  workflow_call:
+    inputs:
+      reference:
+        type: string
+        required: true
+      source-commit:
+        type: string
+        required: true
+    outputs:
+      artifact-name:
+        value: ${{ jobs.build.outputs.artifact-name }}
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    outputs:
+      artifact-name: ${{ steps.package.outputs.artifact_name }}
+    steps:
+      - name: Authenticate immutable shared workflow revision
+        id: bootstrap
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $response = Invoke-RestMethod -Uri ($env:ACTIONS_ID_TOKEN_REQUEST_URL + '&audience=clc-deployment') -Headers @{Authorization=('Bearer ' + $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)} -TimeoutSec 30
+            $part = $response.value.Split('.')[1].Replace('-','+').Replace('_','/')
+            $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($part.PadRight($part.Length + (4 - $part.Length % 4) % 4,'='))) | ConvertFrom-Json -AsHashtable
+            $expected = 'clcdpc/clc-deployment/.github/workflows/application-build.yml@' + $claims.job_workflow_sha
+            if ($claims.iss -cne 'https://token.actions.githubusercontent.com' -or $claims.aud -cne 'clc-deployment' -or $claims.job_workflow_sha -cnotmatch '^[a-f0-9]{40}$' -or $claims.job_workflow_ref -cne $expected -or $claims.exp -le [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) { throw 'Invalid platform identity.' }
+            $projection = [ordered]@{}
+            foreach ($key in @('iss','aud','repository','workflow_ref','workflow_sha','job_workflow_ref','job_workflow_sha','event_name','actor','environment')) { if ($claims.Contains($key)) { $projection[$key] = $claims[$key] } }
+            'sha=' + $claims.job_workflow_sha | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            'claims=' + ($projection | ConvertTo-Json -Compress) | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } catch { throw 'Cannot authenticate immutable shared workflow through the GitHub job endpoint.' }
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: ${{ steps.bootstrap.outputs.sha }}
+          path: machinery
+          persist-credentials: false
+      - name: Verify protected consumer build policy
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLC_CLAIMS: ${{ steps.bootstrap.outputs.claims }}
+          CLC_REPOSITORY: ${{ github.repository }}
+        run: |
+          . machinery/tools/release/Workflow.Common.ps1
+          $claims = $env:CLC_CLAIMS | ConvertFrom-Json -AsHashtable
+          $api = { param($method,$path,$body,[switch]$Bytes) Invoke-ClcReleaseApi -Repository $env:CLC_REPOSITORY -Method $method -Path $path -Body $body -Bytes:$Bytes }
+          $null = Get-ClcProtectedWorkflowConfiguration $claims $env:CLC_REPOSITORY build $env:RUNNER_TEMP $api
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.source-commit }}
+          path: application
+          persist-credentials: false
+      - name: Build, qualify and package application
+        id: package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLC_REFERENCE: ${{ inputs.reference }}
+          CLC_SOURCE: ${{ inputs.source-commit }}
+          CLC_SHARED_SOURCE: ${{ steps.bootstrap.outputs.sha }}
+        run: |
+          & machinery/tools/release/New-ClcApplicationPackage.ps1 -ConfigurationPath (Join-Path $PWD 'application/.clc/release.json') -SourceRoot (Join-Path $PWD application) -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -SharedSourceCommit $env:CLC_SHARED_SOURCE -RunId ([long]$env:GITHUB_RUN_ID) -RunAttempt ([long]$env:GITHUB_RUN_ATTEMPT) -OutputDirectory (Join-Path $env:RUNNER_TEMP 'clc-application-build')
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: ${{ steps.package.outputs.artifact_path }}/release.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

@@ -2,23 +2,64 @@
 # Caller identity evidence never grants authority independently of that policy.
 function Get-ClcDeploymentTag {
     param($Tag)
-    Assert-ClcText $Tag 64 '^v(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})(-(dev|beta|rc)\.([1-9][0-9]{0,3}))?$'
-    $m=[regex]::Match($Tag,'^v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-(dev|beta|rc)\.([0-9]+))?$')
+    Assert-ClcText $Tag 64 '^v(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})(-(dev|beta|rc|test)\.([1-9][0-9]{0,3}))?$'
+    $m=[regex]::Match($Tag,'^v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-(dev|beta|rc|test)\.([0-9]+))?$')
     $kind=$m.Groups[4].Value
-    $channel=if ($kind -ceq 'dev') {'DEV'} elseif ($kind -ceq '') {'Production'} else {'ArtifactOnly'}
+    $channel=if ($kind -ceq 'dev') {'DEV'} elseif ($kind -ceq 'test') {'Test'} elseif ($kind -ceq '') {'Production'} else {'ArtifactOnly'}
     $ordinal=if ($kind -ceq '') {9999L} else {[long]$m.Groups[5].Value}
     if ($ordinal -gt 9998 -and $kind) { Stop-ClcError Clc.InvalidContract }
     $sequence=(([long]$m.Groups[1].Value*10000L+[long]$m.Groups[2].Value)*10000L+[long]$m.Groups[3].Value)*10000L+$ordinal
     return @{tag=$Tag;channel=$channel;releaseId=$Tag.Replace('.','-');releaseSequence=$sequence}
 }
 
+function Assert-ClcSourceIdentity {
+    param($Value)
+    Assert-ClcObject $Value @('contractVersion','kind','sourceClass','repository','sourceCommit','reference','releaseId','channel','orderingKind','sequence','tag','integrationBranch','integrationCommit')
+    Assert-ClcInteger $Value.contractVersion 1 1
+    Assert-ClcEnum $Value.kind @('tag','snapshot')
+    Assert-ClcEnum $Value.sourceClass @('IntegrationTag','UnmergedDevTag','ProtectedBranch')
+    Assert-ClcRepository $Value.repository
+    Assert-ClcCommit $Value.sourceCommit; Assert-ClcCommit $Value.integrationCommit
+    Assert-ClcText $Value.integrationBranch 100 '^[A-Za-z0-9][A-Za-z0-9_/-]*$'
+    Assert-ClcId $Value.releaseId
+    Assert-ClcInteger $Value.sequence 1
+    Assert-ClcEnum $Value.channel @('DEV','Production','ArtifactOnly','Test')
+    Assert-ClcEnum $Value.orderingKind @('SemVer','Snapshot')
+    if ($Value.kind -ceq 'snapshot') {
+        Assert-ClcText $Value.reference 128 '^refs/heads/[A-Za-z0-9][A-Za-z0-9_/-]*$'
+        if ($null -ne $Value.tag -or $Value.orderingKind -cne 'Snapshot' -or $Value.sourceClass -cne 'ProtectedBranch' -or $Value.channel -cne 'DEV' -or
+            $Value.releaseId -cne ('dev-'+$Value.sequence+'-'+$Value.sourceCommit.Substring(0,12))) { Stop-ClcError Clc.InvalidContract }
+    } else {
+        $tag=Get-ClcDeploymentTag $Value.tag
+        if ($Value.reference -cne $Value.tag -or $Value.releaseId -cne $tag.releaseId -or $Value.sequence -ne $tag.releaseSequence -or $Value.channel -cne $tag.channel -or
+            $Value.orderingKind -cne 'SemVer' -or $Value.sourceClass -cnotin @('IntegrationTag','UnmergedDevTag') -or ($Value.sourceClass -ceq 'UnmergedDevTag' -and $Value.channel -cne 'DEV')) { Stop-ClcError Clc.InvalidContract }
+    }
+}
+
+function Assert-ClcStandingSource {
+    param($Standing,$Source)
+    Assert-ClcSourceIdentity $Source
+    if ($Standing.schemaVersion -ne 2 -or $Source.repository -cne $Standing.sourceRepository -or $Source.channel -cne $Standing.channel -or $Source.integrationBranch -cne $Standing.sourcePolicy.integrationBranch -or
+        ($Source.sourceClass -ceq 'UnmergedDevTag' -and -not $Standing.sourcePolicy.allowUnmergedDevTags) -or
+        ($Source.kind -ceq 'snapshot' -and (-not $Standing.sourcePolicy.allowSnapshots -or $Source.reference -cne ('refs/heads/'+$Standing.sourcePolicy.integrationBranch))) -or
+        ($Source.channel -ceq 'Test' -and -not $Standing.sourcePolicy.allowTestTags)) { Stop-ClcError Clc.StandingAuthorizationRejected }
+    return @{channel=$Source.channel;releaseSequence=$Source.sequence;releaseId=$Source.releaseId}
+}
+
+function Test-ClcSnapshotApproval {
+    param($Approval)
+    return $Approval.schemaVersion -eq 3 -and $Approval.admission.sourceIdentity.kind -ceq 'snapshot'
+}
+
 function Assert-ClcStandingAuthorization {
     param($Value)
-    Assert-ClcObject $Value @('contractFamily','schemaVersion','recordKind','standingAuthorizationId','enabled','targetId','applicationId','environmentName','channel','sourceRepository','buildWorkflowPath','buildJob','lineageId','authorization')
+    $keys=@('contractFamily','schemaVersion','recordKind','standingAuthorizationId','enabled','targetId','applicationId','environmentName','channel','sourceRepository','buildWorkflowPath','buildJob','lineageId','authorization')
+    if ($Value.schemaVersion -eq 2) { $keys+='sourcePolicy' }
+    Assert-ClcObject $Value $keys
     foreach ($key in @('standingAuthorizationId','targetId','applicationId','lineageId')) { Assert-ClcId $Value[$key] }
     Assert-ClcBoolean $Value.enabled
     Assert-ClcText $Value.environmentName
-    Assert-ClcEnum $Value.channel @('DEV','Production')
+    Assert-ClcEnum $Value.channel $(if ($Value.schemaVersion -eq 2) {@('DEV','Production','Test')} else {@('DEV','Production')})
     Assert-ClcRepository $Value.sourceRepository
     Assert-ClcWorkflow $Value.buildWorkflowPath
     Assert-ClcCode $Value.buildJob
@@ -26,13 +67,25 @@ function Assert-ClcStandingAuthorization {
     Assert-ClcSid $Value.authorization.authoritySid
     Assert-ClcCode $Value.authorization.reference
     Assert-ClcTimestamp $Value.authorization.approvedUtc
+    if ($Value.schemaVersion -eq 2) {
+        Assert-ClcObject $Value.sourcePolicy @('integrationBranch','allowUnmergedDevTags','allowSnapshots','allowTestTags')
+        Assert-ClcText $Value.sourcePolicy.integrationBranch 100 '^[A-Za-z0-9][A-Za-z0-9_/-]*$'
+        foreach ($key in @('allowUnmergedDevTags','allowSnapshots','allowTestTags')) { Assert-ClcBoolean $Value.sourcePolicy[$key] }
+    }
 }
 
 function Assert-ClcVerifiedRelease {
     param($Value)
-    Assert-ClcObject $Value @('contractFamily','schemaVersion','recordKind','targetId','applicationId','releaseId','tag','sourceRepository','sourceCommit','releaseZipSha256','manifestSha256','provenance')
+    $keys=@('contractFamily','schemaVersion','recordKind','targetId','applicationId','releaseId','tag','sourceRepository','sourceCommit','releaseZipSha256','manifestSha256','provenance')
+    if ($Value.schemaVersion -eq 2) { $keys+='sourceIdentity' }
+    Assert-ClcObject $Value $keys
     foreach ($key in @('targetId','applicationId','releaseId')) { Assert-ClcId $Value[$key] }
-    $null=Get-ClcDeploymentTag $Value.tag
+    if ($Value.schemaVersion -eq 2) {
+        Assert-ClcSourceIdentity $Value.sourceIdentity
+        $s=$Value.sourceIdentity
+        if ($s.reference -cne $Value.tag -or $s.releaseId -cne $Value.releaseId -or $s.repository -cne $Value.sourceRepository -or $s.sourceCommit -cne $Value.sourceCommit -or
+            ($s.kind -ceq 'snapshot' -and $s.sequence -ne $Value.provenance.runId)) { Stop-ClcError Clc.InvalidContract }
+    } else { $null=Get-ClcDeploymentTag $Value.tag }
     Assert-ClcRepository $Value.sourceRepository
     Assert-ClcCommit $Value.sourceCommit
     foreach ($key in @('releaseZipSha256','manifestSha256')) { Assert-ClcHash $Value[$key] }
@@ -67,12 +120,13 @@ function Read-ClcActiveStandingForApproval {
     $pending=Join-Path $Context.layout.approvalCatalogRoot ('standing\'+$Target.targetId+'.pending')
     if ([IO.File]::Exists($pending) -or [IO.Directory]::Exists($pending)) { Stop-ClcError Clc.AdmissionIncomplete }
     $file=Read-ClcStandingAuthorization $Context $Target $a.admission.standingAuthorizationId
-    $s=$file.record; $tag=Get-ClcDeploymentTag $a.admission.tag
+    $s=$file.record
+    $tag=if ($a.schemaVersion -eq 3) { Assert-ClcStandingSource $s $a.admission.sourceIdentity } else { Get-ClcDeploymentTag $a.admission.tag }
     if ($file.sha256 -cne $a.admission.standingAuthorizationSha256 -or $tag.channel -cne $s.channel -or
         $a.releaseSequence -ne $tag.releaseSequence -or $a.lineageId -cne $s.lineageId -or
         $a.sourceRepository -cne $s.sourceRepository -or $a.provenance.workflowPath -cne $s.buildWorkflowPath -or
         $a.provenance.buildJob -cne $s.buildJob) { Stop-ClcError Clc.StandingAuthorizationRejected }
-    $null=Read-ClcTagBinding $Context $Target $a -Required
+    if (-not (Test-ClcSnapshotApproval $a)) { $null=Read-ClcTagBinding $Context $Target $a -Required }
     $null=Read-ClcAdmissionEvidence $Context $Target $a
     return $file
 }
@@ -110,10 +164,21 @@ function Read-ClcTagBinding {
 
 function Assert-ClcAutomatedOrdering {
     param($Approval,$Previous)
+    if ($Approval.schemaVersion -eq 3 -and $Previous.schemaVersion -ge 2) {
+        $previousKind=if ($Previous.schemaVersion -eq 3) {$Previous.admission.sourceIdentity.orderingKind} else {'SemVer'}
+        if ($Approval.admission.sourceIdentity.orderingKind -cne $previousKind) { Stop-ClcError Clc.DowngradeRejected }
+        if ($Approval.releaseSequence -eq $Previous.releaseSequence -and $Approval.admission.tag -cne $Previous.admission.tag) { Stop-ClcError Clc.ReleaseIdentityConflict }
+    }
     if ($Approval.lineageId -cne $Previous.lineageId -or $Approval.releaseSequence -lt $Previous.releaseSequence) { Stop-ClcError Clc.DowngradeRejected }
     if ($Approval.releaseSequence -ne $Previous.releaseSequence) { return }
     if ($Approval.sourceRepository -cne $Previous.sourceRepository -or $Approval.sourceCommit -cne $Previous.sourceCommit) { Stop-ClcError Clc.ReleaseIdentityConflict }
     if ($Approval.approvalId -ceq $Previous.approvalId) { return }
+    # A fresh eligibility observation may show tagged DEV source is now in
+    # integration history. Identical source/build/artifact bytes remain repeatable;
+    # this does not permit a different package to reuse a producer run/attempt.
+    if ($Approval.schemaVersion -eq 3 -and $Previous.schemaVersion -eq 3 -and $Approval.releaseId -ceq $Previous.releaseId -and $Approval.admission.tag -ceq $Previous.admission.tag -and
+        $Approval.releaseZipSha256 -ceq $Previous.releaseZipSha256 -and $Approval.manifestSha256 -ceq $Previous.manifestSha256 -and
+        (Test-ClcValueEqual $Approval.provenance $Previous.provenance)) { return }
     # Same-tag rebuilds must be a later build, not changed bytes for the same run.
     if ($Approval.provenance.runId -lt $Previous.provenance.runId -or
         ($Approval.provenance.runId -eq $Previous.provenance.runId -and $Approval.provenance.runAttempt -le $Previous.provenance.runAttempt)) { Stop-ClcError Clc.ReleaseIdentityConflict }
@@ -159,14 +224,15 @@ function New-ClcAutomatedApproval {
     if ($decision.classification -cne 'Clean' -or $null -eq $Lock.state.current) { Stop-ClcError Clc.AutomationRequiresBaseline }
     $context=$Lock.context; $target=$Lock.targetFile.record
     $standing=Read-ClcStandingAuthorization $context $target $StandingAuthorizationId; $s=$standing.record
-    $tag=Get-ClcDeploymentTag $ReleaseTag
-    if ($tag.channel -cne $s.channel) { Stop-ClcError Clc.StandingAuthorizationRejected }
     $current=$Lock.state.current.record
-    if ($current.approvalSnapshot.lineageId -cne $s.lineageId -or $tag.releaseSequence -lt $current.approvalSnapshot.releaseSequence) { Stop-ClcError Clc.DowngradeRejected }
     $null=Add-ClcProtectedPathPin $context $target.artifactInboxRoot -Directory -Mutable -RuntimeSid $target.runtimeIdentitySid
     $evidence=Open-ClcAutomationInput $Lock $VerifiedReleasePath 4194304
     $evidenceBytes=(Read-ClcStream $evidence.stream 4194304 ([Diagnostics.Stopwatch]::StartNew()) -Capture).bytes
     $p=Read-ClcJson $evidenceBytes verified-release
+    if (($s.schemaVersion -eq 2) -ne ($p.schemaVersion -eq 2)) { Stop-ClcError Clc.StandingAuthorizationRejected }
+    $tag=if ($p.schemaVersion -eq 2) { Assert-ClcStandingSource $s $p.sourceIdentity } else { Get-ClcDeploymentTag $ReleaseTag }
+    if ($tag.channel -cne $s.channel) { Stop-ClcError Clc.StandingAuthorizationRejected }
+    if ($current.approvalSnapshot.lineageId -cne $s.lineageId -or $tag.releaseSequence -lt $current.approvalSnapshot.releaseSequence) { Stop-ClcError Clc.DowngradeRejected }
     $evidence.stream.Position=0
     $input=Open-ClcAutomationInput $Lock $ArchivePath 1073741824 -Archive
     $inspection=Test-ClcArchiveStream $input.stream ([Diagnostics.Stopwatch]::StartNew())
@@ -188,6 +254,10 @@ function New-ClcAutomatedApproval {
     # Fixed field order makes identity independent of input JSON property order.
     $identity=[ordered]@{}
     foreach ($key in @('targetId','applicationId','releaseId','tag','sourceRepository','sourceCommit','releaseZipSha256','manifestSha256')) { $identity[$key]=$p[$key] }
+    if ($p.schemaVersion -eq 2) {
+        $identity.sourceIdentity=[ordered]@{}
+        foreach ($key in @('contractVersion','kind','sourceClass','repository','sourceCommit','reference','releaseId','channel','orderingKind','sequence','tag','integrationBranch','integrationCommit')) { $identity.sourceIdentity[$key]=$p.sourceIdentity[$key] }
+    }
     $identity.provenance=[ordered]@{}
     foreach ($key in @('workflowPath','runId','runAttempt','buildJob','artifactId','transportSha256')) { $identity.provenance[$key]=$p.provenance[$key] }
     $identity.lineageId=$s.lineageId; $identity.standingAuthorizationId=$StandingAuthorizationId; $identity.standingAuthorizationSha256=$standing.sha256
@@ -197,16 +267,18 @@ function New-ClcAutomatedApproval {
         lineageId=$s.lineageId;releaseSequence=$tag.releaseSequence;releaseZipSha256=$p.releaseZipSha256;manifestSha256=$p.manifestSha256;
         provenance=$p.provenance;authorization=$s.authorization;
         admission=@{standingAuthorizationId=$StandingAuthorizationId;standingAuthorizationSha256=$standing.sha256;tag=$ReleaseTag;verifiedReleaseSha256=$evidence.sha256}}
+    if ($p.schemaVersion -eq 2) { $a.schemaVersion=3L; $a.admission.sourceIdentity=$identity.sourceIdentity }
     $path=Join-Path $context.layout.approvalCatalogRoot ($id+'.json')
     $pending=Join-Path $context.layout.approvalCatalogRoot ('standing\'+$target.targetId+'.pending')
     if ([IO.File]::Exists($pending) -or [IO.Directory]::Exists($pending)) { Stop-ClcError Clc.AdmissionIncomplete }
-    $bound=Read-ClcTagBinding $context $target $a
+    $requiresTagBinding=-not (Test-ClcSnapshotApproval $a)
+    $bound=if ($requiresTagBinding) { Read-ClcTagBinding $context $target $a } else {$null}
     $previous=Read-ClcApprovedManifest $Lock $current.release.approvalId
     Assert-ClcReleaseBinding $previous $current.release $current.approvalSnapshot
-    if ($previous.approvalFile.record.schemaVersion -eq 2) { $null=Read-ClcTagBinding $context $target $previous.approvalFile.record -Required }
+    if ($previous.approvalFile.record.schemaVersion -ge 2 -and -not (Test-ClcSnapshotApproval $previous.approvalFile.record)) { $null=Read-ClcTagBinding $context $target $previous.approvalFile.record -Required }
     Assert-ClcAutomatedOrdering $a $previous.approvalFile.record
     if ([IO.File]::Exists($path)) {
-        if ($null -eq $bound) { Stop-ClcError Clc.AdmissionIncomplete }
+        if ($requiresTagBinding -and $null -eq $bound) { Stop-ClcError Clc.AdmissionIncomplete }
         $existing=Read-ClcProtectedApproval $context $id
         # Identity is semantic; preserve the first admitted evidence bytes even
         # when a trusted retry serializes the same fields in another order.
@@ -233,7 +305,7 @@ function New-ClcAutomatedApproval {
     $out=[IO.File]::Open($evidencePath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
     try { $out.Write($evidenceBytes); $out.Flush($true) } finally { $out.Dispose() }
     $null=Read-ClcAdmissionEvidence $context $target $a
-    if ($null -eq $bound) {
+    if ($requiresTagBinding -and $null -eq $bound) {
         $binding=Get-ClcTagBinding $context $target $a
         Assert-ClcPathSpelling $binding.path
         $bindingBytes=[Text.Encoding]::UTF8.GetBytes(($binding.record | ConvertTo-Json -Depth 8 -Compress))
@@ -262,7 +334,7 @@ function New-ClcAutomatedApproval {
 
 function Assert-ClcAutomatedRecoveryAuthority {
     param($Session,$Selected)
-    if ($Selected.approvalFile.record.schemaVersion -ne 2) { return }
+    if ($Selected.approvalFile.record.schemaVersion -lt 2) { return }
     if (-not $Session.ContainsKey('recoveryApprovalId') -or -not $Session.recoveryApprovalId) { Stop-ClcError Clc.RecoveryApprovalRequired }
     $manual=Read-ClcProtectedApproval $Session.lock.context $Session.recoveryApprovalId
     $a=$manual.record; $selected=$Selected.approvalFile.record

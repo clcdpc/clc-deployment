@@ -33,7 +33,7 @@ function Get-ClcReconciliationDecision {
     if ($j.phase -cne 'Completed' -or -not (Test-ClcHelpersExited $j)) { return @{classification='RecoveryRequired'} }
     $null=Read-ClcLatestAttemptEvidence $Lock $state
     if ($j.outcome -ceq 'RestoredEmpty') { return @{classification='EmptyRecoveryNeedsVerification'} }
-    if ($j.outcome -ceq 'FailedPreserved') {
+    if ($j.outcome -cin @('FailedPreserved','Planned')) {
         $matches=if ($null -eq $j.previous) {$null -eq $state.current} else {
             $null -ne $state.current -and $state.current.record.generation -eq $j.previous.generation -and
             (Test-ClcValueEqual $state.current.record.release $j.previous.release)
@@ -52,7 +52,8 @@ function New-ClcPreparedJournal {
     param($Session,$Previous,$HostFacts)
     $lock=$Session.lock; $approval=$Session.release.approvalFile
     $now=Get-ClcUtcTimestamp
-    $j=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=2L;recordKind='journal';attemptId=$Session.attemptId;
+    $version=if ($Session.release.manifest.schemaVersion -eq 2) {3L} else {2L}
+    $j=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=$version;recordKind='journal';attemptId=$Session.attemptId;
         targetKey=$lock.identity.targetKey;targetSnapshot=$lock.identity.snapshot;executingToolkit=$lock.context.executingToolkit;
         policyGeneration=$lock.context.policyFile.record.generation;policySha256=$lock.context.policyFile.sha256;
         approvalSnapshot=@{approvalId=$approval.record.approvalId;sha256=$approval.sha256;lineageId=$approval.record.lineageId;releaseSequence=$approval.record.releaseSequence};
@@ -60,11 +61,14 @@ function New-ClcPreparedJournal {
         phase='Prepared';outcome=$null;liveMutationIntent=$false;intent=@{sequence=1L;operation='Stage';recordedUtc=$now};
         observation=$null;nativeCall=$null;configuration=$Session.configuration.record;backup=$null;recovery=$null;publishedGeneration=$null;
         createdUtc=$now;updatedUtc=$now;failure=$null}
+    if ($version -eq 3) {
+        $j.hooks=if ($Session.ContainsKey('hookPolicy')) {@{policySha256=$Session.hookPolicy.sha256;operation=$Session.operation;externalStateMayHaveChanged=$false;executions=@()}} else {$null}
+    }
     $state=Read-ClcDeploymentState $lock
     return Write-ClcStateRecord $lock journal $j $(if ($null -ne $state.journal) {$state.journal.sha256})
 }
 function Write-ClcJournalIntent {
-    param($Lock,[ValidateSet('Stage','Validate','Stop','Backup','Replace','Start','CheckReady','PublishCurrent','Complete')][string] $Operation)
+    param($Lock,[ValidateSet('Stage','Validate','Stop','Backup','Replace','Start','CheckReady','PublishCurrent','Complete','Hook')][string] $Operation)
     $file=Read-ClcStateFile $Lock journal; $j=$file.record
     if ($j.intent.sequence -eq [long]::MaxValue -or -not (Test-ClcHelpersExited $j)) { Stop-ClcError Clc.RecoveryRequired }
     $j.intent=@{sequence=($j.intent.sequence+1L);operation=$Operation;recordedUtc=(Get-ClcUtcTimestamp)}
@@ -74,7 +78,7 @@ function Write-ClcJournalIntent {
     return Write-ClcStateRecord $Lock journal $j $file.sha256
 }
 function Write-ClcNativeCallIntent {
-    param($Lock,[ValidateSet('Validate','Stop','Start')][string] $Operation)
+    param($Lock,[ValidateSet('Validate','Stop','Start','Hook')][string] $Operation)
     $file=Write-ClcJournalIntent $Lock $Operation; $j=$file.record
     $j.nativeCall=@{callId=[guid]::NewGuid().ToString('D');operation=$Operation;launchState='Intent';processId=$null;creationUtc=$null;exitCode=$null}
     return Write-ClcStateRecord $Lock journal $j $file.sha256
