@@ -7,7 +7,7 @@ $ErrorActionPreference='Stop'
 $script:HModuleRoot=Join-Path $PSScriptRoot '../../CLC.Deployment'
 if (-not [IO.Directory]::Exists($script:HModuleRoot)) { throw 'Use the independently authenticated packaged bootstrap layout, not a source checkout.' }
 $script:HModuleRoot=[IO.Path]::GetFullPath($script:HModuleRoot)
-foreach ($helper in @('Contracts','Paths','Inventory','Archive','NativeProcess','Trust','Policy','Iis','TargetIdentity','Host','Lock','State','Journal','Files','Application','IisLifecycle','Replacement','Deployment','Recovery')) {
+foreach ($helper in @('Contracts','Paths','Inventory','Hooks.Package','Archive','NativeProcess','Trust','Policy','Iis','TargetIdentity','Host','Lock','State','Journal','Files','Application','Hooks','IisLifecycle','Replacement','Deployment','Recovery','Automation')) {
     . (Join-Path $script:HModuleRoot ('Private/'+$helper+'.ps1'))
 }
 . "$PSScriptRoot/HostEnrollment.Iis.ps1"

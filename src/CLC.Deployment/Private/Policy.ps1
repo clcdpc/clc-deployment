@@ -47,7 +47,7 @@ function Read-ClcApprovedRelease {
     $target = $targetFile.record; $approval = $approvalFile.record
     if (-not $approval.enabled) { Stop-ClcError Clc.ApprovalDisabled }
     if ($approval.targetId -cne $TargetId -or $approval.applicationId -cne $target.applicationId) { Stop-ClcError Clc.ApprovalMismatch }
-    $standing=if ($approval.schemaVersion -eq 2) { Read-ClcActiveStandingForApproval $Context $target $approvalFile } else { $null }
+    $standing=if ($approval.schemaVersion -ge 2) { Read-ClcActiveStandingForApproval $Context $target $approvalFile } else { $null }
     $null = Add-ClcProtectedPathPin $Context $target.artifactInboxRoot -Directory -Mutable -RuntimeSid $target.runtimeIdentitySid
     $archiveRoot=$target.artifactInboxRoot
     if ($null -ne $Lock) {

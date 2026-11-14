@@ -1,0 +1,28 @@
+{
+  "contractVersion": 1,
+  "applicationId": "example",
+  "repository": "example-org/example",
+  "integrationBranch": "master",
+  "sourcePolicy": { "allowUnmergedDevTags": true, "allowSnapshots": true, "allowTestTags": false },
+  "producer": { "workflowPath": ".github/workflows/build.yml", "job": "build", "jobName": "package / build" },
+  "trustedFiles": [".clc/release.json", ".github/workflows/build.yml", ".github/workflows/deploy.yml"],
+  "requiredToolkitContractVersion": 2,
+  "project": "src/Example/Example.csproj",
+  "testProject": "tests/Example.Tests/Example.Tests.csproj",
+  "orchestration": {
+    "sharedRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "deploymentWorkflowPath": ".github/workflows/deploy.yml"
+  },
+  "targets": [
+    {
+      "channel": "DEV", "targetId": "example-dev", "environment": "example-dev",
+      "runnerGroup": "example-dev", "runnerLabels": ["self-hosted", "Windows", "X64", "example-dev"],
+      "standingAuthorizationId": "example-dev", "enabled": false, "runnerAdmissionReady": false
+    },
+    {
+      "channel": "Production", "targetId": "example-production", "environment": "example-production",
+      "runnerGroup": "example-production", "runnerLabels": ["self-hosted", "Windows", "X64", "example-production"],
+      "standingAuthorizationId": "example-production", "enabled": false, "runnerAdmissionReady": false
+    }
+  ]
+}

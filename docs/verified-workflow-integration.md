@@ -1,53 +1,94 @@
 # Verified workflow integration contract
 
-This is the revised PR #2 integration contract. It replaces the unreleased signed-receipt interface. The four module exports and published schema-1 manual approvals remain supported.
+The shared [workflow integration guide](shared-release-orchestration.md) describes consumer configuration and examples. This document defines the handoff into the independently installed host toolkit. It extends the implementation on `master` at [`7f814ef`](https://github.com/clcdpc/clc-deployment/commit/7f814ef838abcfd12ade494c429918657598c35d); existing release artifacts must be evaluated at their own exact source/distribution pins. The new formats below are introduced by this change and require independent toolkit installation/adoption. No operational state is migrated.
+
+## Host API and versions
 
 ```powershell
-$classification = Test-ClcRelease -ReleaseTag $tag
 Invoke-ClcIisDeployment -TargetId $targetId -StandingAuthorizationId $standingId `
-    -ReleaseTag $tag -ArchivePath $inboxZip -VerifiedReleasePath $inboxIdentity
+    -ReleaseReference $reference -ArchivePath $inboxZip -VerifiedReleasePath $inboxIdentity
+# Separate, explicitly authorized diagnostics; never runs ordinary lifecycle hooks:
+Invoke-ClcIisDeployment -TargetId $targetId -StandingAuthorizationId $standingId `
+    -ReleaseReference $reference -ArchivePath $inboxZip -VerifiedReleasePath $inboxIdentity -Operation ValidateOnly
 ```
 
-All five Invoke parameters are mandatory in the Automated parameter set. They cannot combine with ReleaseApprovalId, AllowDowngrade or Reason. Both paths are absolute literal paths to existing regular files directly inside the protected target's artifactInboxRoot. Choose unique filenames per build; the toolkit holds both inputs against replacement during admission. No fixed input filename, signature, signing producer, verifier, network access or GitHub API client is required.
+`ReleaseReference` aliases the existing `ReleaseTag` parameter. The reference is an exact supported tag or `refs/heads/<protectedIntegrationBranch>`. The Automated parameter set cannot combine with exact approval/downgrade selection. Both paths are absolute literal paths to regular files directly inside the protected target inbox; use unique input filenames. The toolkit holds and verifies them during admission. No caller-selected target/state paths, inline commands, credentials or approval objects are accepted.
 
-The trusted deployment workflow writes the following strict UTF-8 JSON after independently verifying GitHub provenance. Fields are required, unknown/duplicate keys are rejected, hashes and full commits are lowercase, and numeric identities are positive JSON integers within Int64. This file is evidence supplied by trusted infrastructure code; it is not authority by itself.
+| Contract | Existing supported format | New format |
+| --- | --- | --- |
+| Exact manual approval | Schema 1 | Unchanged |
+| Standing policy | Schema 1, tagged DEV/production | Schema 2 adds explicit master branch/unmerged DEV tag/snapshot/test source policy |
+| Verified release | Schema 1, tagged identity | Schema 2 adds versioned source identity |
+| Generated exact approval | Schema 2 | Schema 3 retains exact source identity in `admission` |
+| Application package | Schema 1, file-only/healthy NoOp | Schema 2, full deployment cycle and optional separate hook assets |
+
+Both standing/evidence versions must correspond. Legacy manual approvals and retained recovery evidence remain readable; this does not claim every published toolkit can read the new records. See [public contracts](contracts.md) for package/journal versions and [installation](installation.md) before changing an active pin.
+
+## Trusted verified-release JSON
+
+The trusted workflow supplies strict UTF-8 JSON only after independent platform verification. Unknown/duplicate fields, noncanonical commits/hashes, malformed types and unsupported versions refuse. JSON is evidence, not independent execution authority.
 
 ```json
 {
   "contractFamily": "clc-file-iis-v1",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "recordKind": "verified-release",
   "targetId": "example-dev",
   "applicationId": "example",
-  "releaseId": "example-123-1",
+  "releaseId": "v1-0-0-dev-2",
   "tag": "v1.0.0-dev.2",
   "sourceRepository": "owner/application",
   "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "releaseZipSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "manifestSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "provenance": {
-    "workflowPath": ".github/workflows/release.yml",
+    "workflowPath": ".github/workflows/build.yml",
     "runId": 123,
     "runAttempt": 1,
-    "buildJob": "release",
+    "buildJob": "build",
     "artifactId": 456,
     "transportSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "sourceIdentity": {
+    "contractVersion": 1,
+    "kind": "tag",
+    "sourceClass": "UnmergedDevTag",
+    "repository": "owner/application",
+    "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "reference": "v1.0.0-dev.2",
+    "releaseId": "v1-0-0-dev-2",
+    "channel": "DEV",
+    "orderingKind": "SemVer",
+    "sequence": 1000000000002,
+    "tag": "v1.0.0-dev.2",
+    "integrationBranch": "master",
+    "integrationCommit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
   }
 }
 ```
 
-The inner ZIP and exact manifest bytes must match the supplied SHA-256 values. Complete package inspection verifies the manifest inventory and every application file. Manifest application/release/source and build workflow/run/attempt/job must match this identity. releaseId is the application's safe ID from its compiled release and manifest; it need not equal the classifier's tag-derived suggested releaseId. The package format is unchanged. The workflow verifies the outer Actions transport digest and artifact ownership; the toolkit retains that identity for audit and does not download or authenticate the outer transport.
+For tagged source contained in master use `sourceClass=IntegrationTag`. For an exact DEV tag outside master use `sourceClass=UnmergedDevTag`, requiring `sourcePolicy.allowUnmergedDevTags=true` in both protected consumer configuration and host standing policy. Creating and pushing the valid tag is release authorization; PR approval is unnecessary, and the PR may be closed, advanced or absent. PR branches need no protection. Master must be protected, using the actual configured `integrationBranch` name. Qualifying tag releases and deployments proceed unattended under the existing technical and infrastructure checks.
 
-Standing authorization resolves only from approvals/standing/<standingId>.json under the independently installed host policy. Its strict scope includes enabled, targetId, applicationId, environmentName, channel (DEV or Production), sourceRepository, buildWorkflowPath, buildJob, lineageId and infrastructure authorization. It contains no signing or verifier configuration. A successful independently approved baseline is required. Beta/RC remain artifact-only. Numeric tag sequence is toolkit-owned; a lower sequence or different lineage refuses.
+For snapshots use `kind=snapshot`, `sourceClass=ProtectedBranch`, `reference=refs/heads/<branch>`, `tag=null`, `channel=DEV`, `orderingKind=Snapshot`, `sequence=provenance.runId`, and `releaseId=dev-<runId>-<first12Commit>`. `integrationCommit` is the authenticated GitHub comparison's merge-base witness; it is the source itself when that source is already in master history. It remains stable when unrelated protected commits advance the branch. `integrationBranch` must exactly match standing policy for every source class.
 
-Under the existing exclusive machine/pool lock, admission checks protected authority and input access, rejects unresolved lifecycle/admission state, verifies bytes and identities, and publishes a durable schema-2 exact approval. Its ID deterministically hashes the exact target, lineage, tag, release/source, build/artifact and package identities plus the exact standing policy. Different builds have different IDs; existing approvals are never overwritten. An immutable protected tag/source binding prevents a later rebuild substituting another source commit. A fresh run or run attempt for the same tag/commit can deploy different package bytes without advancing the tag sequence. Older builds of the installed tag cannot replace a newer build; an identical current build retries through normal fresh-readiness NoOp. Historical approvals and packages remain retained.
+The [verified-release schema](../schemas/verified-release.schema.json), [source identity schema](../schemas/source-identity.schema.json) and installed validators define exact shapes and semantic matching. The tag-derived release ID is required by the new source contract; legacy schema-1 evidence retains application-chosen safe IDs. Package application/release/source and producer workflow/run/attempt/job must exactly match evidence. New shared workflows additionally require package contract 2.
 
-Admission retains the original exact JSON bytes in protected approvals/standing/<generatedApprovalId>.verified.json and their digest in admission.verifiedReleaseSha256, alongside the immutable approval and inbox <generatedApprovalId>.zip. Equivalent identity fields with different JSON formatting reuse the original approval/evidence; they do not overwrite it. Missing or corrupt retained admission material fails closed. A durable standing/<targetId>.pending intent precedes these effects and blocks ordinary deployment until infrastructure reconciles an interrupted admission.
+## Platform verification and privilege boundary
 
-The existing engine returns one object with status=Deployed|NoOp, attemptId, targetId, releaseId, sourceCommit, executingToolkit, currentGeneration, observedPoolState and workerCount. NoOp requires exact current identity, installed bytes, compatible unchanged configuration and fresh expected readiness. Errors terminate with stable Clc.* IDs and retained-state instructions. Pending admission or deployment requires infrastructure reconciliation or explicit recovery; no automatic repair/restore is added.
+The reusable workflow obtains GitHub job OIDC identity directly from the platform endpoint, checks its immutable `job_workflow_ref`/`job_workflow_sha`, and checks out only that shared revision. It verifies the caller repository, protected caller workflow/configuration bytes, approved shared pin, source eligibility, exact successful producer run/job/attempt and artifact identity. The hosted admission job verifies bytes before routing; the privileged job repeats checks after queueing and download and rejects changed routing configuration.
 
-The privileged protected workflow is trusted infrastructure code. Before invoking the exact authenticated installed module it must independently establish repository identity, immutable tag/object and commit, source eligibility, reviewed workflow/support code, successful exact build job/run/attempt, artifact ID/ownership, transport digest and inner package identity. Repeat eligibility and tag checks after queueing. Obtain no executable privileged code from the artifact or arbitrary PR checkout. Restrict runner admission and credentials to that workflow, with separate DEV/production targets, environments and standing policies. The toolkit verifies its authorized elevated deployment identity and protected policy; it cannot distinguish trusted and malicious code running as that same administrator. Arbitrary downloaded JSON, a hash or Test-ClcRelease output grants no authority. This procedural boundary is unchanged from the shared administrator model.
+The Actions artifact name is `clc-package-<fullSourceCommit>-<runId>-<attempt>`. It contains only `release.zip`. The verifier checks the service transport SHA-256 before extracting that package, then verifies its complete manifest/inventories and provenance. Shared publication and admission also require package `builder.sourceCommit` to match protected `orchestration.sharedRevision`; the package producer checks the same pin against `SharedSourceCommit` before build/package work. The qualified artifact may come from the shared conventional build or an application's existing CI; qualification remains defined by that protected producer. Optional `producer.jobName` binds the exact REST job display name, including commas, within 128 characters, while package `build.job` retains its safe identifier. Display-name comparison remains case-sensitive and exact.
 
-Infrastructure installs/revokes standing policies independently and fences active writers. Revoked or byte-changed policy blocks generated approval retries, including direct ReleaseApprovalId selection. Initial installation/enrollment/baseline/cutover, toolkit changes, downgrades and exceptional recovery require separate authority. Recovery of a generated release requires an independent matching schema-1 RecoveryApprovalId, even after policy revocation.
+The privileged runner checks the independently installed distribution before importing the exact active module. It supplies a unique inbox package/evidence pair and the configured standing-policy selector. The installed module performs no GitHub API calls. It checks its elevated identity and protected authority under the canonical lock; it cannot distinguish trusted and malicious code running as that same administrator. The direct platform handoff and external [runner/environment restrictions](github-setup.md) are necessary trust assumptions.
 
-Reference architecture inspected read-only: ssrs-web PR #1 at cdba54d0a0dff2f8d0bef4c0c7adb81055cd4ac7, especially TagRelease.Common.ps1, Test-TagReleaseAdmission.ps1 and AutomaticDeployment.Adapter.ps1. Its existing protected workflow owns the GitHub checks above. Consumer integration must adopt the final exact toolkit pin and this adapter contract under its own task. Public/private repositories use the same host API; no artifact-attestation entitlement is needed. Actual Server 2022/IIS and independent-identity/consumer qualification remain NOT RUN.
+Application artifacts cannot select privileged executable orchestration. Only declared hooks and a distinct planning entry point may execute, and only under separately protected hook policy and verified source/channel eligibility. They run elevated without sandboxing. `ValidateOnly` requires an explicitly admitted planning entry point and read-only planning authorization; the label cannot prove arbitrary PowerShell is side-effect-free. Planning does not stop/start IIS, replace managed files, run ordinary deployment hooks or publish current deployment state. See [deployment/recovery](deployment.md).
+
+## Protected authority and retained evidence
+
+Admission creates a generated exact approval only after clean state, successful baseline, protected policy scope, exact bytes and ordering verify. Schema 3 `admission` retains `standingAuthorizationId`, exact policy SHA-256, reference in `tag`, exact verified-evidence SHA-256, and `sourceIdentity`. Semantic tags also retain an immutable target/lineage/tag/source binding. Snapshot approvals bind each exact source/build without freezing the mutable branch name.
+
+Original evidence bytes remain at `approvals/standing/<approvalId>.verified.json`, exact package bytes at `inbox/<approvalId>.zip`, and the exact approval at `approvals/<approvalId>.json`. No record is overwritten. Equivalent identity JSON formatting reuses the original evidence. Interrupted `standing/<targetId>.pending` admission and unresolved lifecycle journals refuse ordinary retry. Preserve all material for independent reconciliation.
+
+Deployment returns `Deployed` (or legacy `NoOp`) with attempt, target/release/source, actual toolkit identity, current generation and pool/worker observations. Planning returns `Planned` and leaves current generation unchanged. Stable `Clc.*` failures retain concrete operator instructions. Success requires the applicable durable terminal evidence; inspection or HTTP 200 alone does not establish deployment readiness.
+
+Revocation remains effective on direct generated-approval retries. Exceptional recovery additionally needs a matching independent schema-1 `RecoveryApprovalId`; standing policy never authorizes it. External-state uncertainty must be reconciled explicitly, and file recovery does not imply database compatibility or rollback. No live consumer or Windows Server 2022/IIS qualification is established by these contracts or offline tests.

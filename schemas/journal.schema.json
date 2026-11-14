@@ -39,7 +39,10 @@
     },
     "schemaVersion": {
       "type": "integer",
-      "const": 2
+      "enum": [
+        2,
+        3
+      ]
     },
     "recordKind": {
       "const": "journal"
@@ -106,7 +109,8 @@
             "FailedPreserved",
             "RestoredPrevious",
             "AcceptedCandidate",
-            "RestoredEmpty"
+            "RestoredEmpty",
+            "Planned"
           ]
         },
         {
@@ -190,6 +194,16 @@
           "type": "null"
         }
       ]
+    },
+    "hooks": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/hookJournal"
+        }
+      ]
     }
   },
   "allOf": [
@@ -235,6 +249,157 @@
         "properties": {
           "previous": {
             "$ref": "#/$defs/previous"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 2
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "hooks": false,
+          "outcome": {
+            "not": {
+              "const": "Planned"
+            }
+          },
+          "intent": {
+            "properties": {
+              "operation": {
+                "enum": [
+                  "Stage",
+                  "Validate",
+                  "Stop",
+                  "Backup",
+                  "Replace",
+                  "Start",
+                  "CheckReady",
+                  "PublishCurrent",
+                  "Complete"
+                ]
+              }
+            }
+          },
+          "nativeCall": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "enum": [
+                      "Validate",
+                      "Stop",
+                      "Start"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "recovery": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "persistentStateApproval": false
+                }
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "required": [
+          "hooks"
+        ],
+        "properties": {
+          "recovery": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "persistentStateApproval"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "FailedPreserved"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "hooks": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "externalStateMayHaveChanged": {
+                    "const": false
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "Planned"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "liveMutationIntent": {
+            "const": false
+          },
+          "hooks": {
+            "type": "object",
+            "properties": {
+              "operation": {
+                "const": "ValidateOnly"
+              },
+              "executions": {
+                "minItems": 1,
+                "maxItems": 1,
+                "items": {
+                  "properties": {
+                    "status": {
+                      "const": "Succeeded"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -561,7 +726,8 @@
             "Start",
             "CheckReady",
             "PublishCurrent",
-            "Complete"
+            "Complete",
+            "Hook"
           ]
         },
         "recordedUtc": {
@@ -632,7 +798,8 @@
           "enum": [
             "Validate",
             "Stop",
-            "Start"
+            "Start",
+            "Hook"
           ]
         },
         "launchState": {
@@ -821,6 +988,29 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9223372036854776000
+        },
+        "persistentStateApproval": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "approvalId",
+                "sha256"
+              ],
+              "properties": {
+                "approvalId": {
+                  "$ref": "#/$defs/id"
+                },
+                "sha256": {
+                  "$ref": "#/$defs/hash"
+                }
+              }
+            }
+          ]
         }
       }
     },
@@ -860,6 +1050,479 @@
           ]
         }
       }
+    },
+    "hookResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "outcome",
+        "stage",
+        "externalStateMayHaveChanged",
+        "diagnosticId",
+        "requiresOperatorIntervention"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "integer",
+          "const": 1
+        },
+        "outcome": {
+          "enum": [
+            "Success",
+            "Failure"
+          ]
+        },
+        "stage": {
+          "enum": [
+            "Preflight",
+            "BeforeStop",
+            "AfterStop",
+            "AfterStart",
+            "Plan"
+          ]
+        },
+        "externalStateMayHaveChanged": {
+          "type": "boolean"
+        },
+        "diagnosticId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+        },
+        "requiresOperatorIntervention": {
+          "type": "boolean"
+        }
+      }
+    },
+    "hookExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "entryPoint",
+        "status",
+        "result"
+      ],
+      "properties": {
+        "stage": {
+          "enum": [
+            "Preflight",
+            "BeforeStop",
+            "AfterStop",
+            "AfterStart",
+            "Plan"
+          ]
+        },
+        "entryPoint": {
+          "allOf": [
+            {
+              "type": "string",
+              "maxLength": 240,
+              "pattern": "^hooks/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$",
+              "not": {
+                "pattern": "(?:^|/)(?:\\.{1,2}|\\.[cC][lL][cC]-[^/]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*)?)(?:/|$)|\\.(?:/|$)"
+              }
+            },
+            {
+              "pattern": "\\.ps1$"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "Intent",
+            "Succeeded",
+            "Failed"
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/hookResult"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Intent"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "result": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "stage": {
+                "const": "Preflight"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "stage": {
+                        "const": "Preflight"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "stage": {
+                "const": "BeforeStop"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "stage": {
+                        "const": "BeforeStop"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "stage": {
+                "const": "AfterStop"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "stage": {
+                        "const": "AfterStop"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "stage": {
+                "const": "AfterStart"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "stage": {
+                        "const": "AfterStart"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "stage": {
+                "const": "Plan"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "stage": {
+                        "const": "Plan"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "Succeeded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "properties": {
+                  "outcome": {
+                    "const": "Success"
+                  },
+                  "requiresOperatorIntervention": {
+                    "const": false
+                  }
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "stage": {
+                      "const": "Plan"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "result": {
+                      "properties": {
+                        "externalStateMayHaveChanged": {
+                          "const": false
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "hookJournal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policySha256",
+        "operation",
+        "externalStateMayHaveChanged",
+        "executions"
+      ],
+      "properties": {
+        "policySha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "operation": {
+          "enum": [
+            "Deploy",
+            "ValidateOnly"
+          ]
+        },
+        "externalStateMayHaveChanged": {
+          "type": "boolean"
+        },
+        "executions": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/hookExecution"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operation": {
+                "const": "ValidateOnly"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "executions": {
+                "maxItems": 1,
+                "items": {
+                  "properties": {
+                    "stage": {
+                      "const": "Plan"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "executions": {
+                "items": {
+                  "properties": {
+                    "stage": {
+                      "enum": [
+                        "Preflight",
+                        "BeforeStop",
+                        "AfterStop",
+                        "AfterStart"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "executions": {
+                "minItems": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "externalStateMayHaveChanged": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "executions": {
+              "contains": {
+                "properties": {
+                  "stage": {
+                    "const": "Preflight"
+                  }
+                }
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "executions": {
+              "contains": {
+                "properties": {
+                  "stage": {
+                    "const": "BeforeStop"
+                  }
+                }
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "executions": {
+              "contains": {
+                "properties": {
+                  "stage": {
+                    "const": "AfterStop"
+                  }
+                }
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "executions": {
+              "contains": {
+                "properties": {
+                  "stage": {
+                    "const": "AfterStart"
+                  }
+                }
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "executions": {
+              "contains": {
+                "properties": {
+                  "stage": {
+                    "const": "Plan"
+                  }
+                }
+              },
+              "minContains": 0,
+              "maxContains": 1
+            }
+          }
+        }
+      ]
     }
   }
 }

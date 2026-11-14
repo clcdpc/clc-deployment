@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "hook-result",
+  "$comment": "A valid result is diagnostic evidence, not proof that external persistent state was unchanged. Output is bounded to 8 KiB by the hook caller.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "outcome",
+    "stage",
+    "externalStateMayHaveChanged",
+    "diagnosticId",
+    "requiresOperatorIntervention"
+  ],
+  "properties": {
+    "contractVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "outcome": {
+      "enum": [
+        "Success",
+        "Failure"
+      ]
+    },
+    "stage": {
+      "enum": [
+        "Preflight",
+        "BeforeStop",
+        "AfterStop",
+        "AfterStart",
+        "Plan"
+      ]
+    },
+    "externalStateMayHaveChanged": {
+      "type": "boolean"
+    },
+    "diagnosticId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "requiresOperatorIntervention": {
+      "type": "boolean"
+    }
+  }
+}

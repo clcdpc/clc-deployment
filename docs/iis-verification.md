@@ -2,6 +2,8 @@
 
 **Actual Windows Server 2022/IIS qualification remains NOT RUN.** This procedure covers ordinary deployment and recovery. Offline NTFS/process/loopback/DPAPI tests and synthetic IIS/identity observations do not establish live-host acceptance. Reboot, power/storage loss and other disruptive checks need separate scope and evidence.
 
+The retained harness and original NoOp check use V1 packages. For a separately authorized V2 consumer pilot, replace that expectation with a complete repeat deployment: all selected hooks rerun, stop/start occurs, readiness succeeds and current generation advances. Separately authorize application database/hook work and persistent-state reconciliation exercises using [the hook contract](application-hooks.md). No V2 live-host, database or independent-identity acceptance has been run by this implementation task.
+
 ## Rollout order
 
 1. Complete application-owned compatibility and release integration, including immutable source and distribution pins required by the consumer.
