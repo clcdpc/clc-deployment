@@ -188,7 +188,7 @@ function Invoke-ClcDeploymentPrerequisiteHostInspection {
             $scope=Get-ClcDeploymentPrerequisiteHostObservation 'host.standing.scope' {
                 $s=$standing.record
                 Confirm-ClcDeploymentPrerequisiteRequirement ($s.channel -ceq $Config.DeploymentChannel -and $s.sourceRepository -ceq $Config.Repository -and $s.buildWorkflowPath -ceq $Config.ReleaseWorkflow -and $s.buildJob -ceq $Config.BuildJob) 'The selected optional standing policy channel/repository/producer scope differs from this inspection.'
-            } 'Optional standing policy matches the explicit channel, repository and producer.' 'Correct optional standing scope independently; DEV, Test and production remain separate.' $policy.established 'host.standing.policy'
+            } 'Optional standing policy matches the explicit channel, repository and producer.' 'Correct optional standing scope independently; DEV and Production remain separate.' $policy.established 'host.standing.policy'
             $rows.Add($scope.check)
         } else {
             foreach ($id in @('host.standing.policy','host.standing.scope')) {$rows.Add((New-ClcDeploymentPrerequisiteCheck $id NOT_APPLICABLE 'No standing policy was selected; independently approved initial deployment does not require standing authority.' -Reason 'not-selected'))}

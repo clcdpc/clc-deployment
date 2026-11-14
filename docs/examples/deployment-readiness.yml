@@ -2,6 +2,8 @@
 # under separate rollout authority. Replace EVERY zero SHA with the SAME reviewed
 # immutable clc-deployment revision containing this diagnostic, and configure the
 # exact repository, environment, group, installed manifest and selectors below.
+# Channels are DEV (-dev.N) and Production (stable); beta/RC are artifact-only,
+# -test.N is unsupported. Environment names do not define release channels.
 # Replace the separate all-ones shared_revision with the reviewed PR4 orchestration
 # revision pinned in protected .clc/release.json; it need not equal diagnostic source.
 # Do not place this template in clc-deployment's active workflows.

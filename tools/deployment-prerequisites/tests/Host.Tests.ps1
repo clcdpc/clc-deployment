@@ -6,6 +6,12 @@ BeforeDiscovery {
     . $m { param($Path) . $Path } (Join-Path $root 'tools/deployment-prerequisites/Host.ps1')
 }
 
+Describe 'Host diagnostic channel binding' {
+    It 'rejects the unsupported Test channel before toolkit import or host observations' {
+        { & "$PSScriptRoot/../Test-DeploymentHost.ps1" -ApplicationId app -TargetId app-dev -EnvironmentName app-test -DeploymentChannel Test -Repository example/app -ReleaseWorkflow .github/workflows/build.yml -BuildJob build -ToolkitManifestPath C:\unused\CLC.Deployment.psd1 } | Should -Throw -ErrorId 'ParameterArgumentValidationError*'
+    }
+}
+
 Describe 'Read-only commissioning host inspection with isolated native boundaries' {
     InModuleScope CLC.Deployment {
         BeforeEach {

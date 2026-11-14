@@ -59,12 +59,13 @@ Describe 'Contract 3 commissioning reports' {
     }
     It 'rejects contradictory <Mutation> serialized report data' -ForEach @(
         @{Mutation='v2'},@{Mutation='missing field'},@{Mutation='invalid status'},@{Mutation='wrong category'},@{Mutation='duplicate id'},
-        @{Mutation='required override'},@{Mutation='false counts'},@{Mutation='false ready'},@{Mutation='large'},@{Mutation='unknown id'},@{Mutation='false inapplicable'}
+        @{Mutation='required override'},@{Mutation='false counts'},@{Mutation='false ready'},@{Mutation='large'},@{Mutation='unknown id'},@{Mutation='false inapplicable'},@{Mutation='Test channel'}
     ) {
         $r=New-ClcDeploymentPrerequisiteReport $config $g
         $r=$r | ConvertTo-Json -Depth 16 | ConvertFrom-Json -AsHashtable
         switch ($Mutation) {
             v2 {$r.contract_version=2}
+            'Test channel' {$r.subject.channel='Test'}
             'missing field' {$r.Remove('subject')}
             'invalid status' {$r.checks[0].status='READY_WITH_WARNINGS'}
             'wrong category' {$r.checks[0].category='host'}
@@ -94,7 +95,7 @@ Describe 'Contract 3 commissioning reports' {
     }
     It 'prevents cross-subject aggregation for <Field>' -ForEach @(
         @{Field='Repository';Value='other/app'},@{Field='ApplicationId';Value='other'},@{Field='TargetId';Value='other'},
-        @{Field='EnvironmentName';Value='other'},@{Field='DeploymentChannel';Value='Test'},@{Field='IntegrationBranch';Value='main'}
+        @{Field='EnvironmentName';Value='other'},@{Field='DeploymentChannel';Value='Production'},@{Field='IntegrationBranch';Value='main'}
     ) {
         $github=New-ClcDeploymentPrerequisiteReport $config $g
         $config[$Field]=$Value

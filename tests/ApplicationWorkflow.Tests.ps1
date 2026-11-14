@@ -3,7 +3,7 @@ BeforeAll {
     function New-WorkflowFixture {
         $script:shared='c'*40; $script:caller='a'*40; $script:integration='b'*40
         $script:claims=@{iss='https://token.actions.githubusercontent.com';aud='clc-deployment';repository='clcdpc/example';workflow_ref='clcdpc/example/.github/workflows/deploy.yml@refs/heads/master';workflow_sha=$script:caller;job_workflow_ref=('clcdpc/clc-deployment/.github/workflows/application-deploy.yml@'+$script:shared);job_workflow_sha=$script:shared;event_name='workflow_run';actor='operator'}
-        $script:configuration=@{contractVersion=1L;applicationId='example';repository='clcdpc/example';integrationBranch='master';sourcePolicy=@{allowUnmergedDevTags=$true;allowSnapshots=$true;allowTestTags=$true};producer=@{workflowPath='.github/workflows/build.yml';job='build';jobName='package / build'};trustedFiles=@('.clc/release.json','.github/workflows/build.yml','.github/workflows/deploy.yml');requiredToolkitContractVersion=2L;
+        $script:configuration=@{contractVersion=1L;applicationId='example';repository='clcdpc/example';integrationBranch='master';sourcePolicy=@{allowUnmergedDevTags=$true;allowSnapshots=$true};producer=@{workflowPath='.github/workflows/build.yml';job='build';jobName='package / build'};trustedFiles=@('.clc/release.json','.github/workflows/build.yml','.github/workflows/deploy.yml');requiredToolkitContractVersion=2L;
             orchestration=@{sharedRevision=$script:shared;deploymentWorkflowPath='.github/workflows/deploy.yml'};
             targets=@(@{channel='DEV';targetId='example-dev';environment='example-dev';runnerGroup='example-dev';runnerLabels=@('self-hosted','Windows','X64','example-dev');standingAuthorizationId='example-dev';enabled=$true;runnerAdmissionReady=$true},@{channel='Production';targetId='example-production';environment='example-production';runnerGroup='example-production';runnerLabels=@('self-hosted','Windows','X64','example-production');standingAuthorizationId='example-production';enabled=$false;runnerAdmissionReady=$false})}
         $script:responses=@{}
@@ -93,6 +93,24 @@ Describe 'Reusable application workflow trust and routing' {
         else {$script:configuration.targets+=($script:configuration.targets[0].Clone())}
         $path=Join-Path $TestDrive 'bad.json'; [IO.File]::WriteAllText($path,($script:configuration | ConvertTo-Json -Depth 12))
         { Read-ClcConsumerConfiguration $path } | Should -Throw
+    }
+    It 'rejects obsolete Test consumer configuration: <Kind>' -ForEach @(
+        @{Kind='Test target'},@{Kind='obsolete false flag'},@{Kind='obsolete true flag'}
+    ) {
+        switch ($Kind) {
+            'Test target' {$script:configuration.targets[0].channel='Test'}
+            'obsolete false flag' {$script:configuration.sourcePolicy.allowTestTags=$false}
+            'obsolete true flag' {$script:configuration.sourcePolicy.allowTestTags=$true}
+        }
+        $bytes=[Text.Encoding]::UTF8.GetBytes(($script:configuration | ConvertTo-Json -Depth 12))
+        { Read-ClcConsumerConfiguration -Bytes $bytes } | Should -Throw -ErrorId 'Clc.InvalidContract*'
+    }
+    It 'accepts a DEV environment label containing test without changing its channel' {
+        $script:configuration.targets[0].environment='application-test'
+        $bytes=[Text.Encoding]::UTF8.GetBytes(($script:configuration | ConvertTo-Json -Depth 12))
+        $parsed=Read-ClcConsumerConfiguration -Bytes $bytes
+        $parsed.targets[0].environment | Should -BeExactly 'application-test'
+        $parsed.targets[0].channel | Should -BeExactly DEV
     }
     It 'accepts the bounded producer display name <Kind>' -ForEach @(
         @{Kind='Favorite Authors';Name='Build, test, publish, and package'},

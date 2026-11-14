@@ -136,15 +136,24 @@ Describe 'Commissioning GitHub observations' {
             $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
             ($r.checks | Where-Object id -EQ github.routing.target).status | Should -Be FAIL
         }
-        It 'independently supports the explicitly scoped channel <Channel>' -ForEach @(@{Channel='DEV'},@{Channel='Test'},@{Channel='Production'}) {
+        It 'independently supports the explicitly scoped channel <Channel>' -ForEach @(@{Channel='DEV'},@{Channel='Production'}) {
             $config.DeploymentChannel=$Channel
-            $p=Get-FixtureProtectedConfiguration $fixture;$p.targets[0].channel=$Channel;$p.sourcePolicy.allowTestTags=($Channel -eq 'Test');Set-FixtureProtectedConfiguration $fixture $p
+            $p=Get-FixtureProtectedConfiguration $fixture;$p.targets[0].channel=$Channel;Set-FixtureProtectedConfiguration $fixture $p
             (Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML).github_status | Should -Be PASS
         }
-        It 'cannot infer Test authority from a DEV target or a disabled Test source policy: <Kind>' -ForEach @(@{Kind='DEV target'},@{Kind='disabled Test'}) {
-            $config.DeploymentChannel='Test'
-            if ($Kind -eq 'disabled Test') {$p=Get-FixtureProtectedConfiguration $fixture;$p.targets[0].channel='Test';Set-FixtureProtectedConfiguration $fixture $p}
-            (Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML).github_status | Should -Be FAIL
+        It 'rejects obsolete shared Test configuration: <Kind>' -ForEach @(
+            @{Kind='Test target'},@{Kind='obsolete false flag'},@{Kind='obsolete true flag'}
+        ) {
+            $p=Get-FixtureProtectedConfiguration $fixture
+            switch ($Kind) {
+                'Test target' {$p.targets[0].channel='Test'}
+                'obsolete false flag' {$p.sourcePolicy.allowTestTags=$false}
+                'obsolete true flag' {$p.sourcePolicy.allowTestTags=$true}
+            }
+            Set-FixtureProtectedConfiguration $fixture $p
+            $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
+            ($r.checks | Where-Object id -EQ github.workflow.shared-identity).status | Should -Be FAIL
+            $r.ready | Should -BeFalse
         }
         It 'rejects extra environment tag admission and broad runner repository access' {
             $fixture['/repos/example/app/environments/app-dev/deployment-branch-policies'].data.branch_policies+=@{name='v*';type='tag'}

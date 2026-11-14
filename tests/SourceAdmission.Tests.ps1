@@ -27,7 +27,7 @@ BeforeAll {
         $standing=Get-Content (Join-Path $script:FixtureRoot 'standing-authorization.json') -Raw | ConvertFrom-Json -AsHashtable
         $standing.schemaVersion=2; $standing.targetId=$Fixture.target.targetId; $standing.applicationId=$Fixture.target.applicationId; $standing.environmentName=$Fixture.target.environmentName
         $standing.sourceRepository=$metadata.source.repository; $standing.buildWorkflowPath=$metadata.build.workflowPath; $standing.buildJob=$metadata.build.job; $standing.channel=$channel
-        $standing.sourcePolicy=@{integrationBranch='main';allowUnmergedDevTags=$true;allowSnapshots=$true;allowTestTags=$true}
+        $standing.sourcePolicy=@{integrationBranch='main';allowUnmergedDevTags=$true;allowSnapshots=$true}
         $path=Join-Path $root ($standing.standingAuthorizationId+'.json'); Write-TestJson $path $standing
         $source=@{contractVersion=1L;kind=$(if ($isSnapshot) {'snapshot'} else {'tag'});sourceClass=$SourceClass;repository=$metadata.source.repository;sourceCommit=$commit;reference=$Reference;releaseId=$releaseId;channel=$channel;
             orderingKind=$(if ($isSnapshot) {'Snapshot'} else {'SemVer'});sequence=$(if ($isSnapshot) {$RunId} else {$tagInfo.releaseSequence});tag=$(if ($isSnapshot) {$null} else {$Reference});integrationBranch='main';integrationCommit=('b'*40)}
@@ -84,13 +84,24 @@ Describe 'Versioned source admission preserves protected authority' {
         $approval.admission.sourceIdentity.orderingKind | Should -BeExactly 'Snapshot'
         Test-TestRejection { Invoke-SourceAdmission $fixture $first } 'Clc.DowngradeRejected*'
     }
-    It 'admits test tags only with explicitly enabled test channel and source authority' {
-        $source=New-SourceAdmissionFixture $fixture -Reference 'v1.0.0-test.1' -SourceClass IntegrationTag
-        $source.standing.sourcePolicy.allowTestTags=$false; Write-TestJson $source.path $source.standing
+    It 'rejects historical Test evidence without fallback to <Channel> authority before effects' -ForEach @(
+        @{Channel='DEV'},@{Channel='Production'},@{Channel='Test'},@{Channel='ArtifactOnly'}
+    ) {
+        $source=New-SourceAdmissionFixture $fixture -Reference 'v1.0.0-dev.1' -SourceClass IntegrationTag
+        $source.identity.tag='v1.0.0-test.1'; $source.identity.releaseId='v1-0-0-test-1'
+        $identity=$source.identity.sourceIdentity
+        $identity.tag='v1.0.0-test.1'; $identity.reference=$identity.tag; $identity.releaseId=$source.identity.releaseId; $identity.channel=$Channel
+        Write-TestJson $source.evidence $source.identity
+        Test-TestRejection { Invoke-T2Private Assert-ClcSourceIdentity @($identity) } 'Clc.InvalidContract*'
+        Test-TestRejection { Invoke-T2Private Assert-ClcStandingSource @($source.standing,$identity) } 'Clc.InvalidContract*'
+        Test-TestRejection { Invoke-SourceAdmission $fixture $source } 'Clc.InvalidContract*'
+        $global:ClcLifecycle.operations.Count | Should -Be 0
+    }
+    It 'rejects obsolete standing source-policy flags even when <Enabled>' -ForEach @(@{Enabled=$false},@{Enabled=$true}) {
+        $source=New-SourceAdmissionFixture $fixture
+        $source.standing.sourcePolicy.allowTestTags=$Enabled; Write-TestJson $source.path $source.standing
         Test-TestRejection { Invoke-SourceAdmission $fixture $source } 'Clc.StandingAuthorizationRejected*'
         $global:ClcLifecycle.operations.Count | Should -Be 0
-        $source.standing.sourcePolicy.allowTestTags=$true; Write-TestJson $source.path $source.standing
-        (Invoke-SourceAdmission $fixture $source).status | Should -BeExactly 'Deployed'
     }
     It 'admits tagged unmerged FA and SSRS DEV source only when independently enabled' {
         $source=New-SourceAdmissionFixture $fixture -Reference 'v1.0.0-dev.1' -SourceClass UnmergedDevTag
@@ -127,7 +138,7 @@ Describe 'Versioned source admission preserves protected authority' {
         }
     }
     It 'rejects unmerged source classification on non-DEV tag <Reference> before application execution' -ForEach @(
-        @{Reference='v1.0.0'},@{Reference='v1.0.0-beta.1'},@{Reference='v1.0.0-rc.1'},@{Reference='v1.0.0-test.1'}
+        @{Reference='v1.0.0'},@{Reference='v1.0.0-beta.1'},@{Reference='v1.0.0-rc.1'}
     ) {
         $source=New-SourceAdmissionFixture $fixture -Reference $Reference -SourceClass UnmergedDevTag
         Test-TestRejection { Invoke-T2Private Assert-ClcSourceIdentity @($source.identity.sourceIdentity) } 'Clc.InvalidContract*'

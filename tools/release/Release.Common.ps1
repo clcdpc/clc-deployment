@@ -24,8 +24,8 @@ function Read-ClcConsumerConfiguration {
     Assert-ClcInteger $c.contractVersion 1 1
     Assert-ClcId $c.applicationId; Assert-ClcRepository $c.repository
     Assert-ClcText $c.integrationBranch 100 '^[A-Za-z0-9][A-Za-z0-9_/-]*$'
-    Assert-ClcObject $c.sourcePolicy @('allowUnmergedDevTags','allowSnapshots','allowTestTags')
-    foreach ($key in @('allowUnmergedDevTags','allowSnapshots','allowTestTags')) { Assert-ClcBoolean $c.sourcePolicy[$key] }
+    Assert-ClcObject $c.sourcePolicy @('allowUnmergedDevTags','allowSnapshots')
+    foreach ($key in @('allowUnmergedDevTags','allowSnapshots')) { Assert-ClcBoolean $c.sourcePolicy[$key] }
     $producerKeys=@('workflowPath','job'); if ($c.producer.Contains('jobName')) {$producerKeys+='jobName'}
     Assert-ClcObject $c.producer $producerKeys
     Assert-ClcWorkflow $c.producer.workflowPath; Assert-ClcCode $c.producer.job
@@ -51,11 +51,11 @@ function Read-ClcConsumerConfiguration {
         if ($c.trustedFiles -cnotcontains $c.orchestration.deploymentWorkflowPath) { throw 'Trusted files must include the deployment workflow.' }
     }
     if ($c.Contains('targets')) {
-        if ($c.targets -isnot [array] -or $c.targets.Count -gt 3) { throw 'Targets must be a bounded array.' }
+        if ($c.targets -isnot [array] -or $c.targets.Count -gt 2) { throw 'Targets must be a bounded array.' }
         $channels=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($target in $c.targets) {
             Assert-ClcObject $target @('channel','targetId','environment','runnerGroup','runnerLabels','standingAuthorizationId','enabled','runnerAdmissionReady')
-            Assert-ClcEnum $target.channel @('DEV','Production','Test')
+            Assert-ClcEnum $target.channel @('DEV','Production')
             if (-not $channels.Add($target.channel)) { throw 'A channel may route to only one target.' }
             Assert-ClcId $target.targetId; Assert-ClcId $target.standingAuthorizationId
             foreach ($name in @('environment','runnerGroup')) { Assert-ClcText $target[$name] 128 '^[A-Za-z0-9][A-Za-z0-9 _.-]*$' }
@@ -119,7 +119,6 @@ function Get-ClcVerifiedSource {
     } else {
         $identity=Get-ClcApplicationTag $Reference
         $tag=$identity.tag; $releaseId=$identity.releaseId; $channel=$identity.channel; $sequence=$identity.sequence
-        if ($channel -ceq 'Test' -and -not $c.sourcePolicy.allowTestTags) { throw 'Test release tags are disabled.' }
         $ref=& $Api GET ($base+'/git/ref/tags/'+[Uri]::EscapeDataString($Reference)) $null
         for ($depth=0;$ref.object.type -ceq 'tag' -and $depth -lt 5;$depth++) { $ref=& $Api GET ($base+'/git/tags/'+$ref.object.sha) $null }
         if ($ref.object.type -cne 'commit' -or $ref.object.sha -cne $SourceCommit) { throw 'The tag moved or names another source commit.' }

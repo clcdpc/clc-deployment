@@ -14,7 +14,7 @@ GitHub API calls stay outside the installed deployment engine. Applications reta
 
 ## Source and ordering
 
-`vMAJOR.MINOR.PATCH-dev.N` is DEV; beta/RC is artifact-only; stable is Production. Explicitly enabled `-test.N` tags use a separate Test channel. Creating and pushing a valid DEV version tag is the deliberate release authorization step, governed by GitHub repository permissions and tag creation controls. After successful qualification, release publication and deployment can proceed unattended under the existing target, standing and applicable hook policies. No separate PR approval or manual environment/workflow approval gate is required.
+`vMAJOR.MINOR.PATCH-dev.N` is DEV; beta/RC is artifact-only; stable is Production. `-test.N` is unsupported and rejected; there is no separate Test release channel. Infrastructure environment and host names may contain "test" without defining a channel. Creating and pushing a valid DEV version tag is the deliberate release authorization step, governed by GitHub repository permissions and tag creation controls. After successful qualification, release publication and deployment can proceed unattended under the existing target, standing and applicable hook policies. No separate PR approval or manual environment/workflow approval gate is required.
 
 A tag whose exact source is already contained in master is `IntegrationTag`. A DEV tag outside master is `UnmergedDevTag` and requires `sourcePolicy.allowUnmergedDevTags=true` in both protected consumer configuration and host standing authorization. False remains an explicit refusal; missing flags fail contract validation. The commit may be an open or draft PR head, an earlier commit after its PR advances, a closed PR commit, or a same-repository commit with no PR or formal GitHub review. PR branches need no protection and may be deleted. Master must still be reported as protected, using each repository's actual configured `integrationBranch` name (`master` or `main`).
 
@@ -78,10 +78,12 @@ New routine packages use schema 2 / `changeKind=application-deployment` and alwa
 
 | Read-only reference | Required behavior represented |
 | --- | --- |
-| [ASAP `732dbcd`](https://github.com/clcdpc/asap-pocketbase/commit/732dbcd973cbbd6eb5cfd4186144a5de2d79cbd5) | Protected master snapshots (configured `main`), test tags, explicit redeployment, supersession, retained complex CI; one AfterStop entry point composes DACPAC/Hangfire and a distinct planning entry point produces SQL diagnostics |
+| [ASAP `732dbcd`](https://github.com/clcdpc/asap-pocketbase/commit/732dbcd973cbbd6eb5cfd4186144a5de2d79cbd5) | Protected master snapshots (configured `main`), explicit redeployment, supersession, retained complex CI; one AfterStop entry point composes DACPAC/Hangfire and a distinct planning entry point produces SQL diagnostics |
 | [Favorite Authors `5b15bc1`](https://github.com/clcdpc/favorite-authors/commit/5b15bc1c1a11a73faee839f2515ae538c8f65e73) | Exact CI-qualified unmerged DEV tags without GitHub PR approval, including the release pattern illustrated by v1.0.0-dev.46 and dev.47; BeforeStop DDL on repeats, failures before unnecessary IIS changes; application-owned certificate checks and SQL integration qualification |
 | [SSRS master `c9fee1f`](https://github.com/clcdpc/ssrs-web/commit/c9fee1f1c2f2e0d1c1f613e601858286b0d50647), [PR #1 head `48193b4`](https://github.com/clcdpc/ssrs-web/commit/48193b41804a852fdd27f1ee662521793b02e8d5) | No-hook deployment, exact unmerged DEV tags without a separate reviewer, beta/RC artifact-only releases, stable publication and independently disabled Production activation |
 | [Polaris master `9d4b1d7`](https://github.com/clcdpc/polaris-oidc/commit/9d4b1d756d7b528a9e23a7e013196a39a33ab4b3) | Conventional .NET 10, no hooks, external configuration/certificates and independently managed EF migrations; remote master has no established release workflow |
+
+ASAP's historical `-test.N` convention is unsupported by this shared contract; its transition is a separate consumer task.
 
 These are compatibility requirements represented by compact offline fixtures, not completed consumer integrations. SSRS PR #1 must replace its duplicated release/admission adapter with reviewed immutable shared workflow/toolkit pins, emit package 2, map producer display names/configuration and retain its application acceptance checks. No consumer repository was changed.
 

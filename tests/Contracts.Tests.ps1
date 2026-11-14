@@ -178,3 +178,33 @@ Describe 'Strict UTF-8 versioned contract shapes' {
         Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes(('[' * 33) + '1' + (']' * 33))) 'release-metadata' }
     }
 }
+
+Describe 'Standard deployment channel contracts' {
+    It 'preserves standing schema <Version> for <Channel> and rejects Test authority' -ForEach @(
+        foreach ($version in @(1L,2L)) {foreach ($channel in @('DEV','Production')) {@{Version=$version;Channel=$channel}}}
+    ) {
+        $record=Get-Content (Join-Path $script:FixtureRoot 'standing-authorization.json') -Raw | ConvertFrom-Json -AsHashtable
+        $record.schemaVersion=$Version; $record.channel=$Channel
+        if ($Version -eq 2) {$record.sourcePolicy=@{integrationBranch='master';allowUnmergedDevTags=$true;allowSnapshots=$true}}
+        $json=$record | ConvertTo-Json -Depth 12
+        $null=Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes($json)) standing-authorization
+        Test-Json -Json $json -SchemaFile (Join-Path $script:RepositoryRoot 'schemas/standing-authorization.schema.json') | Should -BeTrue
+        $record.channel='Test'; $json=$record | ConvertTo-Json -Depth 12
+        Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes($json)) standing-authorization } 'Clc.InvalidContract*'
+        Test-Json -Json $json -SchemaFile (Join-Path $script:RepositoryRoot 'schemas/standing-authorization.schema.json') -ErrorAction SilentlyContinue | Should -BeFalse
+    }
+    It 'rejects obsolete allowTestTags=<Enabled> in schema2 standing authority and standalone schema' -ForEach @(@{Enabled=$false},@{Enabled=$true}) {
+        $record=Get-Content (Join-Path $script:FixtureRoot 'standing-authorization.json') -Raw | ConvertFrom-Json -AsHashtable
+        $record.schemaVersion=2L
+        $record.sourcePolicy=@{integrationBranch='master';allowUnmergedDevTags=$true;allowSnapshots=$true;allowTestTags=$Enabled}
+        $json=$record | ConvertTo-Json -Depth 12
+        Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes($json)) standing-authorization } 'Clc.InvalidContract*'
+        Test-Json -Json $json -SchemaFile (Join-Path $script:RepositoryRoot 'schemas/standing-authorization.schema.json') -ErrorAction SilentlyContinue | Should -BeFalse
+    }
+    It 'rejects unsupported Test tags in historical <Kind> records and standalone schemas' -ForEach @(@{Kind='verified-release'},@{Kind='release-tag-binding'}) {
+        $record=Get-Content (Join-Path $script:FixtureRoot ($Kind+'.json')) -Raw | ConvertFrom-Json -AsHashtable
+        $record.tag='v1.0.0-test.1'; $json=$record | ConvertTo-Json -Depth 12
+        Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes($json)) $Kind } 'Clc.InvalidContract*'
+        Test-Json -Json $json -SchemaFile (Join-Path $script:RepositoryRoot ('schemas/'+$Kind+'.schema.json')) -ErrorAction SilentlyContinue | Should -BeFalse
+    }
+}

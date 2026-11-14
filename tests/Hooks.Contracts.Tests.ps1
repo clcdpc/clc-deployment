@@ -51,6 +51,11 @@ Describe 'Strict hook authority, results and journal contracts' {
         $policy.channels=@('Production'); Assert-HookContractAccepted $policy hook-policy
         $policy.Remove('exactApprovalChannel'); Assert-HookContractRejected $policy hook-policy
     }
+    It 'rejects the unsupported Test hook channel in <Field>' -ForEach @(@{Field='channels'},@{Field='exactApprovalChannel'}) {
+        $policy=Get-HookContractFixture hook-policy
+        if ($Field -ceq 'channels') {$policy.channels=@('DEV','Test')} else {$policy.exactApprovalChannel='Test'}
+        Assert-HookContractRejected $policy hook-policy
+    }
     It 'rejects malformed policy process pins, scope and bounds <Mode>' -ForEach @(
         @{Mode='timeout'},@{Mode='executable'},@{Mode='hash'},@{Mode='stage'},@{Mode='source'},@{Mode='duplicate-channel'},@{Mode='boolean'}
     ) {

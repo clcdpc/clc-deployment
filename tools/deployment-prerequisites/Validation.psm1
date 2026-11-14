@@ -146,7 +146,7 @@ function Test-ClcDeploymentPrerequisiteInputs {
         if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_. -]{0,99}$') { throw 'Environment name and runner group are required safe names.' }
     }
     if ($Config.ActivationVariable -cnotmatch '^[A-Z_][A-Z0-9_]{0,63}$' -or $Config.ActivationVariable -cmatch '^(GITHUB_|RUNNER_)') { throw 'Invalid activation variable name.' }
-    if ($Config.DeploymentChannel -cnotin @('DEV','Test','Production')) { throw 'Deployment channel must be DEV, Test or Production.' }
+    if ($Config.DeploymentChannel -cnotin @('DEV','Production')) { throw 'Deployment channel must be DEV or Production.' }
     foreach ($key in @('ApplicationId','TargetId')) {
         if (-not $Config.ContainsKey($key) -or $Config[$key] -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$') { throw 'Invalid application or target selector.' }
     }
@@ -167,9 +167,15 @@ function Get-ClcDeploymentPrerequisiteBypassStatus {
         if ($mode -cnotin @('always','pull_request','exempt') -or
             ($mode -ceq 'pull_request' -and ($Target -ceq 'tag' -or $type -ceq 'DeployKey'))) {$unknown=$true;continue}
         if ($type -cin @('OrganizationAdmin','EnterpriseOwner')) {$broad=$true;continue}
+        # GitHub represents DeployKey bypass with an explicit null ID. It does
+        # not select one trusted key; always/exempt bypass is potentially broad.
+        if ($type -ceq 'DeployKey') {
+            if (-not $actor.Contains('actor_id') -or $null -ne $id) {$unknown=$true} else {$broad=$true}
+            continue
+        }
         if (($id -isnot [int] -and $id -isnot [long]) -or $id -le 0) {$unknown=$true;continue}
         if ($type -cin @('RepositoryRole','EnterpriseRole')) {$broad=$true}
-        elseif ($type -cnotin @('Integration','Team','DeployKey','User')) {$unknown=$true}
+        elseif ($type -cnotin @('Integration','Team','User')) {$unknown=$true}
     }
     if ($broad) {'FAIL'} elseif ($unknown) {'UNVERIFIED'} else {'PASS'}
 }
@@ -252,14 +258,14 @@ function Get-ClcDeploymentPrerequisiteBranchChecks {
 }
 
 function Get-ClcDeploymentPrerequisiteTagPatternScope {
-    param($Pattern, [ValidateSet('DEV','Test','Production')][string] $Channel)
+    param($Pattern, [ValidateSet('DEV','Production')][string] $Channel)
     # A finite set of proven coverage/disjointness cases, not a fnmatch engine.
     # Unknown overlaps remain inconclusive, even when another policy is broad.
     if ($Pattern -isnot [string] -or -not $Pattern) {return 'Unknown'}
     if ($Pattern -cin @('~ALL','refs/tags/*','refs/tags/v*','refs/tags/v*.*.*')) {return 'Full'}
-    foreach ($suffix in @('dev','test','beta','rc')) {
+    foreach ($suffix in @('dev','beta','rc')) {
         if ($Pattern -cin @("refs/tags/v*-$suffix.*","refs/tags/v*.*.*-$suffix.*")) {
-            $selected=($Channel -ceq 'DEV' -and $suffix -ceq 'dev') -or ($Channel -ceq 'Test' -and $suffix -ceq 'test')
+            $selected=($Channel -ceq 'DEV' -and $suffix -ceq 'dev')
             if ($selected) {return 'Full'} else {return 'Disjoint'}
         }
     }
@@ -267,7 +273,6 @@ function Get-ClcDeploymentPrerequisiteTagPatternScope {
     if ($Pattern -cnotmatch '[*?\[\\]') {
         $selected=switch -CaseSensitive ($Channel) {
             DEV {'^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$'}
-            Test {'^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-test\.[0-9]+$'}
             Production {'^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'}
         }
         if ($Pattern -cmatch $selected) {return 'Partial'} else {return 'Disjoint'}
@@ -577,10 +582,10 @@ function Get-ClcDeploymentPrerequisiteRoutingChecks {
         $status=if ($bad) {'FAIL'} elseif ($null -eq $definition) {'SKIPPED'} elseif (-not $routing) {'FAIL'} else {'PASS'}
         New-ClcDeploymentPrerequisiteCheck 'github.routing.target' $status 'The protected route and actual shared deployment job group/labels/environment expressions were compared with the selected target.' $action -Reason 'shared-definition' -Name 'Protected deployment routing'
         $policy=$record['sourcePolicy']
-        $valid=$policy -is [Collections.IDictionary] -and $policy['allowSnapshots'] -is [bool] -and $policy['allowUnmergedDevTags'] -is [bool] -and $policy['allowTestTags'] -is [bool]
+        $valid=$policy -is [Collections.IDictionary] -and $policy['allowSnapshots'] -is [bool] -and $policy['allowUnmergedDevTags'] -is [bool] -and $policy.Count -eq 2
         $separate=@($record['targets'] | Where-Object {$_['channel'] -cne $Config.DeploymentChannel -and ($_.targetId -ceq $Config.TargetId -or $_.environment -ceq $Config.EnvironmentName -or $_.runnerGroup -ceq $Config.RunnerGroup)})
-        $status=if (-not $valid -or $separate.Count -or ($Config.DeploymentChannel -ceq 'Test' -and -not $policy['allowTestTags'])) {'FAIL'} else {'PASS'}
-        New-ClcDeploymentPrerequisiteCheck 'github.routing.channel' $status 'Source-policy flags and explicit independent channel routing were inspected; Test requires allowTestTags=true and its own target/environment/runner scope.' $action -Name 'Channel authority scope'
+        $status=if (-not $valid -or $separate.Count) {'FAIL'} else {'PASS'}
+        New-ClcDeploymentPrerequisiteCheck 'github.routing.channel' $status 'Source-policy flags and explicit independent channel routing were inspected; DEV and Production require separate target/environment/runner scopes.' $action -Name 'Channel authority scope'
         if (-not $bad) {
             New-ClcDeploymentPrerequisiteCheck 'github.routing.activation' $(if ($route['enabled'] -and $route['runnerAdmissionReady']) {'PASS'} else {'UNVERIFIED'}) 'Protected activation and runnerAdmissionReady are indicators only; disabled indicators are a pending activation step after commissioning.' 'Have infrastructure enable the reviewed target route when independently authorized to proceed.' -Name 'Pending target activation'
         }

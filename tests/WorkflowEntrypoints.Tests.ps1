@@ -24,7 +24,7 @@ BeforeAll {
         $script:integration=if ($Superseded) {'e'*40} else {$script:sourceCommit}
         $script:reference=$Reference; $script:configurationBlob='d'*40
         $script:configuration=@{contractVersion=1L;applicationId='probe';repository='clcdpc/example';integrationBranch='master';
-            sourcePolicy=@{allowUnmergedDevTags=$true;allowSnapshots=$true;allowTestTags=$true};producer=@{workflowPath=$ProducerWorkflowPath;job=$ProducerJob;jobName=$ProducerJobName};
+            sourcePolicy=@{allowUnmergedDevTags=$true;allowSnapshots=$true};producer=@{workflowPath=$ProducerWorkflowPath;job=$ProducerJob;jobName=$ProducerJobName};
             trustedFiles=@('.clc/release.json',$ProducerWorkflowPath,'.github/workflows/deploy.yml');requiredToolkitContractVersion=2L;
             orchestration=@{sharedRevision=$script:sharedCommit;deploymentWorkflowPath='.github/workflows/deploy.yml'};
             targets=@(@{channel='DEV';targetId='probe-dev';environment='probe-dev';runnerGroup='probe-dev';runnerLabels=@('self-hosted','Windows','X64','probe-dev');standingAuthorizationId='probe-dev';enabled=$true;runnerAdmissionReady=$true},
@@ -148,6 +148,18 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         $output | Should -Match ('(?m)^configuration_blob='+$script:configurationBlob+'$')
         $output | Should -Match '(?m)^runner_labels=\["self-hosted","Windows","X64","probe-dev"\]$'
         Should -Invoke Invoke-ClcReleaseApi -Times 2 -Exactly -ParameterFilter { $Path -ceq '/repos/clcdpc/example/actions/runs/123/attempts/2' }
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+    }
+    It 'rejects unsupported Test tags before publication or admission in <Action>' -ForEach @(@{Action='Release'},@{Action='Admit'}) {
+        $script:parameters.Action=$Action; $script:parameters.Reference='v1.2.3-test.1'
+        if ($Action -ceq 'Release') {
+            $script:claims.job_workflow_ref='clcdpc/clc-deployment/.github/workflows/application-release.yml@'+$script:sharedCommit
+            $script:parameters.ClaimsJson=$script:claims | ConvertTo-Json -Compress
+        }
+        { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw -ErrorId 'Clc.InvalidContract*'
+        [IO.File]::Exists($env:GITHUB_OUTPUT) | Should -BeFalse
+        Should -Invoke Send-ClcApplicationReleaseAsset -Times 0 -Exactly
+        Should -Invoke Invoke-ClcReleaseApi -Times 0 -Exactly -ParameterFilter {$Bytes}
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
     }
     It 'runs automatic <Action> for exact qualified unmerged DEV source without PR or review API evidence' -ForEach @(@{Action='Release'},@{Action='Admit'}) {

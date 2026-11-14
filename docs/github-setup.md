@@ -19,7 +19,7 @@ Have the organization runner administrator configure a dedicated restricted runn
 1. Select only authorized consumer repositories. Do not enable general public-repository or repository-wide workflow access to a privileged host.
 2. Enable enforceable **Selected workflows** access and admit the exact shared reusable `clcdpc/clc-deployment/.github/workflows/application-deploy.yml@<reviewed-SHA>` whose `deploy` job requests the runner. Access applies to jobs directly defined by the selected workflow; allowing only a caller does not automatically authorize its callee. Verify effective organization/enterprise policy against [GitHub's runner-group controls](https://docs.github.com/en/enterprise-cloud@latest/actions/how-tos/manage-runners/self-hosted-runners/manage-access).
 3. Ensure no alternate group, repository runner registration or workflow path exposes that host more broadly. Register it directly into the restricted group.
-4. Match the configured group and explicit `self-hosted`, `Windows`, `X64` and target labels. Keep DEV, Test and production admission scopes separate.
+4. Match the configured group and explicit `self-hosted`, `Windows`, `X64` and target labels. Keep DEV and Production admission scopes separate.
 
 Labels, YAML conditions, an environment name and `runnerAdmissionReady=true` do not enforce runner isolation. Check the organization plan and actual effective controls; if the required restriction is unavailable, keep deployment disabled until infrastructure approves an equivalent external boundary. The shared workflow verifies caller/configuration again on the runner, but that cannot make admitting arbitrary privileged jobs safe.
 

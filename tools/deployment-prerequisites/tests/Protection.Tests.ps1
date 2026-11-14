@@ -1,16 +1,16 @@
 BeforeDiscovery {Import-Module (Join-Path $PSScriptRoot '../Validation.psm1') -Force}
 
-Describe 'Selected-channel release tag protection' -Tag TestChannel,TagApplicability {
+Describe 'Selected-channel release tag protection' -Tag ReleaseChannel,TagApplicability {
     InModuleScope Validation {
         BeforeAll {. (Join-Path $PSScriptRoot 'Fixtures.ps1')}
         BeforeEach {
             $config=New-ValidationConfig;$fixture=New-ValidationFixture
-            $config.DeploymentChannel='Test'
+            $config.DeploymentChannel='DEV'
             $record=Get-FixtureProtectedConfiguration $fixture
-            $record.targets[0].channel='Test';$record.sourcePolicy.allowTestTags=$true
+            $record.targets[0].channel='DEV'
             Set-FixtureProtectedConfiguration $fixture $record
             $tag=$fixture['/repos/example/app/rulesets/12?includes_parents=true'].data
-            $tag.conditions.ref_name.include=@('refs/tags/v*-test.*')
+            $tag.conditions.ref_name.include=@('refs/tags/v*-dev.*')
             Mock Get-ClcDeploymentPrerequisiteApi {
                 param($Context,$Path)
                 $key=$Path -replace '[?&]per_page=(30|100)&page=\d+$',''
@@ -18,8 +18,8 @@ Describe 'Selected-channel release tag protection' -Tag TestChannel,TagApplicabi
                 $fixture[$key]
             }
         }
-        It 'accepts sufficient Test coverage <Pattern> without beta or RC protection' -ForEach @(
-            @{Pattern='refs/tags/v*-test.*'},@{Pattern='refs/tags/v*.*.*-test.*'},
+        It 'accepts sufficient DEV coverage <Pattern> without beta or RC protection' -ForEach @(
+            @{Pattern='refs/tags/v*-dev.*'},@{Pattern='refs/tags/v*.*.*-dev.*'},
             @{Pattern='refs/tags/v*'},@{Pattern='refs/tags/*'},@{Pattern='~ALL'}
         ) {
             $tag.conditions.ref_name.include=@($Pattern)
@@ -30,41 +30,38 @@ Describe 'Selected-channel release tag protection' -Tag TestChannel,TagApplicabi
                 ($r.checks | Where-Object id -EQ "github.tags.$id").status | Should -Be PASS
             }
         }
-        It 'rejects protection for the wrong Test release pattern: <Pattern>' -ForEach @(
+        It 'rejects protection for the wrong DEV release pattern: <Pattern>' -ForEach @(
             @{Pattern='refs/tags/v*-beta.*'},@{Pattern='refs/tags/v*-rc.*'},
-            @{Pattern='refs/tags/v*-dev.*'},@{Pattern='refs/tags/v1*'}
+            @{Pattern='refs/tags/v1.2.3'},@{Pattern='refs/tags/v1*'}
         ) {
             $tag.conditions.ref_name.include=@($Pattern)
             $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
             $r.github_status | Should -Be FAIL
             ($r.checks | Where-Object id -EQ github.tags.creation).status | Should -Be FAIL
         }
-        It 'rejects combined beta and RC protection as Test deployment authority' {
+        It 'rejects combined beta and RC protection as DEV deployment authority' {
             $tag.conditions.ref_name.include=@('refs/tags/v*-beta.*','refs/tags/v*-rc.*')
             (Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML).github_status | Should -Be FAIL
         }
-        It 'still requires explicit allowTestTags with correct Test protection' {
-            $record.sourcePolicy.allowTestTags=$false;Set-FixtureProtectedConfiguration $fixture $record
-            $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
-            ($r.checks | Where-Object id -EQ github.tags.creation).status | Should -Be PASS
-            ($r.checks | Where-Object id -EQ github.routing.channel).status | Should -Be FAIL
-            $r.github_status | Should -Be FAIL
+        It 'rejects the unsupported Test diagnostic channel before GitHub inspection' {
+            $config.DeploymentChannel='Test'
+            { Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML } | Should -Throw '*channel*'
+            Should -Invoke Get-ClcDeploymentPrerequisiteApi -Times 0 -Exactly
         }
         It 'passes independently configured <Channel> routing and tag scope' -ForEach @(
             @{Channel='DEV';Pattern='refs/tags/v*-dev.*'},
-            @{Channel='Test';Pattern='refs/tags/v*-test.*'},
             @{Channel='Production';Pattern='refs/tags/v*.*.*'}
         ) {
             $config.DeploymentChannel=$Channel;$record.targets[0].channel=$Channel
-            $record.sourcePolicy.allowTestTags=($Channel -ceq 'Test');Set-FixtureProtectedConfiguration $fixture $record
+            Set-FixtureProtectedConfiguration $fixture $record
             $tag.conditions.ref_name.include=@($Pattern)
             (Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML).github_status | Should -Be PASS
         }
         It 'ignores demonstrably disjoint policies before exclusions or unavailable bypass data: <Pattern>' -ForEach @(
             @{Pattern='refs/tags/docs/*'},@{Pattern='refs/tags/other*'},@{Pattern='refs/heads/v*'},
-            @{Pattern='refs/tags/version*'},@{Pattern='refs/tags/v*-dev.*'},
+            @{Pattern='refs/tags/version*'},
             @{Pattern='refs/tags/v*-beta.*'},@{Pattern='refs/tags/v*-rc.*'},
-            @{Pattern='refs/tags/v1.2.3'},@{Pattern='refs/tags/v1.2.3-dev.1'}
+            @{Pattern='refs/tags/v1.2.3'},@{Pattern='refs/tags/v1.2.3-rc.1'}
         ) {
             $fixture['/repos/example/app/rulesets?includes_parents=true'].data+=@{id=13}
             $fixture['/repos/example/app/rulesets/13?includes_parents=true']=New-ApiSuccess @{
@@ -83,8 +80,8 @@ Describe 'Selected-channel release tag protection' -Tag TestChannel,TagApplicabi
             }
             $r.github_status | Should -Be UNVERIFIED
         }
-        It 'keeps ambiguous overlaps blocking even alongside complete Test coverage: <Pattern>' -ForEach @(
-            @{Pattern='refs/tags/v*test*'},@{Pattern='refs/tags/v*-test.?'},@{Pattern='refs/tags/*-test.*'}
+        It 'keeps ambiguous overlaps blocking even alongside complete DEV coverage: <Pattern>' -ForEach @(
+            @{Pattern='refs/tags/v*dev*'},@{Pattern='refs/tags/v*-dev.?'},@{Pattern='refs/tags/*-dev.*'}
         ) {
             $fixture['/repos/example/app/rulesets?includes_parents=true'].data+=@{id=13}
             $fixture['/repos/example/app/rulesets/13?includes_parents=true']=New-ApiSuccess @{
@@ -101,7 +98,7 @@ Describe 'Selected-channel release tag protection' -Tag TestChannel,TagApplicabi
             foreach ($item in @(@{id=13;type='update'},@{id=14;type='deletion'})) {
                 $fixture['/repos/example/app/rulesets?includes_parents=true'].data+=@{id=$item.id}
                 $fixture["/repos/example/app/rulesets/$($item.id)?includes_parents=true"]=New-ApiSuccess @{
-                    target='tag';enforcement='active';conditions=@{ref_name=@{include=@('refs/tags/v*-test.*');exclude=@()}}
+                    target='tag';enforcement='active';conditions=@{ref_name=@{include=@('refs/tags/v*-dev.*');exclude=@()}}
                     rules=@(@{type=$item.type});bypass_actors=@()
                 }
             }
@@ -143,6 +140,15 @@ Describe 'Selected-channel release tag protection' -Tag TestChannel,TagApplicabi
             $tag.bypass_actors[0].bypass_mode='pull_request'
             $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
             ($r.checks | Where-Object id -EQ github.tags.bypass).status | Should -Be UNVERIFIED
+        }
+        It 'blocks effective DeployKey tag bypass with <Mode> while retaining restriction observations' -Tag DeployKey -ForEach @(@{Mode='always'},@{Mode='exempt'}) {
+            $tag.bypass_actors=@(@{actor_type='DeployKey';actor_id=$null;bypass_mode=$Mode})
+            $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
+            foreach ($id in @('creation','update','deletion')) {
+                ($r.checks | Where-Object id -EQ "github.tags.$id").status | Should -Be PASS
+            }
+            ($r.checks | Where-Object id -EQ github.tags.bypass).status | Should -Be FAIL
+            $r.github_status | Should -Be FAIL
         }
         It 'rejects broad tag administrator bypass' {
             $tag.bypass_actors=@(@{actor_type='OrganizationAdmin';actor_id=$null;bypass_mode='always'})
@@ -251,9 +257,8 @@ Describe 'Effective integration branch protection and bypass' -Tag BranchProtect
             $r.github_status | Should -Be FAIL
         }
         It 'accepts specifically restricted <Type> bypass in mode <Mode>' -ForEach @(
-            foreach ($type in @('Integration','Team','User','DeployKey')) {
+            foreach ($type in @('Integration','Team','User')) {
                 foreach ($mode in @('always','pull_request','exempt')) {
-                    if ($type -ceq 'DeployKey' -and $mode -ceq 'pull_request') {continue}
                     @{Type=$type;Mode=$mode}
                 }
             }
@@ -281,11 +286,25 @@ Describe 'Effective integration branch protection and bypass' -Tag BranchProtect
                 'invalid actor ID' {$detail.bypass_actors[0].actor_id='42'}
                 'missing mode' {$detail.bypass_actors[0].Remove('bypass_mode')}
                 'unknown mode' {$detail.bypass_actors[0].bypass_mode='never'}
-                'deploy key PR mode' {$detail.bypass_actors[0].actor_type='DeployKey';$detail.bypass_actors[0].bypass_mode='pull_request'}
+                'deploy key PR mode' {$detail.bypass_actors[0].actor_type='DeployKey';$detail.bypass_actors[0].actor_id=$null;$detail.bypass_actors[0].bypass_mode='pull_request'}
             }
             $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
             ($r.checks | Where-Object id -EQ github.branch.bypass).status | Should -Be UNVERIFIED
             $r.github_status | Should -Be UNVERIFIED
+        }
+        It 'blocks documented DeployKey bypass in mode <Mode> unless <Layer> independently enforces every operation' -Tag DeployKey -ForEach @(
+            foreach ($mode in @('always','exempt')) {
+                foreach ($layer in @('none','classic','ruleset','partial')) {@{Mode=$mode;Layer=$layer}}
+            }
+        ) {
+            Set-BranchRules -Actors @(@{actor_type='DeployKey';actor_id=$null;bypass_mode=$Mode})
+            if ($Layer -cne 'classic') {$fixture['/repos/example/app/branches/master/protection']=New-ApiFailure 404}
+            if ($Layer -ceq 'ruleset') {Set-BranchRules -Id 22}
+            if ($Layer -ceq 'partial') {Set-BranchRules -Id 22 -Types deletion}
+            $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
+            $expected=if ($Layer -cin @('classic','ruleset')) {'PASS'} else {'FAIL'}
+            ($r.checks | Where-Object id -EQ github.branch.bypass).status | Should -Be $expected
+            $r.github_status | Should -Be $expected
         }
         It 'requires classic administrator enforcement evidence: <Kind>' -ForEach @(@{Kind='missing'},@{Kind='malformed'}) {
             if ($Kind -ceq 'missing') {$classic.Remove('enforce_admins')} else {$classic.enforce_admins.enabled='true'}
@@ -312,6 +331,31 @@ Describe 'Effective integration branch protection and bypass' -Tag BranchProtect
             Set-BranchRules -Id 22
             $fixture['/repos/example/app/branches/master/protection']=New-ApiFailure 404
             (Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML).github_status | Should -Be PASS
+        }
+    }
+}
+
+Describe 'GitHub DeployKey API representations' -Tag DeployKey {
+    InModuleScope Validation {
+        It 'classifies <Kind> as <Expected> for <Target>' -ForEach @(
+            foreach ($target in @('branch','tag')) {
+                foreach ($case in @(
+                    @{Kind='null always';Id=$null;Mode='always';Expected='FAIL'},
+                    @{Kind='null exempt';Id=$null;Mode='exempt';Expected='FAIL'},
+                    @{Kind='numeric';Id=42;Mode='always';Expected='UNVERIFIED'},
+                    @{Kind='zero';Id=0;Mode='always';Expected='UNVERIFIED'},
+                    @{Kind='string';Id='42';Mode='always';Expected='UNVERIFIED'},
+                    @{Kind='boolean';Id=$false;Mode='always';Expected='UNVERIFIED'},
+                    @{Kind='missing';Id=$null;Mode='always';Expected='UNVERIFIED'},
+                    @{Kind='PR only';Id=$null;Mode='pull_request';Expected='UNVERIFIED'}
+                )) { $case.Clone()+@{Target=$target} }
+            }
+        ) {
+            # Round-trip JSON so fixtures use the API's explicit null/numeric shapes.
+            $actor=@{actor_type='DeployKey';actor_id=$Id;bypass_mode=$Mode}
+            if ($Kind -ceq 'missing') {$actor.Remove('actor_id')}
+            $rule=@{bypass_actors=@($actor)} | ConvertTo-Json -Depth 4 | ConvertFrom-Json -AsHashtable
+            Get-ClcDeploymentPrerequisiteBypassStatus $rule $Target | Should -Be $Expected
         }
     }
 }

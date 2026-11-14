@@ -78,7 +78,7 @@ jobs:
         })
     }
     $protected=@{contractVersion=1;applicationId='app';repository='example/app';integrationBranch='master';
-        sourcePolicy=@{allowSnapshots=$true;allowUnmergedDevTags=$true;allowTestTags=$false};
+        sourcePolicy=@{allowSnapshots=$true;allowUnmergedDevTags=$true};
         producer=@{workflowPath='.github/workflows/release.yml';job='build'};
         trustedFiles=@('.clc/release.json','.github/workflows/release.yml','.github/workflows/deploy-release.yml');requiredToolkitContractVersion=2;
         orchestration=@{sharedRevision=('a'*40);deploymentWorkflowPath='.github/workflows/deploy-release.yml'};

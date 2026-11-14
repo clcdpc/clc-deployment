@@ -55,16 +55,14 @@
       "items": {
         "enum": [
           "DEV",
-          "Production",
-          "Test"
+          "Production"
         ]
       }
     },
     "exactApprovalChannel": {
       "enum": [
         "DEV",
-        "Production",
-        "Test"
+        "Production"
       ]
     },
     "sourceClasses": {
@@ -218,24 +216,6 @@
           "channels": {
             "contains": {
               "const": "Production"
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "exactApprovalChannel": {
-            "const": "Test"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "channels": {
-            "contains": {
-              "const": "Test"
             }
           }
         }

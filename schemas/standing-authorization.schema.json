@@ -51,8 +51,7 @@
     "channel": {
       "enum": [
         "DEV",
-        "Production",
-        "Test"
+        "Production"
       ]
     },
     "sourceRepository": {
@@ -92,13 +91,9 @@
       "required": [
         "integrationBranch",
         "allowUnmergedDevTags",
-        "allowSnapshots",
-        "allowTestTags"
+        "allowSnapshots"
       ],
       "properties": {
-        "allowTestTags": {
-          "type": "boolean"
-        },
         "allowUnmergedDevTags": {
           "type": "boolean"
         },

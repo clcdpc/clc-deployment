@@ -8,7 +8,7 @@ param(
     [Parameter(Mandatory)][string] $RunnerGroup,
     [string] $RunnerLabels = 'self-hosted,Windows,X64',
     [string] $ActivationVariable = 'CLC_DEPLOYMENT_ENABLED',
-    [ValidateSet('DEV','Test','Production')][string] $DeploymentChannel = 'DEV',
+    [ValidateSet('DEV','Production')][string] $DeploymentChannel = 'DEV',
     [Parameter(Mandatory)][string] $YamlAssemblyPath,
     [ValidateSet('Standard','Administrative')][string] $AuthenticationMode='Standard',
     [Parameter(Mandatory)][string] $ApplicationId,

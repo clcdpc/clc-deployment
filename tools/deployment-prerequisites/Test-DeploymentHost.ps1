@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $ApplicationId,
     [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $TargetId,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_. -]{0,99}$')][string] $EnvironmentName,
-    [Parameter(Mandatory)][ValidateSet('DEV','Test','Production')][string] $DeploymentChannel,
+    [Parameter(Mandatory)][ValidateSet('DEV','Production')][string] $DeploymentChannel,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$')][string] $Repository,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_./-]{0,127}$')][string] $IntegrationBranch='master',
     [Parameter(Mandatory)][ValidatePattern('^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.ya?ml$')][string] $ReleaseWorkflow,

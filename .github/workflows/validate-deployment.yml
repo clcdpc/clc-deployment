@@ -32,7 +32,7 @@ on:
         type: string
         default: CLC_DEPLOYMENT_ENABLED
       deployment_channel:
-        description: DEV, Test or Production (case-sensitive)
+        description: DEV or Production (case-sensitive)
         type: string
         default: DEV
       application_id:

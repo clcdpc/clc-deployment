@@ -8,16 +8,17 @@ The four exports remain unchanged. Existing exact manual approvals need no stand
 
 Install and pin an independently authenticated compatible toolkit, enroll the dedicated target, and complete a successful independently approved baseline. Infrastructure separately writes `approvalCatalogRoot/standing/<standingAuthorizationId>.json`, preserving protected ownership, structural ACLs and effective runtime isolation. Deployment never creates or enables that policy. The elevated deployment administrator remains procedurally trusted; NTFS and hashes do not contain that account.
 
-Use distinct DEV, Test and production targets, environments and policies. Standing authority cannot enroll a host, establish the first baseline/cutover, change the toolkit, authorize downgrades or authorize exceptional recovery. See the [standing schema](../schemas/standing-authorization.schema.json). Schema 1 retains its existing tagged DEV/production scope. New schema 2 adds the exact `sourcePolicy` object:
+Use distinct DEV and Production targets, environments and policies. Standing authority cannot enroll a host, establish the first baseline/cutover, change the toolkit, authorize downgrades or authorize exceptional recovery. See the [standing schema](../schemas/standing-authorization.schema.json). Schema 1 retains its existing tagged DEV/production scope. New schema 2 adds the exact `sourcePolicy` object:
 
 ```json
 "sourcePolicy": {
   "integrationBranch": "main",
   "allowUnmergedDevTags": true,
-  "allowSnapshots": true,
-  "allowTestTags": false
+  "allowSnapshots": true
 }
 ```
+
+Only DEV and Production are deployment channels; there is no separate Test release channel. Environment and host names, including names containing "test", do not imply a release channel. Unknown source-policy fields are rejected.
 
 The policy still binds application, target, environment, channel, repository, producer workflow/job, lineage and independent infrastructure authority. A schema-2 policy requires schema-2 verified evidence; legacy evidence cannot omit the new source checks. Executable hooks require their own separately protected authorization described in [contracts](contracts.md); neither these source flags nor a valid ZIP hash enables hooks.
 
@@ -28,7 +29,7 @@ The policy still binds application, target, environment, channel, repository, pr
 | `vMAJOR.MINOR.PATCH-dev.N` | DEV; `IntegrationTag` in protected master history, or explicitly enabled `UnmergedDevTag` outside it |
 | `vMAJOR.MINOR.PATCH-beta.N`, `-rc.N` | ArtifactOnly; package/publication without automatic IIS admission |
 | `vMAJOR.MINOR.PATCH` | Production; separately enabled production target and standing authority |
-| `vMAJOR.MINOR.PATCH-test.N` | Test; requires explicit test-tag policy and Test target/channel |
+| `vMAJOR.MINOR.PATCH-test.N` | Unsupported; rejected by release-tag validation |
 | `refs/heads/<integrationBranch>` | DEV snapshot; explicit snapshot policy, verified protected-branch source and authenticated producer-run ordering |
 
 Creating and pushing a valid DEV version tag authorizes that exact release through GitHub repository permissions and tag creation controls. With `allowUnmergedDevTags=true` in both protected consumer configuration and host standing policy, an exact same-repository commit outside master needs no associated PR or formal GitHub review. A PR may be draft, closed or advanced beyond the tagged commit, and its branch may be unprotected or deleted. Master (the actual configured `integrationBranch`, such as `main`) must remain protected. The source must retain identical trusted workflows, configuration and declared supporting files. The shared verifier checks the current tag object and full source commit, exact successful producer and artifact/package identity, then repeats eligibility after privileged queueing and download. A qualifying tag push can proceed unattended; no additional manual release approval gate is needed. Independent host and hook authorization still apply.

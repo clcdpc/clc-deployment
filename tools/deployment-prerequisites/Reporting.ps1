@@ -109,7 +109,7 @@ function ConvertTo-ClcDeploymentPrerequisiteStageReport {
         Assert-DistFields $s @('repository','integration_branch','application','target','environment','channel','observed_commit')
         foreach ($key in $s.Keys) { if ($s[$key] -isnot [string] -or $s[$key].Length -gt 256) { return $null } }
         if ($s.repository -cnotmatch '^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$' -or $s.integration_branch -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_./-]{0,127}$' -or
-            $s.environment -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_. -]{0,99}$' -or $s.channel -cnotin @('DEV','Test','Production')) { return $null }
+            $s.environment -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_. -]{0,99}$' -or $s.channel -cnotin @('DEV','Production')) { return $null }
         foreach ($key in @('application','target')) { if ($s[$key] -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$') { return $null } }
         if ($s.observed_commit -and $s.observed_commit -cnotmatch '^[a-f0-9]{40}$') { return $null }
         if ($value.checked_at_utc -isnot [string] -or $value.checked_at_utc -cnotmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$') { return $null }
