@@ -17,6 +17,7 @@ Describe 'Commissioning GitHub observations' {
             $r.github_status | Should -BeExactly PASS -Because ($r.checks | ConvertTo-Json -Depth 6)
             $r.host_status | Should -BeExactly UNVERIFIED
             $r.ready | Should -BeFalse
+            @($r.checks | Where-Object { $_.status -ceq 'PASS' -and $_.action }).Count | Should -Be 0
             @($r.checks | Where-Object category -EQ host).Count | Should -Be 0
             ($r.checks | Where-Object id -EQ github.routing.activation).status | Should -Be UNVERIFIED
             ($r.checks | Where-Object id -EQ github.routing.activation).required | Should -BeFalse

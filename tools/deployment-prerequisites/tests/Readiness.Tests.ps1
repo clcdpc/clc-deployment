@@ -41,7 +41,9 @@ Describe 'Contract 3 commissioning reports' {
     }
     It 'cannot establish overall readiness from a single <Category> inspector' -ForEach @(@{Category='github'},@{Category='host'}) {
         $rows=if ($Category -eq 'github') {$g} else {$h}
-        (New-ClcDeploymentPrerequisiteReport $config $rows).ready | Should -BeFalse
+        $report=New-ClcDeploymentPrerequisiteReport $config $rows
+        $report.ready | Should -BeFalse
+        (Format-ClcDeploymentPrerequisiteSummary $report) | Should -Match 'inspection: \*\*SKIPPED\*\*'
     }
     It 'reports missing host inspection as SKIPPED without fabricating its checks' {
         $r=Merge-ClcDeploymentPrerequisiteReports (New-ClcDeploymentPrerequisiteReport $config $g) $null

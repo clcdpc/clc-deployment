@@ -47,6 +47,7 @@ function New-ClcDeploymentPrerequisiteCheck {
         [Parameter(Mandatory)][string] $Detail, [string] $Action='', [string] $Reason='', [string] $Name='')
     $definitions=Get-ClcDeploymentPrerequisiteDefinitions
     if (-not $definitions.ContainsKey($Id)) { throw 'Unknown prerequisite check identity.' }
+    if ($Status -cin @('PASS','NOT_APPLICABLE')) { $Action='' }
     if (-not $Name) { $Name=($Id.Split('.') | Select-Object -Skip 1) -join ' '; $Name=$Name.Replace('-',' ');$Name=$Name.Substring(0,1).ToUpperInvariant()+$Name.Substring(1) }
     [pscustomobject][ordered]@{id=$Id;category=$Id.Split('.')[0];name=$Name;status=$Status;
         required=[bool]$definitions[$Id];detail=$Detail;action=$Action;reason=$Reason}
@@ -183,6 +184,11 @@ function Format-ClcDeploymentPrerequisiteSummary {
     $lines.Add("# $(if ($Report.ready) {'READY'} else {'NOT READY'})");$lines.Add('')
     $lines.Add("Repository: **$($s.repository)** · Application: **$($s.application)** · Environment: **$($s.environment)** · Target: **$($s.target)** · Channel: **$($s.channel)**")
     $lines.Add('');$lines.Add("GitHub prerequisites: **$($Report.github_status)** · Host prerequisites: **$($Report.host_status)**")
+    foreach ($category in @('github','host')) {
+        if (-not @($Report.checks | Where-Object category -CEQ $category).Count) {
+            $lines.Add('');$lines.Add("$category inspection: **SKIPPED** — this report contains no observations from that inspector.")
+        }
+    }
     $lines.Add('');$lines.Add("Passed: $($Report.counts.passed) · Failed: $($Report.counts.failed) · Unverified: $($Report.counts.unverified) · Skipped: $($Report.counts.skipped) · Not applicable: $($Report.counts.not_applicable)")
     foreach ($group in @('Blocking problems','Nonblocking warnings','Successful and inapplicable checks')) {
         $rows=@($Report.checks | Where-Object {
