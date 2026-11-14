@@ -91,32 +91,21 @@ function Start-ClcAttestationVerifier {
     return [Clc.Lifecycle.Native]::Attestation($Path,$Arguments)
 }
 
-function Invoke-ClcAttestationVerification {
-    param($Context,$Standing,$Archive,$Bundle,$Manifest,[string] $Tag)
-    $s=$Standing.record
-    foreach ($item in @(@{path=$s.verifier.path;sha256=$s.verifier.sha256;limit=268435456L},
-            @{path=$s.verifier.trustedRootPath;sha256=$s.verifier.trustedRootSha256;limit=4194304L})) {
-        $null=Add-ClcProtectedPathPin $Context $item.path -RuntimeSid $Archive.runtimeSid -SystemFile
-        $parent=[IO.Path]::GetDirectoryName($item.path)
-        $null=Add-ClcProtectedPathPin $Context $parent -Directory -SystemDirectory -RuntimeSid $Archive.runtimeSid
-        Assert-ClcTrustAncestors $Context $item.path $Archive.runtimeSid
-        $held=Read-ClcHeldFile $item.path $Context.handles $item.limit -NoCapture -SystemFile
-        if ($held.sha256 -cne $item.sha256) { Stop-ClcError Clc.ProvenanceRejected }
-    }
-    $arguments=@('attestation','verify',$Archive.path,'--bundle',$Bundle.path,'--repo',$s.sourceRepository,
+function Get-ClcAttestationArguments {
+    param($s,[string] $ArchivePath,[string] $BundlePath,$Manifest,[string] $Tag)
+    return @('attestation','verify',$ArchivePath,'--bundle',$BundlePath,'--repo',$s.sourceRepository,
         '--hostname','github.com','--signer-workflow',($s.producer.repository+'/'+$s.producer.workflowPath),
         '--signer-digest',$s.producer.sourceCommit,'--source-ref',('refs/tags/'+$Tag),'--source-digest',$Manifest.source.commit,
         '--cert-oidc-issuer','https://token.actions.githubusercontent.com','--deny-self-hosted-runners',
         '--custom-trusted-root',$s.verifier.trustedRootPath,'--predicate-type',$script:ClcAutomatedPredicateType,
         '--format','json','--jq','[.[] | {predicate: .verificationResult.statement.predicate, certificate: .verificationResult.signature.certificate}]')
-    $running=$null
+}
+
+function ConvertFrom-ClcAttestationOutput {
+    param([byte[]] $Bytes,$s,$Manifest,[string] $Tag)
     try {
-        Assert-ClcHeldRecordUnchanged $Context $Standing 'Clc.StandingAuthorizationRejected'
-        $running=Start-ClcAttestationVerifier $s.verifier.path $arguments
-        $output=Complete-ClcHelperOutput $running
-        if ($output.Failed) { Stop-ClcError Clc.ProvenanceRejected }
         $options=[Text.Json.JsonDocumentOptions]::new(); $options.MaxDepth=32
-        $document=[Text.Json.JsonDocument]::Parse([Text.UTF8Encoding]::new($false,$true).GetString($output.Bytes),$options)
+        $document=[Text.Json.JsonDocument]::Parse([Text.UTF8Encoding]::new($false,$true).GetString($Bytes),$options)
         try { $values=ConvertFrom-ClcJsonElement $document.RootElement } finally { $document.Dispose() }
         if ($values -isnot [object[]] -or $values.Count -ne 1) { Stop-ClcError Clc.ProvenanceRejected }
         Assert-ClcObject $values[0] @('predicate','certificate')
@@ -132,6 +121,29 @@ function Invoke-ClcAttestationVerification {
         foreach ($key in $expected.Keys) { if ($c[$key] -isnot [string] -or $c[$key] -cne $expected[$key]) { Stop-ClcError Clc.ProvenanceRejected } }
         Assert-ClcRecord $p automated-provenance
         return $p
+    } catch { Stop-ClcError Clc.ProvenanceRejected }
+}
+
+function Invoke-ClcAttestationVerification {
+    param($Context,$Standing,$Archive,$Bundle,$Manifest,[string] $Tag)
+    $s=$Standing.record
+    foreach ($item in @(@{path=$s.verifier.path;sha256=$s.verifier.sha256;limit=268435456L},
+            @{path=$s.verifier.trustedRootPath;sha256=$s.verifier.trustedRootSha256;limit=4194304L})) {
+        $null=Add-ClcProtectedPathPin $Context $item.path -RuntimeSid $Archive.runtimeSid -SystemFile
+        $parent=[IO.Path]::GetDirectoryName($item.path)
+        $null=Add-ClcProtectedPathPin $Context $parent -Directory -SystemDirectory -RuntimeSid $Archive.runtimeSid
+        Assert-ClcTrustAncestors $Context $item.path $Archive.runtimeSid
+        $held=Read-ClcHeldFile $item.path $Context.handles $item.limit -NoCapture -SystemFile
+        if ($held.sha256 -cne $item.sha256) { Stop-ClcError Clc.ProvenanceRejected }
+    }
+    $arguments=Get-ClcAttestationArguments $s $Archive.path $Bundle.path $Manifest $Tag
+    $running=$null
+    try {
+        Assert-ClcHeldRecordUnchanged $Context $Standing 'Clc.StandingAuthorizationRejected'
+        $running=Start-ClcAttestationVerifier $s.verifier.path $arguments
+        $output=Complete-ClcHelperOutput $running
+        if ($output.Failed) { Stop-ClcError Clc.ProvenanceRejected }
+        return ConvertFrom-ClcAttestationOutput $output.Bytes $s $Manifest $Tag
     } catch { Stop-ClcError Clc.ProvenanceRejected }
     finally {
         if ($null -ne $running) {

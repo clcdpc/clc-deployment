@@ -1,0 +1,144 @@
+name: CLC signed release producer
+
+# Pin this reusable workflow to a reviewed full commit. No artifact, predicate,
+# source, path, command or target inputs are accepted from a calling job.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: windows-2022
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: application
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: a5de3c2e1f7f9e3c7dc79fcef13b95703b3f749e # reviewed packaging/tag contracts
+          persist-credentials: false
+          path: toolkit
+      - name: Run the exact source's application-owned release gates and build
+        shell: pwsh
+        env:
+          CLC_TOOLKIT_MANIFEST: ${{ github.workspace }}/toolkit/src/CLC.Deployment/CLC.Deployment.psd1
+        run: |
+          $ErrorActionPreference='Stop'
+          Import-Module $env:CLC_TOOLKIT_MANIFEST
+          $tag=Test-ClcRelease -ReleaseTag $env:GITHUB_REF_NAME
+          $env:CLC_RELEASE_ID=$tag.releaseId
+          $env:CLC_RELEASE_WORKFLOW=($env:GITHUB_WORKFLOW_REF -split '@')[0].Substring($env:GITHUB_REPOSITORY.Length+1)
+          $env:CLC_RELEASE_JOB='build'
+          $env:CLC_RELEASE_DIRECTORY=Join-Path $env:RUNNER_TEMP 'clc-release'
+          New-Item -ItemType Directory -Path $env:CLC_RELEASE_DIRECTORY -ErrorAction Stop | Out-Null
+          Set-Location application
+          # Fixed source-owned build entry point, with all application gates.
+          # This job has neither OIDC nor attestation permission.
+          $global:LASTEXITCODE=0
+          & ./.clc/build.ps1
+          if ($LASTEXITCODE) { throw 'Application release gates failed' }
+          $null=Test-ClcRelease -ArchivePath (Join-Path $env:CLC_RELEASE_DIRECTORY 'release.zip')
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: clc-package-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clc-release/release.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+          overwrite: false
+
+  receipt:
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      # Fresh runner: never execute application source, build output or hooks here.
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: a5de3c2e1f7f9e3c7dc79fcef13b95703b3f749e
+          persist-credentials: false
+          path: toolkit
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: clc-package-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/package
+      - name: Construct receipt from observed bytes and authenticated context
+        id: receipt
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference='Stop'
+          Import-Module ./toolkit/src/CLC.Deployment/CLC.Deployment.psd1
+          if ($env:GITHUB_EVENT_NAME -cne 'push' -or $env:GITHUB_REF_TYPE -cne 'tag' -or $env:GITHUB_SHA -cnotmatch '^[a-f0-9]{40}$') { throw 'Tag push required' }
+          $tag=Test-ClcRelease -ReleaseTag $env:GITHUB_REF_NAME
+          $workflow=($env:GITHUB_WORKFLOW_REF -split '@')[0].Substring($env:GITHUB_REPOSITORY.Length+1)
+          $headers=@{Authorization=('Bearer '+$env:GH_TOKEN); Accept='application/vnd.github+json'}
+          $api='https://api.github.com/repos/'+$env:GITHUB_REPOSITORY
+          # Only a fixed source-owned channel map, never caller strings/predicate.
+          $config=Invoke-RestMethod -Uri ($api+'/contents/.clc/receipt.json?ref='+$env:GITHUB_SHA) -Headers $headers -TimeoutSec 30
+          $map=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($config.content)) | ConvertFrom-Json -AsHashtable
+          if ($map.Count -ne 2 -or -not $map.ContainsKey('applicationId') -or -not $map.ContainsKey('targets') -or $map.targets.Count -ne 3 -or
+              -not $map.targets.ContainsKey('DEV') -or -not $map.targets.ContainsKey('Production') -or -not $map.targets.ContainsKey('ArtifactOnly')) { throw 'Invalid fixed channel map' }
+          $archive=Join-Path $env:RUNNER_TEMP 'package/release.zip'
+          if (@(Get-ChildItem (Split-Path $archive) -Force).Count -ne 1) { throw 'Unexpected artifact contents' }
+          $inspection=Test-ClcRelease -ArchivePath $archive
+          $zip=[IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $reader=[IO.StreamReader]::new($zip.GetEntry('manifest.json').Open())
+            try { $manifest=$reader.ReadToEnd() | ConvertFrom-Json -AsHashtable } finally { $reader.Dispose() }
+          } finally { $zip.Dispose() }
+          if ($manifest.applicationId -cne $map.applicationId -or $manifest.releaseId -cne $tag.releaseId -or
+              $manifest.source.repository -cne $env:GITHUB_REPOSITORY -or $manifest.source.commit -cne $env:GITHUB_SHA -or
+              $manifest.build.workflowPath -cne $workflow -or $manifest.build.job -cne 'build' -or
+              $manifest.build.runId -ne [long]$env:GITHUB_RUN_ID -or $manifest.build.runAttempt -ne [long]$env:GITHUB_RUN_ATTEMPT) { throw 'Package context mismatch' }
+          $artifacts=Invoke-RestMethod -Uri ($api+'/actions/runs/'+$env:GITHUB_RUN_ID+'/artifacts?per_page=100') -Headers $headers -TimeoutSec 30
+          $selected=@($artifacts.artifacts | Where-Object name -CEQ ('clc-package-'+$env:GITHUB_RUN_ID+'-'+$env:GITHUB_RUN_ATTEMPT))
+          if ($artifacts.total_count -gt 100 -or $selected.Count -ne 1 -or $selected[0].expired -or
+              $selected[0].workflow_run.head_sha -cne $env:GITHUB_SHA -or $selected[0].digest -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Ambiguous immutable artifact' }
+          $predicate=@{contractFamily='clc-file-iis-v1';schemaVersion=1;recordKind='automated-provenance';
+            targetId=$map.targets[$tag.channel];applicationId=$map.applicationId;releaseId=$tag.releaseId;tag=$tag.tag;
+            sourceRepository=$env:GITHUB_REPOSITORY;sourceCommit=$env:GITHUB_SHA;
+            releaseZipSha256=$inspection.archiveSha256;manifestSha256=$inspection.manifestSha256;
+            provenance=@{workflowPath=$workflow;runId=[long]$env:GITHUB_RUN_ID;runAttempt=[long]$env:GITHUB_RUN_ATTEMPT;
+              buildJob='build';artifactId=[long]$selected[0].id;transportSha256=$selected[0].digest.Substring(7)}}
+          $bytes=[Text.Encoding]::UTF8.GetBytes(($predicate | ConvertTo-Json -Depth 12 -Compress))
+          $null=& (Get-Module CLC.Deployment) { param($b) Read-ClcJson $b automated-provenance } $bytes
+          $out=Join-Path $env:RUNNER_TEMP 'receipt'; New-Item -ItemType Directory -Path $out | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $out 'predicate.json'),$bytes)
+          "subject=$archive`npredicate=$out/predicate.json`nrelease_id=$($tag.releaseId)" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        id: attest
+        with:
+          subject-path: ${{ steps.receipt.outputs.subject }}
+          predicate-type: https://clcdpc.github.io/clc-deployment/attestations/release/v1
+          predicate-path: ${{ steps.receipt.outputs.predicate }}
+      - name: Retain exact Sigstore bundle separately from the package
+        shell: pwsh
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          RELEASE_ID: ${{ steps.receipt.outputs.release_id }}
+        run: Copy-Item -LiteralPath $env:BUNDLE -Destination (Join-Path $env:RUNNER_TEMP ('receipt/'+$env:RELEASE_ID+'.sigstore.json'))
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: clc-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/receipt/
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
