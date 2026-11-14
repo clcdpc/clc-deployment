@@ -1,6 +1,6 @@
 # Real custom receipt evidence
 
-[GitHub-hosted run 43536433891, attempt 1](https://github.com/clcdpc/clc-deployment/actions/runs/43536433891) built synthetic data at source `9da39e8959e2b5e422e3591d603b1a93acd728b0`, called the reusable producer at exact commit `ba6fd6ffd3836fd110c84adeb58aaa5aa01c4c99`, signed the CLC custom predicate with `actions/attest` v4.1.0 at `59d89421af93a897026c735860bf21b6eb4f7b26`, and passed offline verification with exact-hash-pinned Windows GitHub CLI 2.97.0 and the retained trusted root. The reserved source tag is `v9999.9999.9999-dev.9996`; it is excluded from toolkit publication. No toolkit release was published.
+[GitHub-hosted run 43537327251, attempt 1](https://github.com/clcdpc/clc-deployment/actions/runs/43537327251) built synthetic data at source `45aa9f51781bc13598270494952f1f6f7b18a9ee`, called the reusable producer at exact commit `b85cc05b5646352c87cf0b86246fa7c80c11a1ba`, signed the CLC custom predicate with `actions/attest` v4.1.0 at `59d89421af93a897026c735860bf21b6eb4f7b26`, and passed offline verification with exact-hash-pinned Windows GitHub CLI 2.97.0 and the retained trusted root. The reserved source tag is `v9999.9999.9999-dev.9995`; it is excluded from toolkit publication. No toolkit release was published.
 
 - `release.zip`: synthetic nonexecutable package, never deployment authority.
 - `receipt.sigstore.json`: original `application/vnd.dev.sigstore.bundle.v0.3+json` Sigstore bundle, including certificate/transparency proof and signed custom in-toto statement.
