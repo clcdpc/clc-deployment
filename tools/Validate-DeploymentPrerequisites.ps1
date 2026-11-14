@@ -11,6 +11,11 @@ param(
     [ValidateSet('DEV','Production')][string] $DeploymentChannel = 'DEV',
     [ValidateSet('runner-workflow','required-reviewers')][string] $EnvironmentProtection = 'runner-workflow',
     [Parameter(Mandatory)][string] $YamlAssemblyPath,
+    [ValidateSet('Standard','Administrative')][string] $AuthenticationMode='Standard',
+    [string] $ApplicationId='',
+    [string] $TargetId='',
+    [string] $DiagnosticWorkflow='',
+    [string] $ReportPath='',
     [switch] $Strict
 )
 Set-StrictMode -Version Latest
@@ -20,14 +25,11 @@ $config=@{
     Repository=$env:GITHUB_REPOSITORY; EnvironmentName=$EnvironmentName; IntegrationBranch=$IntegrationBranch;
     ReleaseWorkflow=$ReleaseWorkflow; DeploymentWorkflow=$DeploymentWorkflow; RunnerGroup=$RunnerGroup;
     RunnerLabels=$RunnerLabels; ActivationVariable=$ActivationVariable; DeploymentChannel=$DeploymentChannel;
-    EnvironmentProtection=$EnvironmentProtection; ActivationState=$(if ($env:CLC_ACTIVATION_STATE) { $env:CLC_ACTIVATION_STATE } else { 'unavailable' }); Strict=[bool]$Strict
+    EnvironmentProtection=$EnvironmentProtection; ActivationState=$(if ($env:CLC_ACTIVATION_STATE) { $env:CLC_ACTIVATION_STATE } else { 'unavailable' }); Strict=[bool]$Strict;
+    ApplicationId=$ApplicationId;TargetId=$TargetId;DiagnosticWorkflow=$DiagnosticWorkflow
 }
-$report=Invoke-DpValidation -Config $config -YamlAssemblyPath $YamlAssemblyPath
-$summary=Format-DpSummary $report
-if ($env:GITHUB_STEP_SUMMARY) { [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY,$summary + "`n",[Text.UTF8Encoding]::new($false)) }
-if ($env:GITHUB_OUTPUT) {
-    $output="ready=$($report.ready.ToString().ToLowerInvariant())`npassed_count=$($report.passed_count)`nfailed_count=$($report.failed_count)`nunverified_count=$($report.unverified_count)`n"
-    [IO.File]::AppendAllText($env:GITHUB_OUTPUT,$output,[Text.UTF8Encoding]::new($false))
-}
+$report=Invoke-DpValidation -Config $config -YamlAssemblyPath $YamlAssemblyPath -AuthenticationMode $AuthenticationMode
+Publish-DpReport $report
+if ($ReportPath) { $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ReportPath -Encoding utf8NoBOM }
 Write-Host "Deployment prerequisites: ready=$($report.ready); passed=$($report.passed_count); failed=$($report.failed_count); unverified=$($report.unverified_count). See job summary."
 exit $report.exit_code

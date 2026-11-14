@@ -1,9 +1,13 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. "$PSScriptRoot/Reporting.ps1"
 
 function Add-DpResult {
-    param($Results, [string] $Section, [string] $Name, [ValidateSet('PASS','FAIL','UNVERIFIED')][string] $Status, [string] $Detail, [string] $Action = '')
-    $Results.Add([pscustomobject]@{ section=$Section; name=$Name; status=$Status; detail=$Detail; action=$Action })
+    param($Results, [string] $Section, [string] $Name, [ValidateSet('PASS','FAIL','UNVERIFIED')][string] $Status, [string] $Detail, [string] $Action = '', [string] $Category = '')
+    if (-not $Category) {
+        $Category=if ($Section -ceq 'Host qualification' -or $Name -cin @('Compatible toolkit installation','IIS target enrollment','Initial successful deployment baseline','Standing authorization','Runtime identity and host permissions','Application configuration and Data Protection','Host readiness and recovery qualification')) {'host'} else {'github'}
+    }
+    $Results.Add([pscustomobject]@{ category=$Category; section=$Section; name=$Name; status=$Status; detail=$Detail; action=$Action })
 }
 
 function Get-DpApi {
@@ -138,11 +142,15 @@ function Test-DpInputs {
     foreach ($path in @($Config.ReleaseWorkflow,$Config.DeploymentWorkflow)) {
         if ($path -cnotmatch '^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,100}\.ya?ml$' -or $path.Contains('..')) { throw 'Invalid workflow path.' }
     }
+    if ($Config.ContainsKey('DiagnosticWorkflow') -and $Config.DiagnosticWorkflow -and ($Config.DiagnosticWorkflow -cnotmatch '^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,100}\.ya?ml$' -or $Config.DiagnosticWorkflow.Contains('..'))) { throw 'Invalid diagnostic workflow path.' }
     foreach ($name in @($Config.EnvironmentName,$Config.RunnerGroup)) {
         if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_. -]{0,99}$') { throw 'Environment name and runner group are required safe names.' }
     }
     if ($Config.ActivationVariable -cnotmatch '^[A-Z_][A-Z0-9_]{0,63}$' -or $Config.ActivationVariable -cmatch '^(GITHUB_|RUNNER_)') { throw 'Invalid activation variable name.' }
     if ($Config.DeploymentChannel -cnotin @('DEV','Production')) { throw 'Deployment channel must be DEV or Production.' }
+    foreach ($key in @('ApplicationId','TargetId')) {
+        if ($Config.ContainsKey($key) -and $Config[$key] -and $Config[$key] -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$') { throw 'Invalid application or target selector.' }
+    }
     if ($Config.EnvironmentProtection -cnotin @('runner-workflow','required-reviewers')) { throw 'Invalid environment protection model.' }
     if ($Config.ActivationState -cnotin @('enabled','disabled','missing-or-empty','invalid','unavailable')) { throw 'Invalid activation observation.' }
     $labels = @($Config.RunnerLabels.Split(','))
@@ -182,6 +190,9 @@ function Get-DpBranchResults {
         else { Add-DpResult $Results $section $item.Key UNVERIFIED 'Classic or inherited protection could not be fully read.' $action }
     }
     Add-DpResult $Results $section 'Branch bypass and workflow ownership' UNVERIFIED 'Rule presence does not establish independent reviewer identities, bypass authority or effective CODEOWNERS coverage.' 'Review rule bypass actors and effective CODEOWNERS for both workflow paths and toolkit pins; require infrastructure ownership.'
+    if ($protection['enforce_admins'] -is [Collections.IDictionary] -and $protection['enforce_admins']['enabled'] -is [bool]) {
+        Add-DpResult $Results $section 'Classic administrator enforcement' $(if ($protection['enforce_admins']['enabled']) {'PASS'} else {'UNVERIFIED'}) 'The classic enforce_admins flag was directly observed; disabled classic enforcement does not establish the effective inherited ruleset bypass model.' $action
+    } else { Add-DpResult $Results $section 'Classic administrator enforcement' UNVERIFIED 'Classic administrator enforcement is inaccessible or not applicable; effective ruleset bypass requires independent review.' $action }
 }
 
 function Get-DpTagResults {
@@ -191,6 +202,7 @@ function Get-DpTagResults {
     $action='Inspect Settings > Rules > Rulesets (including inherited rules): active tag rules covering all v* tags must restrict creation, updates and deletion; review authorized bypass actors.'
     $found=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $unknown=-not $list.ok
+    $bypassUnknown=-not $list.ok; $hasBypass=$false; $activeTags=0
     if ($list.ok) {
         foreach ($entry in $list.data) {
             if ($entry['id'] -isnot [long] -and $entry['id'] -isnot [int]) { $unknown=$true; continue }
@@ -199,6 +211,9 @@ function Get-DpTagResults {
             $rule=$detail.data
             if ($rule -isnot [Collections.IDictionary] -or -not $rule.Contains('target') -or -not $rule.Contains('enforcement')) { $unknown=$true; continue }
             if ($rule['target'] -cne 'tag' -or $rule['enforcement'] -cne 'active') { continue }
+            $activeTags++
+            if ($rule['bypass_actors'] -isnot [array]) { $bypassUnknown=$true }
+            elseif ($rule['bypass_actors'].Count) { $hasBypass=$true }
             $conditions=$rule['conditions']
             if ($null -eq $conditions -or $null -eq $conditions['ref_name']) { $unknown=$true; continue }
             $refs=$conditions['ref_name']
@@ -218,6 +233,9 @@ function Get-DpTagResults {
         else { Add-DpResult $Results 'Repository configuration' "Release tag $type restricted" FAIL 'No active v* rule enforcing this operation restriction was found.' $action }
     }
     Add-DpResult $Results 'Repository configuration' 'Tag bypass authority' UNVERIFIED 'Authorized release producers and bypass identities require independent administrative review.' $action
+    if ($activeTags -gt 0 -and -not $bypassUnknown -and -not $unknown -and -not $hasBypass) {
+        Add-DpResult $Results 'Repository configuration' 'Observed tag ruleset bypass actors' PASS 'Every enumerated active tag ruleset exposes an empty bypass list; branch/workflow ownership still requires independent review.'
+    } else { Add-DpResult $Results 'Repository configuration' 'Observed tag ruleset bypass actors' UNVERIFIED 'Active tag rulesets have bypass actors, unavailable details or incomplete coverage; actor authority and effective scope require review.' $action }
 }
 
 function Get-DpWorkflow {
@@ -347,9 +365,11 @@ function Get-DpRunnerResults {
         elseif (@($repos.data).Count -eq 1 -and $repos.data[0]['full_name'] -ieq $Config.Repository) { Add-DpResult $Results $section 'Runner repository access' PASS "Selected repository access is limited to the verified $RepositoryVisibility caller; public access matches its visibility. Workflow admission and independent administrative review remain separate requirements." }
         else { Add-DpResult $Results $section 'Runner repository access' FAIL 'Selected repositories are not limited to the caller.' $action }
     }
-    $allowed="$($Config.Repository)/$($Config.DeploymentWorkflow)@refs/heads/$($Config.IntegrationBranch)"
-    if ($group['restricted_to_workflows'] -eq $true -and @($group['selected_workflows']).Count -eq 1 -and $group['selected_workflows'][0] -ceq $allowed) {
-        Add-DpResult $Results $section 'Runner selected-workflow access' PASS 'Only the exact expected protected-branch deployment workflow is selected.'
+    $allowed=@("$($Config.Repository)/$($Config.DeploymentWorkflow)@refs/heads/$($Config.IntegrationBranch)")
+    if ($Config.ContainsKey('DiagnosticWorkflow') -and $Config.DiagnosticWorkflow) { $allowed+= "$($Config.Repository)/$($Config.DiagnosticWorkflow)@refs/heads/$($Config.IntegrationBranch)" }
+    $selected=@($group['selected_workflows'])
+    if ($group['restricted_to_workflows'] -eq $true -and $selected.Count -eq $allowed.Count -and @($allowed | Where-Object { $selected -cnotcontains $_ }).Count -eq 0) {
+        Add-DpResult $Results $section 'Runner selected-workflow access' PASS 'Only the exact expected protected-branch deployment and optional diagnostic workflow definitions are selected.'
     } elseif ($group.Contains('restricted_to_workflows') -and $group.Contains('selected_workflows')) { Add-DpResult $Results $section 'Runner selected-workflow access' FAIL 'Repository access alone is insufficient; expected workflow restriction is missing, broader or inconsistent.' $action }
     else { Add-DpResult $Results $section 'Runner selected-workflow access' UNVERIFIED 'Workflow admission fields were not exposed.' $action }
     $runners=Get-DpCollection "$path/$id/runners" 'runners'
@@ -400,6 +420,7 @@ function Get-DpDeploymentResults {
     if ($Config.DeploymentChannel -ceq 'Production') {
         Add-DpResult $Results $section 'Explicit production gate' UNVERIFIED 'Production opt-in and its relationship to the chosen environment/runner protection cannot be proved by a variable or YAML token match.' 'Infrastructure must review the production-only opt-in guard and independently enforced protection; this validator never enables production.'
     }
+    Add-DpResult $Results $section 'DEV and production separation' UNVERIFIED 'The selected environment and channel are explicit; separation of approvals, standing scope, activation and every other workflow requires semantic review.' 'Independently review DEV/production environments, activation variables, host targets and standing policies; never derive channel from ASP.NET runtimeEnvironment.'
 }
 
 function Get-DpToolkitResults {
@@ -435,8 +456,19 @@ function Complete-DpReport {
     $passed=@($Results | Where-Object status -CEQ PASS).Count
     $failed=@($Results | Where-Object status -CEQ FAIL).Count
     $unverified=@($Results | Where-Object status -CEQ UNVERIFIED).Count
-    $ready=$Results.Count -gt 0 -and $failed -eq 0 -and $unverified -eq 0
-    [pscustomobject]@{ repository=$Config.Repository; channel=$Config.DeploymentChannel; environment=$Config.EnvironmentName; observed_commit=$Commit; ready=$ready; passed_count=$passed; failed_count=$failed; unverified_count=$unverified; exit_code=$(if ($Config.Strict -and -not $ready) { 1 } else { 0 }); results=$Results.ToArray() }
+    $github=Get-DpCategoryStatus @($Results | Where-Object category -CEQ github)
+    $hostStatus=Get-DpCategoryStatus @($Results | Where-Object category -CEQ host)
+    $ready=$github -ceq 'PASS' -and $hostStatus -ceq 'PASS'
+    [pscustomobject]@{ contract_version=2; repository=$Config.Repository; channel=$Config.DeploymentChannel; environment=$Config.EnvironmentName;
+        application=$(if ($Config.ContainsKey('ApplicationId')) {$Config.ApplicationId} else {''}); target=$(if ($Config.ContainsKey('TargetId')) {$Config.TargetId} else {''});
+        observed_commit=$Commit; github_status=$github; host_status=$hostStatus; overall_ready=$ready; ready=$ready; passed_count=$passed; failed_count=$failed; unverified_count=$unverified; exit_code=$(if ($Config.Strict -and -not $ready) { 1 } else { 0 }); results=$Results.ToArray() }
+}
+
+function Set-DpAuthentication {
+    param($Client, [ValidateSet('Standard','Administrative')][string] $Mode='Standard')
+    $token=if ($Mode -ceq 'Administrative') {$env:CLC_GITHUB_INSPECTION_TOKEN} else {$env:GH_TOKEN}
+    if ($Mode -ceq 'Administrative' -and -not $token) { throw 'Administrative inspection requires the explicitly supplied read-only installation token.' }
+    if ($token) { $Client.DefaultRequestHeaders.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$token) }
 }
 
 function Invoke-DpSection {
@@ -447,7 +479,8 @@ function Invoke-DpSection {
 
 function Invoke-DpValidation {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][hashtable] $Config, [Parameter(Mandatory)][string] $YamlAssemblyPath)
+    param([Parameter(Mandatory)][hashtable] $Config, [Parameter(Mandatory)][string] $YamlAssemblyPath,
+        [ValidateSet('Standard','Administrative')][string] $AuthenticationMode='Standard')
     Test-DpInputs $Config
     $lock=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'dependencies.lock.json') -Raw | ConvertFrom-Json -AsHashtable
     if ((Get-FileHash -LiteralPath $YamlAssemblyPath).Hash.ToLowerInvariant() -cne $lock.yamlDotNet.assemblySha256) { throw 'Untrusted YAML parser assembly.' }
@@ -461,9 +494,9 @@ function Invoke-DpValidation {
     $script:Client.DefaultRequestHeaders.UserAgent.ParseAdd('CLC-Deployment-Prerequisites/1')
     $script:Client.DefaultRequestHeaders.Accept.ParseAdd('application/vnd.github+json')
     $script:Client.DefaultRequestHeaders.Add('X-GitHub-Api-Version','2022-11-28')
-    if ($env:GH_TOKEN) { $script:Client.DefaultRequestHeaders.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$env:GH_TOKEN) }
     $commit=''
     try {
+        Set-DpAuthentication $script:Client $AuthenticationMode
         $repo=Get-DpApi "/repos/$($Config.Repository)"
         # Use this observation only for the exact caller; never infer visibility from runner settings.
         $repositoryVisibility=''
@@ -503,7 +536,10 @@ function Format-DpSummary {
     $lines.Add("# Deployment prerequisites — $($Report.repository) / $($Report.channel)")
     $lines.Add('')
     $lines.Add("Environment: **$($Report.environment)**. Observed integration commit: ``$($Report.observed_commit)``.")
-    foreach ($section in @('Repository configuration','GitHub Environment','Deployment runner','Deployment configuration','Host and toolkit')) {
+    $lines.Add(''); $lines.Add("**GitHub configuration: $($Report.github_status)**")
+    $lines.Add(''); $lines.Add("**Host qualification: $($Report.host_status)**")
+    $lines.Add(''); $lines.Add("**Overall deployment readiness: $(if ($Report.ready) {'READY'} else {'NOT READY'})**")
+    foreach ($section in @($Report.results.section | Select-Object -Unique)) {
         $lines.Add(''); $lines.Add("## $section"); $lines.Add('')
         $lines.Add('| Result | Check | Evidence / next action |'); $lines.Add('| --- | --- | --- |')
         foreach ($row in @($Report.results | Where-Object section -CEQ $section)) {
@@ -519,4 +555,4 @@ function Format-DpSummary {
     return $lines -join "`n"
 }
 
-Export-ModuleMember -Function Invoke-DpValidation,Format-DpSummary
+Export-ModuleMember -Function Invoke-DpValidation,Format-DpSummary,Add-DpResult,Complete-DpReport,Merge-DpReports,Publish-DpReport

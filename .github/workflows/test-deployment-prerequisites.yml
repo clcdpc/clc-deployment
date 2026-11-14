@@ -32,8 +32,15 @@ jobs:
           CLC_PASSED: ${{ needs.workflow-smoke.outputs.passed_count }}
           CLC_FAILED: ${{ needs.workflow-smoke.outputs.failed_count }}
           CLC_UNVERIFIED: ${{ needs.workflow-smoke.outputs.unverified_count }}
+          CLC_GITHUB_STATUS: ${{ needs.workflow-smoke.outputs.github_status }}
+          CLC_HOST_STATUS: ${{ needs.workflow-smoke.outputs.host_status }}
+          CLC_OVERALL: ${{ needs.workflow-smoke.outputs.overall_ready }}
+          CLC_REPORT: ${{ needs.workflow-smoke.outputs.report_json }}
         run: |
           if ($env:CLC_READY -cne 'false') { throw 'Unconfigured smoke target must report ready=false.' }
+          if ($env:CLC_OVERALL -cne 'false' -or $env:CLC_HOST_STATUS -cne 'UNVERIFIED' -or $env:CLC_GITHUB_STATUS -cnotin @('FAIL','UNVERIFIED')) { throw 'Invalid category smoke outputs.' }
+          $report=$env:CLC_REPORT | ConvertFrom-Json -AsHashtable
+          if ($report.contract_version -ne 2 -or $report.results.Count -lt 1) { throw 'Missing detailed report output.' }
           foreach ($count in @($env:CLC_PASSED,$env:CLC_FAILED,$env:CLC_UNVERIFIED)) {
             if ($count -cnotmatch '^[0-9]+$') { throw 'Missing numeric workflow output.' }
           }

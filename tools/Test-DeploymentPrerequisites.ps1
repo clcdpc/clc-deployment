@@ -32,5 +32,7 @@ Push-Location $root
 try {
     & $ActionlintPath -shellcheck= -pyflakes=
     if ($LASTEXITCODE -ne 0) { throw 'Workflow actionlint validation failed.' }
+    & $ActionlintPath -shellcheck= -pyflakes= docs/examples/deployment-readiness.yml
+    if ($LASTEXITCODE -ne 0) { throw 'Consumer workflow template actionlint validation failed.' }
 } finally { Pop-Location }
 Write-Host "Prerequisites validation: $($result.PassedCount) tests passed; all workflows passed YAML parsing and actionlint. No host operations were run."

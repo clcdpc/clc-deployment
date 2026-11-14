@@ -1,5 +1,7 @@
 # CLC file deployment
 
+The shared [deployment prerequisites diagnostic](docs/deployment-prerequisites.md) separately reports GitHub configuration and explicitly authorized read-only host observations. Its [consumer workflow template](docs/examples/deployment-readiness.yml) keeps privileged inspection outside ordinary PR CI; diagnostic results never authorize deployment.
+
 CLC.Deployment is an application-independent PowerShell toolkit for file-only ASP.NET Core/IIS deployments on Windows Server 2022 with PowerShell 7. V1 requires net10.0/win-x64/in-process hosting, one dedicated site/root application/pool and one worker. It exports four commands: `New-ClcRelease`, `Test-ClcRelease`, `Invoke-ClcIisDeployment`, and `Restore-ClcIisDeployment`.
 
 Deployment verifies the approved ZIP, validates the package and host, extracts to protected staging, stops and observes zero workers, verifies a backup, replaces managed files, starts, checks exact release readiness, and records success. A healthy exact installed release/configuration completes NoOp after installed-file validation and fresh readiness, without staging, backup or restart. One exclusive OS file handle serializes the actual machine/pool; the version-2 phase journal blocks unresolved attempts and never resumes a partial copy.

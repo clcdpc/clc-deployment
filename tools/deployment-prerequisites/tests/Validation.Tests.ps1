@@ -476,11 +476,12 @@ Describe 'Read-only deployment prerequisites diagnostics' {
         It 'only reports ready when every requirement passes' {
             $results=[Collections.Generic.List[object]]::new()
             Add-DpResult $results 'Repository configuration' 'Example' PASS 'Verified'
+            Add-DpResult $results 'Host qualification' 'Example host' PASS 'Verified'
             $config.Strict=$true
             $report=Complete-DpReport $config $results
             $report.ready | Should -BeTrue
             $report.exit_code | Should -Be 0
-            Add-DpResult $results 'Host and toolkit' 'Unknown' UNVERIFIED 'No evidence' 'Verify independently'
+            Add-DpResult $results 'Host qualification' 'Unknown' UNVERIFIED 'No evidence' 'Verify independently'
             (Complete-DpReport $config $results).ready | Should -BeFalse
         }
 

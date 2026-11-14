@@ -1,5 +1,7 @@
 # IIS verification
 
+The [read-only prerequisites diagnostic](deployment-prerequisites.md) can inspect the enrolled machine, protected authority and retained state under separately authorized host inspection. Its PASS results do not complete this deployment/recovery procedure or independent-identity acceptance.
+
 **Actual Windows Server 2022/IIS qualification remains NOT RUN.** This procedure covers ordinary deployment and recovery. Offline NTFS/process/loopback/DPAPI tests and synthetic IIS/identity observations do not establish live-host acceptance. Reboot, power/storage loss and other disruptive checks need separate scope and evidence.
 
 ## Rollout order
