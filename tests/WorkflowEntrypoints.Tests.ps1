@@ -72,7 +72,10 @@ BeforeAll {
         $env:GITHUB_OUTPUT=$script:oldOutput; $env:GITHUB_STEP_SUMMARY=$script:oldSummary
         # Package tests import the exact committed fixture module. Restore the
         # checkout module before removing that fixture and running other tests.
+        Get-Module CLC.Deployment | Remove-Module -Force
         Import-Module $script:ModulePath -Force
+        @(Get-Module CLC.Deployment).Count | Should -Be 1
+        (Get-Module CLC.Deployment).ModuleBase | Should -BeExactly (Split-Path $script:ModulePath -Parent)
         Remove-TestWorkspace $script:workspace
         Remove-Variable -Name ClcWorkflowEntry -Scope Global
     }
