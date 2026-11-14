@@ -208,6 +208,9 @@ function New-ClcAutomatedApproval {
     if ([IO.File]::Exists($path)) {
         if ($null -eq $bound) { Stop-ClcError Clc.AdmissionIncomplete }
         $existing=Read-ClcProtectedApproval $context $id
+        # Identity is semantic; preserve the first admitted evidence bytes even
+        # when a trusted retry serializes the same fields in another order.
+        $a.admission.verifiedReleaseSha256=$existing.record.admission.verifiedReleaseSha256
         if (-not (Test-ClcValueEqual $existing.record $a)) { Stop-ClcError Clc.ReleaseIdentityConflict }
         $null=Read-ClcAdmissionEvidence $context $target $a
         $retained=Open-ClcAutomationInput $Lock (Join-Path $target.artifactInboxRoot ($id+'.zip')) 1073741824

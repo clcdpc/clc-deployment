@@ -183,12 +183,24 @@ Describe 'Standing-policy admission using real NTFS, lock and lifecycle state' {
     It 'rejects conflicting reuse of the exact build approval without overwriting it' {
         $null=Invoke-Automation $fixture $auto
         $current=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'current.json') -Raw | ConvertFrom-Json
+        $null=Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId $baseline.record.approvalId -AllowDowngrade -Reason maintenance
         $path=Join-Path $fixture.layout.approvalCatalogRoot ($current.release.approvalId+'.json')
         $approval=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
-        $approval.admission.verifiedReleaseSha256='9'*64; Write-TestJson $path $approval
+        $approval.enabled=$false; Write-TestJson $path $approval
         $before=Get-T2TreeHashes $fixture
         Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.ReleaseIdentityConflict*'
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
+    }
+    It 'reuses the original approval and evidence when identical identity JSON is reformatted' {
+        $null=Invoke-Automation $fixture $auto
+        $current=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'current.json') -Raw
+        $id=($current | ConvertFrom-Json).release.approvalId
+        $path=Join-Path $fixture.layout.approvalCatalogRoot ('standing\'+$id+'.verified.json')
+        $original=[IO.File]::ReadAllText($path)
+        [IO.File]::WriteAllText($auto.evidence,($auto.identity | ConvertTo-Json -Depth 24))
+        (Invoke-Automation $fixture $auto).status | Should -Be NoOp
+        [IO.File]::ReadAllText($path) | Should -BeExactly $original
+        (Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'current.json') -Raw) | Should -BeExactly $current
     }
     It 'refuses missing or corrupt durable admission material on exact retries' -ForEach @(@{Mode='binding'},@{Mode='zip'},@{Mode='evidence'}) {
         $null=Invoke-Automation $fixture $auto
