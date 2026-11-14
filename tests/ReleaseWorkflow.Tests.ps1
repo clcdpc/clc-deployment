@@ -25,10 +25,10 @@ Describe 'Shared release workflow permissions and artifact identity' {
         $publish | Should -Match "(?m)^    if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs/tags/v'\)$"
     }
 
-    It 'limits publication permission to the protected tag job' {
+    It 'limits publication permission to protected release tags and excludes synthetic receipt tags' {
         $publish | Should -Match '(?m)^    environment: nuget-production$'
         $publish | Should -Match '(?ms)^    permissions:\r?\n      contents: write\r?\n      id-token: write$'
-        $workflow | Should -Match "(?m)^    tags: \['v\*'\]$"
+        $workflow | Should -Match "(?m)^    tags: \['v\*', '!v9999\.9999\.9999-dev\.\*'\]$"
         $workflow | Should -Match '(?m)^      - name: Validate shared release tag$'
         $workflow | Should -Match '(?m)^\s*uses: NuGet/login@[0-9a-f]{40}'
         $workflow | Should -Match '(?m)^          user: mfields$'
