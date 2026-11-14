@@ -82,7 +82,7 @@ permissions:
   contents: read
 jobs:
   release:
-    uses: clcdpc/clc-deployment/.github/workflows/clc-receipt-producer.yml@c61588a40c357d478f240d534f1a09c9eb8c0a9e
+    uses: clcdpc/clc-deployment/.github/workflows/clc-receipt-producer.yml@ba6fd6ffd3836fd110c84adeb58aaa5aa01c4c99
     permissions:
       contents: read
       actions: read
