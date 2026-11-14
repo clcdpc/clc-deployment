@@ -32,25 +32,17 @@ on:
         type: string
         default: CLC_DEPLOYMENT_ENABLED
       deployment_channel:
-        description: DEV or Production (case-sensitive)
+        description: DEV, Test or Production (case-sensitive)
         type: string
         default: DEV
-      environment_protection:
-        description: runner-workflow for unattended admission, or required-reviewers
-        type: string
-        default: runner-workflow
-      strict:
-        description: Fail after reporting if any requirement fails or remains unverified
-        type: boolean
-        default: false
       application_id:
         description: Explicit safe application selector for report binding
         type: string
-        default: ''
+        required: true
       target_id:
         description: Explicit enrolled target selector for report binding
         type: string
-        default: ''
+        required: true
       diagnostic_workflow:
         description: Optional consumer workflow directly defining the read-only host job
         type: string
@@ -77,11 +69,8 @@ on:
       host_status:
         description: UNVERIFIED in this independently executable hosted stage
         value: ${{ jobs.validate.outputs.host_status || jobs.administrative.outputs.host_status }}
-      overall_ready:
-        description: Both mandatory categories must pass
-        value: ${{ jobs.validate.outputs.overall_ready || jobs.administrative.outputs.overall_ready }}
       ready:
-        description: True only when every requirement is verified PASS; never deployment authority
+        description: Both GitHub and host required applicable prerequisites pass; never deployment authority
         value: ${{ jobs.validate.outputs.ready || jobs.administrative.outputs.ready }}
       passed_count:
         description: Verified passing checks
@@ -92,6 +81,13 @@ on:
       unverified_count:
         description: Requirements with insufficient evidence or permission
         value: ${{ jobs.validate.outputs.unverified_count || jobs.administrative.outputs.unverified_count }}
+
+      skipped_count:
+        description: Checks that did not execute
+        value: ${{ jobs.validate.outputs.skipped_count || jobs.administrative.outputs.skipped_count }}
+      not_applicable_count:
+        description: Genuinely inapplicable checks
+        value: ${{ jobs.validate.outputs.not_applicable_count || jobs.administrative.outputs.not_applicable_count }}
 
 permissions:
   contents: read
@@ -105,12 +101,13 @@ jobs:
     outputs:
       github_status: ${{ steps.validate.outputs.github_status }}
       host_status: ${{ steps.validate.outputs.host_status }}
-      overall_ready: ${{ steps.validate.outputs.overall_ready }}
       report_json: ${{ steps.validate.outputs.report_json }}
       ready: ${{ steps.validate.outputs.ready }}
       passed_count: ${{ steps.validate.outputs.passed_count }}
       failed_count: ${{ steps.validate.outputs.failed_count }}
       unverified_count: ${{ steps.validate.outputs.unverified_count }}
+      skipped_count: ${{ steps.validate.outputs.skipped_count }}
+      not_applicable_count: ${{ steps.validate.outputs.not_applicable_count }}
     steps:
       # GitHub.com's job workflow identity refers to THIS reusable definition, not the caller.
       # Fail closed on hosts without it. Never fall back to github.sha or a consumer checkout.
@@ -158,11 +155,9 @@ jobs:
           # Only a classification enters process/log environment; never emit all vars or raw values.
           CLC_ACTIVATION_STATE: ${{ vars[inputs.activation_variable] == 'true' && 'enabled' || vars[inputs.activation_variable] == 'false' && 'disabled' || vars[inputs.activation_variable] == '' && 'missing-or-empty' || 'invalid' }}
           CLC_CHANNEL: ${{ inputs.deployment_channel }}
-          CLC_PROTECTION: ${{ inputs.environment_protection }}
-          CLC_STRICT: ${{ inputs.strict }}
           CLC_YAML_ASSEMBLY: ${{ steps.dependencies.outputs.yaml }}
         run: |
-          & ./shared-validator/tools/Validate-DeploymentPrerequisites.ps1 -EnvironmentName $env:CLC_ENVIRONMENT -IntegrationBranch $env:CLC_BRANCH -ReleaseWorkflow $env:CLC_RELEASE_WORKFLOW -DeploymentWorkflow $env:CLC_DEPLOYMENT_WORKFLOW -RunnerGroup $env:CLC_RUNNER_GROUP -RunnerLabels $env:CLC_RUNNER_LABELS -ActivationVariable $env:CLC_ACTIVATION_VARIABLE -DeploymentChannel $env:CLC_CHANNEL -EnvironmentProtection $env:CLC_PROTECTION -YamlAssemblyPath $env:CLC_YAML_ASSEMBLY -ApplicationId $env:CLC_APPLICATION -TargetId $env:CLC_TARGET -DiagnosticWorkflow $env:CLC_DIAGNOSTIC -SharedRevision $env:CLC_SHARED_REVISION -ReportPath (Join-Path $env:RUNNER_TEMP "github-readiness.json") -Strict:($env:CLC_STRICT -ceq 'true')
+          & ./shared-validator/tools/Validate-DeploymentPrerequisites.ps1 -EnvironmentName $env:CLC_ENVIRONMENT -IntegrationBranch $env:CLC_BRANCH -ReleaseWorkflow $env:CLC_RELEASE_WORKFLOW -DeploymentWorkflow $env:CLC_DEPLOYMENT_WORKFLOW -RunnerGroup $env:CLC_RUNNER_GROUP -RunnerLabels $env:CLC_RUNNER_LABELS -ActivationVariable $env:CLC_ACTIVATION_VARIABLE -DeploymentChannel $env:CLC_CHANNEL -YamlAssemblyPath $env:CLC_YAML_ASSEMBLY -ApplicationId $env:CLC_APPLICATION -TargetId $env:CLC_TARGET -DiagnosticWorkflow $env:CLC_DIAGNOSTIC -SharedRevision $env:CLC_SHARED_REVISION -ReportPath (Join-Path $env:RUNNER_TEMP "github-readiness.json")
           $code=$LASTEXITCODE
           $json=Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'github-readiness.json') -Raw | ConvertFrom-Json -AsHashtable | ConvertTo-Json -Depth 12 -Compress
           "report_json=$json" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -176,12 +171,13 @@ jobs:
     outputs:
       github_status: ${{ steps.validate.outputs.github_status }}
       host_status: ${{ steps.validate.outputs.host_status }}
-      overall_ready: ${{ steps.validate.outputs.overall_ready }}
       report_json: ${{ steps.validate.outputs.report_json }}
       ready: ${{ steps.validate.outputs.ready }}
       passed_count: ${{ steps.validate.outputs.passed_count }}
       failed_count: ${{ steps.validate.outputs.failed_count }}
       unverified_count: ${{ steps.validate.outputs.unverified_count }}
+      skipped_count: ${{ steps.validate.outputs.skipped_count }}
+      not_applicable_count: ${{ steps.validate.outputs.not_applicable_count }}
     steps:
       # GitHub.com's job workflow identity refers to THIS reusable definition, not the caller.
       # Fail closed on hosts without it. Never fall back to github.sha or a consumer checkout.
@@ -229,11 +225,9 @@ jobs:
           # Only a classification enters process/log environment; never emit all vars or raw values.
           CLC_ACTIVATION_STATE: ${{ vars[inputs.activation_variable] == 'true' && 'enabled' || vars[inputs.activation_variable] == 'false' && 'disabled' || vars[inputs.activation_variable] == '' && 'missing-or-empty' || 'invalid' }}
           CLC_CHANNEL: ${{ inputs.deployment_channel }}
-          CLC_PROTECTION: ${{ inputs.environment_protection }}
-          CLC_STRICT: ${{ inputs.strict }}
           CLC_YAML_ASSEMBLY: ${{ steps.dependencies.outputs.yaml }}
         run: |
-          & ./shared-validator/tools/Validate-DeploymentPrerequisites.ps1 -AuthenticationMode Administrative -EnvironmentName $env:CLC_ENVIRONMENT -IntegrationBranch $env:CLC_BRANCH -ReleaseWorkflow $env:CLC_RELEASE_WORKFLOW -DeploymentWorkflow $env:CLC_DEPLOYMENT_WORKFLOW -RunnerGroup $env:CLC_RUNNER_GROUP -RunnerLabels $env:CLC_RUNNER_LABELS -ActivationVariable $env:CLC_ACTIVATION_VARIABLE -DeploymentChannel $env:CLC_CHANNEL -EnvironmentProtection $env:CLC_PROTECTION -YamlAssemblyPath $env:CLC_YAML_ASSEMBLY -ApplicationId $env:CLC_APPLICATION -TargetId $env:CLC_TARGET -DiagnosticWorkflow $env:CLC_DIAGNOSTIC -SharedRevision $env:CLC_SHARED_REVISION -ReportPath (Join-Path $env:RUNNER_TEMP "github-readiness.json") -Strict:($env:CLC_STRICT -ceq 'true')
+          & ./shared-validator/tools/Validate-DeploymentPrerequisites.ps1 -AuthenticationMode Administrative -EnvironmentName $env:CLC_ENVIRONMENT -IntegrationBranch $env:CLC_BRANCH -ReleaseWorkflow $env:CLC_RELEASE_WORKFLOW -DeploymentWorkflow $env:CLC_DEPLOYMENT_WORKFLOW -RunnerGroup $env:CLC_RUNNER_GROUP -RunnerLabels $env:CLC_RUNNER_LABELS -ActivationVariable $env:CLC_ACTIVATION_VARIABLE -DeploymentChannel $env:CLC_CHANNEL -YamlAssemblyPath $env:CLC_YAML_ASSEMBLY -ApplicationId $env:CLC_APPLICATION -TargetId $env:CLC_TARGET -DiagnosticWorkflow $env:CLC_DIAGNOSTIC -SharedRevision $env:CLC_SHARED_REVISION -ReportPath (Join-Path $env:RUNNER_TEMP "github-readiness.json")
           $code=$LASTEXITCODE
           $json=Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'github-readiness.json') -Raw | ConvertFrom-Json -AsHashtable | ConvertTo-Json -Depth 12 -Compress
           "report_json=$json" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8

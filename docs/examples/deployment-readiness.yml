@@ -72,9 +72,11 @@ jobs:
           # Trusted diagnostic source authenticates fixed protected policy and every installed byte before first import.
           # Keep it a reviewed workflow literal, never a dispatch input or artifact value.
           $manifest='C:\ProgramData\CLC\Deployment\Enrollment\toolkit\versions\REVIEWED_VERSION\CLC.Deployment\CLC.Deployment.psd1'
-          $report=& ./shared-validator/tools/deployment-prerequisites/Test-DeploymentHost.ps1 -ApplicationId example-app -TargetId example-app-dev -EnvironmentName example-app-dev -DeploymentChannel DEV -Repository clcdpc/example-app -ReleaseWorkflow .github/workflows/build.yml -BuildJob build -StandingAuthorizationId example-app-dev -ToolkitManifestPath $manifest
+          $report=& ./shared-validator/tools/deployment-prerequisites/Test-DeploymentHost.ps1 -ApplicationId example-app -TargetId example-app-dev -EnvironmentName example-app-dev -DeploymentChannel DEV -Repository clcdpc/example-app -ReleaseWorkflow .github/workflows/build.yml -BuildJob build -ToolkitManifestPath $manifest
+          $code=$LASTEXITCODE
           $json=ConvertTo-Json -InputObject $report -Depth 12 -Compress
           "report_json=$json" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          exit $code
 
   report:
     if: always()
@@ -84,10 +86,12 @@ jobs:
     outputs:
       github_status: ${{ steps.report.outputs.github_status }}
       host_status: ${{ steps.report.outputs.host_status }}
-      overall_ready: ${{ steps.report.outputs.overall_ready }}
+      ready: ${{ steps.report.outputs.ready }}
       passed_count: ${{ steps.report.outputs.passed_count }}
       failed_count: ${{ steps.report.outputs.failed_count }}
       unverified_count: ${{ steps.report.outputs.unverified_count }}
+      skipped_count: ${{ steps.report.outputs.skipped_count }}
+      not_applicable_count: ${{ steps.report.outputs.not_applicable_count }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:

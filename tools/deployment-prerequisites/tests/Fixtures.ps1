@@ -3,7 +3,7 @@ function New-ValidationConfig {
         Repository='example/app'; EnvironmentName='app-dev'; IntegrationBranch='master';
         ReleaseWorkflow='.github/workflows/release.yml'; DeploymentWorkflow='.github/workflows/deploy-release.yml';
         RunnerGroup='app-deployment'; RunnerLabels='self-hosted,Windows,X64'; ActivationVariable='CLC_DEPLOYMENT_ENABLED';
-        DeploymentChannel='DEV'; EnvironmentProtection='runner-workflow'; ActivationState='enabled'; Strict=$false
+        DeploymentChannel='DEV'; ActivationState='enabled'; ApplicationId='app';TargetId='app-dev';SharedRevision=('a'*40);DiagnosticWorkflow='.github/workflows/diagnose.yml'
     }
 }
 
@@ -32,22 +32,21 @@ on:
   workflow_run:
     workflows: [Release]
     types: [completed]
+  workflow_dispatch:
 jobs:
-  deploy:
-    if: github.event.workflow_run.conclusion == 'success'
-    runs-on:
-      group: app-deployment
-      labels: [self-hosted, Windows, X64]
-    environment: app-dev
-    steps:
-      - shell: pwsh
-        run: throw 'Consumer code MUST NOT execute during validation'
+  publication:
+    uses: clcdpc/clc-deployment/.github/workflows/application-release.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  deployment:
+    uses: clcdpc/clc-deployment/.github/workflows/application-deploy.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    with:
+      automatic: ${{ github.event_name != 'workflow_dispatch' }}
 '@
     $fixture=@{
         '/repos/example/app'=(New-ApiSuccess @{ visibility='private'; private=$true; full_name='example/app' })
         '/repos/example/app/branches/master'=(New-ApiSuccess @{ protected=$true; commit=@{ sha=('b'*40) } })
         '/repos/example/app/branches/master/protection'=(New-ApiSuccess @{
             required_pull_request_reviews=@{ required_approving_review_count=1; require_code_owner_reviews=$true }
+            enforce_admins=@{enabled=$true};required_status_checks=@{contexts=@('CI');checks=@()};
             allow_force_pushes=@{ enabled=$false }; allow_deletions=@{ enabled=$false }
         })
         '/repos/example/app/rules/branches/master'=(New-ApiSuccess @())
@@ -71,12 +70,37 @@ jobs:
         '/orgs/example/actions/runner-groups'=(New-ApiSuccess @{ runner_groups=@(@{ id=7; name='app-deployment' }); total_count=1 })
         '/orgs/example/actions/runner-groups/7'=(New-ApiSuccess @{
             id=7; name='app-deployment'; visibility='selected'; allows_public_repositories=$false
-            restricted_to_workflows=$true; selected_workflows=@('example/app/.github/workflows/deploy-release.yml@refs/heads/master')
+            inherited=$true;restricted_to_workflows=$true; selected_workflows=@(('clcdpc/clc-deployment/.github/workflows/application-deploy.yml@'+('a'*40)),'example/app/.github/workflows/diagnose.yml@refs/heads/master')
         })
         '/orgs/example/actions/runner-groups/7/repositories'=(New-ApiSuccess @{ repositories=@(@{ full_name='example/app' }); total_count=1 })
         '/orgs/example/actions/runner-groups/7/runners'=(New-ApiSuccess @{
             runners=@(@{ status='online'; labels=@(@{ name='self-hosted' },@{ name='Windows' },@{ name='X64' }) }); total_count=1
         })
     }
+    $protected=@{contractVersion=1;applicationId='app';repository='example/app';integrationBranch='master';
+        sourcePolicy=@{allowSnapshots=$true;allowUnmergedDevTags=$true;allowTestTags=$false};
+        producer=@{workflowPath='.github/workflows/release.yml';job='build'};
+        trustedFiles=@('.clc/release.json','.github/workflows/release.yml','.github/workflows/deploy-release.yml');requiredToolkitContractVersion=2;
+        orchestration=@{sharedRevision=('a'*40);deploymentWorkflowPath='.github/workflows/deploy-release.yml'};
+        targets=@(@{channel='DEV';targetId='app-dev';standingAuthorizationId='app-dev';environment='app-dev';runnerGroup='app-deployment';runnerLabels=@('self-hosted','Windows','X64');enabled=$false;runnerAdmissionReady=$false})}
+    $fixture[('/repos/example/app/contents/.clc/release.json?ref='+('b'*40))]=New-WorkflowFile ($protected | ConvertTo-Json -Depth 12)
+    $shared=Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../../.github/workflows/application-deploy.yml') -Raw
+    $fixture[('/repos/clcdpc/clc-deployment/contents/.github/workflows/application-deploy.yml?ref='+('a'*40))]=New-WorkflowFile $shared
     return $fixture
+}
+
+function Get-FixtureProtectedConfiguration($Fixture) {
+    $entry=$Fixture[('/repos/example/app/contents/.clc/release.json?ref='+('b'*40))].data
+    [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($entry.content)) | ConvertFrom-Json -AsHashtable
+}
+function Set-FixtureProtectedConfiguration($Fixture,$Record) {
+    $Fixture[('/repos/example/app/contents/.clc/release.json?ref='+('b'*40))]=New-WorkflowFile ($Record | ConvertTo-Json -Depth 12)
+}
+function New-PassingStageChecks([string] $Category) {
+    $definitions=& (Get-Module Validation) {Get-ClcDeploymentPrerequisiteDefinitions}
+    foreach ($id in @($definitions.Keys | Sort-Object -CaseSensitive)) {
+        if ($id.StartsWith($Category+'.') -and $definitions[$id] -and $id -cnotin @('host.stage','github.stage','host.report.subject','github.inspection')) {
+            New-ClcDeploymentPrerequisiteCheck $id PASS 'Synthetic trusted observation.'
+        }
+    }
 }

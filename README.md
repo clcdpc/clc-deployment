@@ -39,4 +39,4 @@ The repository, PowerShell toolkit and ASP.NET Core companion source are license
 | [Testing](docs/testing.md) | Pinned verification tools and coverage limits |
 | [Releasing](docs/releasing.md) | Shared versions, verified artifacts and protected tag publication |
 
-The shared [deployment prerequisites diagnostic](docs/deployment-prerequisites.md) separately reports GitHub configuration and explicitly authorized read-only host observations. Its [consumer workflow template](docs/examples/deployment-readiness.yml) keeps privileged inspection outside ordinary PR CI; diagnostic results never authorize deployment.
+The read-only commissioning [deployment prerequisite checker](docs/deployment-prerequisites.md) separately reports GitHub configuration and explicitly authorized read-only host observations. Its [consumer workflow template](docs/examples/deployment-readiness.yml) keeps privileged inspection outside ordinary PR CI; diagnostic results never authorize deployment. A verified empty target can be READY before its first deployment; routine deployments do not require this checker.

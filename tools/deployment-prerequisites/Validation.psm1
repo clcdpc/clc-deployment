@@ -1,26 +1,19 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot/Reporting.ps1"
 . "$PSScriptRoot/../Distribution.Common.ps1"
+. "$PSScriptRoot/../release/Release.Common.ps1"
+. "$PSScriptRoot/Reporting.ps1"
 
-function Add-DpResult {
-    param($Results, [string] $Section, [string] $Name, [ValidateSet('PASS','FAIL','UNVERIFIED')][string] $Status, [string] $Detail, [string] $Action = '', [string] $Category = '')
-    if (-not $Category) {
-        $Category=if ($Section -ceq 'Host qualification' -or $Name -cin @('Compatible toolkit installation','IIS target enrollment','Initial successful deployment baseline','Standing authorization','Runtime identity and host permissions','Application configuration and Data Protection','Host readiness and recovery qualification')) {'host'} else {'github'}
-    }
-    $Results.Add([pscustomobject]@{ category=$Category; section=$Section; name=$Name; status=$Status; detail=$Detail; action=$Action })
-}
-
-function Get-DpApi {
-    param([string] $Path)
+function Get-ClcDeploymentPrerequisiteApi {
+    param($Context, [string] $Path)
     # No URLs from response bodies, caller-supplied endpoints, redirects or non-GET requests.
     if ($Path -cnotmatch '^/(repos|orgs)/[A-Za-z0-9_.%/?=&-]+$') { throw 'Invalid internal API path.' }
-    $script:Requests++
-    if ($script:Requests -gt 150 -or $script:Timer.Elapsed.TotalSeconds -gt 240) {
+    $Context.requests++
+    if ($Context.requests -gt 150 -or $Context.timer.Elapsed.TotalSeconds -gt 240) {
         return @{ ok=$false; code=0; reason='The bounded API request/time budget was exhausted.' }
     }
     try {
-        $response = $script:Client.GetAsync('https://api.github.com' + $Path).GetAwaiter().GetResult()
+        $response = $Context.client.GetAsync('https://api.github.com' + $Path).GetAwaiter().GetResult()
         try {
             $code = [int]$response.StatusCode
             if ($code -ne 200) {
@@ -33,7 +26,9 @@ function Get-DpApi {
                 }
                 return @{ ok=$false; code=$code; reason=$reason }
             }
-            $data = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json -AsHashtable -Depth 64 -NoEnumerate
+            $bytes=$response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+            $null=Read-DistJson $bytes
+            $data=[Text.UTF8Encoding]::new($false,$true).GetString($bytes) | ConvertFrom-Json -AsHashtable -Depth 64 -NoEnumerate -DateKind String
             return @{ ok=$true; code=200; data=$data; reason='' }
         } finally { $response.Dispose() }
     } catch {
@@ -42,13 +37,13 @@ function Get-DpApi {
     }
 }
 
-function Get-DpCollection {
-    param([string] $Path, [string] $Property = '', [ValidateRange(1,100)][int] $PageSize = 100)
+function Get-ClcDeploymentPrerequisiteCollection {
+    param($Context, [string] $Path, [string] $Property = '', [ValidateRange(1,100)][int] $PageSize = 100)
     $items = [Collections.Generic.List[object]]::new()
     $total=$null
     for ($page=1; $page -le 20; $page++) {
         $separator = if ($Path.Contains('?')) { '&' } else { '?' }
-        $response = Get-DpApi ($Path + $separator + "per_page=$PageSize&page=" + $page)
+        $response = Get-ClcDeploymentPrerequisiteApi $Context ($Path + $separator + "per_page=$PageSize&page=" + $page)
         if (-not $response.ok) { return $response }
         $data = $response.data
         if ($Property) {
@@ -70,10 +65,10 @@ function Get-DpCollection {
     return @{ ok=$false; code=0; reason='GitHub collection was incomplete, malformed or exceeded the 2,000-item bound.' }
 }
 
-function ConvertFrom-DpYamlNode {
-    param($Node, [int] $Depth = 0)
-    if ($Depth -gt 32 -or ++$script:YamlNodes -gt 20000) { throw 'UnsupportedYaml' }
-    if (-not $Node.Anchor.IsEmpty -or (-not $Node.Tag.IsEmpty -and $Node.Tag.Value -notin @('tag:yaml.org,2002:map','tag:yaml.org,2002:seq','tag:yaml.org,2002:str','tag:yaml.org,2002:null','tag:yaml.org,2002:bool','tag:yaml.org,2002:int'))) { throw 'UnsupportedYaml' }
+function ConvertFrom-ClcDeploymentPrerequisiteYamlNode {
+    param($Node, $Budget, [int] $Depth = 0)
+    if ($Depth -gt 32 -or ++$Budget.nodes -gt 20000) { throw 'UnsupportedYaml' }
+    if ((-not $Budget.allowAnchors -and -not $Node.Anchor.IsEmpty) -or (-not $Node.Tag.IsEmpty -and $Node.Tag.Value -notin @('tag:yaml.org,2002:map','tag:yaml.org,2002:seq','tag:yaml.org,2002:str','tag:yaml.org,2002:null','tag:yaml.org,2002:bool','tag:yaml.org,2002:int'))) { throw 'UnsupportedYaml' }
     switch ($Node.NodeType.ToString()) {
         Scalar { return [string]$Node.Value }
         Mapping {
@@ -81,21 +76,21 @@ function ConvertFrom-DpYamlNode {
             foreach ($pair in $Node.Children.GetEnumerator()) {
                 if ($pair.Key.NodeType.ToString() -cne 'Scalar' -or $pair.Key.Value -ceq '<<') { throw 'UnsupportedYaml' }
                 $key = [string]$pair.Key.Value
-                if ($map.Contains($key)) { throw 'InvalidYaml' }
-                $map.Add($key,(ConvertFrom-DpYamlNode $pair.Value ($Depth+1)))
+                if ($map.Contains($key)) { Stop-ClcDeploymentPrerequisiteObservation FAIL 'The observed YAML contains duplicate keys, multiple documents or an invalid root mapping.' }
+                $map.Add($key,(ConvertFrom-ClcDeploymentPrerequisiteYamlNode $pair.Value $Budget ($Depth+1)))
             }
             return ,$map
         }
         Sequence {
-            $items = @($Node.Children | ForEach-Object { ConvertFrom-DpYamlNode $_ ($Depth+1) })
+            $items = @($Node.Children | ForEach-Object { ConvertFrom-ClcDeploymentPrerequisiteYamlNode $_ $Budget ($Depth+1) })
             return ,$items
         }
         default { throw 'UnsupportedYaml' }
     }
 }
 
-function ConvertFrom-DpYaml {
-    param([string] $Text)
+function ConvertFrom-ClcDeploymentPrerequisiteYaml {
+    param([string] $Text, [switch] $AllowAnchors)
     if ([Text.Encoding]::UTF8.GetByteCount($Text) -gt 262144) { throw 'UnsupportedYaml' }
     # Bound the event stream before the representation loader resolves nodes/aliases.
     $preflight=[IO.StringReader]::new($Text)
@@ -108,35 +103,37 @@ function ConvertFrom-DpYaml {
             $kind=$event.GetType().Name
             if ($kind -cin @('MappingStart','SequenceStart')) { if (++$depth -gt 32) { throw 'UnsupportedYaml' } }
             if ($kind -cin @('MappingEnd','SequenceEnd')) { $depth-- }
-            if ($kind -ceq 'AnchorAlias') { throw 'UnsupportedYaml' }
-            if ($event -is [YamlDotNet.Core.Events.NodeEvent] -and (-not $event.Anchor.IsEmpty -or -not $event.Tag.IsEmpty)) { throw 'UnsupportedYaml' }
+            if (-not $AllowAnchors -and $kind -ceq 'AnchorAlias') { throw 'UnsupportedYaml' }
+            if ($event -is [YamlDotNet.Core.Events.NodeEvent] -and ((-not $AllowAnchors -and -not $event.Anchor.IsEmpty) -or -not $event.Tag.IsEmpty)) { throw 'UnsupportedYaml' }
         }
     } finally { $preflight.Dispose() }
-    $script:YamlNodes = 0
+    $budget = @{nodes=0;allowAnchors=[bool]$AllowAnchors}
     $stream = [YamlDotNet.RepresentationModel.YamlStream]::new()
     $reader = [IO.StringReader]::new($Text)
     try { $stream.Load($reader) } finally { $reader.Dispose() }
-    if ($stream.Documents.Count -ne 1) { throw 'InvalidYaml' }
-    $value = ConvertFrom-DpYamlNode $stream.Documents[0].RootNode
-    if ($value -isnot [Collections.IDictionary]) { throw 'InvalidYaml' }
+    if ($stream.Documents.Count -ne 1) { Stop-ClcDeploymentPrerequisiteObservation FAIL 'The observed YAML contains duplicate keys, multiple documents or an invalid root mapping.' }
+    $value = ConvertFrom-ClcDeploymentPrerequisiteYamlNode $stream.Documents[0].RootNode $budget
+    if ($value -isnot [Collections.IDictionary]) { Stop-ClcDeploymentPrerequisiteObservation FAIL 'The observed YAML contains duplicate keys, multiple documents or an invalid root mapping.' }
     return ,$value
 }
 
-function Get-DpFile {
-    param([string] $Repository, [string] $Path, [string] $Commit)
-    $response = Get-DpApi "/repos/$Repository/contents/$($Path)?ref=$Commit"
+function Get-ClcDeploymentPrerequisiteFile {
+    param($Context, [string] $Repository, [string] $Path, [string] $Commit)
+    $response = Get-ClcDeploymentPrerequisiteApi $Context "/repos/$Repository/contents/$($Path)?ref=$Commit"
     if (-not $response.ok) { return $response }
     $file = $response.data
-    if ($file -isnot [Collections.IDictionary] -or $file['type'] -cne 'file' -or $file['encoding'] -cne 'base64' -or $file['size'] -gt 262144) {
+    if ($file -isnot [Collections.IDictionary] -or $file['type'] -cne 'file' -or $file['encoding'] -cne 'base64' -or ($file['size'] -isnot [int] -and $file['size'] -isnot [long]) -or $file['size'] -lt 0 -or $file['size'] -gt 262144) {
         return @{ ok=$false; code=0; reason='Workflow/configuration file is not a bounded regular UTF-8 file.' }
     }
     try {
-        $text = [Text.UTF8Encoding]::new($false,$true).GetString([Convert]::FromBase64String($file['content']))
+        $bytes=[Convert]::FromBase64String($file['content'])
+        if ($bytes.Length -ne $file['size'] -or $bytes.Length -gt 262144) {throw 'Invalid file observation length.'}
+        $text = [Text.UTF8Encoding]::new($false,$true).GetString($bytes)
         return @{ ok=$true; code=200; text=$text }
     } catch { return @{ ok=$false; code=0; reason='GitHub file encoding could not be inspected.' } }
 }
 
-function Test-DpInputs {
+function Test-ClcDeploymentPrerequisiteInputs {
     param($Config)
     if ($Config.Repository -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$') { throw 'Invalid repository identity.' }
     if ($Config.IntegrationBranch -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_./-]{0,127}$' -or $Config.IntegrationBranch -match '\.\.|//|/\.|\.lock$|[/.]$') { throw 'Invalid integration branch.' }
@@ -149,253 +146,232 @@ function Test-DpInputs {
         if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_. -]{0,99}$') { throw 'Environment name and runner group are required safe names.' }
     }
     if ($Config.ActivationVariable -cnotmatch '^[A-Z_][A-Z0-9_]{0,63}$' -or $Config.ActivationVariable -cmatch '^(GITHUB_|RUNNER_)') { throw 'Invalid activation variable name.' }
-    if ($Config.DeploymentChannel -cnotin @('DEV','Production')) { throw 'Deployment channel must be DEV or Production.' }
+    if ($Config.DeploymentChannel -cnotin @('DEV','Test','Production')) { throw 'Deployment channel must be DEV, Test or Production.' }
     foreach ($key in @('ApplicationId','TargetId')) {
-        if ($Config.ContainsKey($key) -and $Config[$key] -and $Config[$key] -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$') { throw 'Invalid application or target selector.' }
+        if (-not $Config.ContainsKey($key) -or $Config[$key] -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$') { throw 'Invalid application or target selector.' }
     }
-    if ($Config.EnvironmentProtection -cnotin @('runner-workflow','required-reviewers')) { throw 'Invalid environment protection model.' }
     if ($Config.ActivationState -cnotin @('enabled','disabled','missing-or-empty','invalid','unavailable')) { throw 'Invalid activation observation.' }
     $labels = @($Config.RunnerLabels.Split(','))
     if ($labels.Count -gt 10 -or @($labels | Where-Object { $_ -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$' }).Count) { throw 'Invalid comma-separated runner labels.' }
 }
 
-function Get-DpBranchResults {
-    param($Config, $Results, $Branch)
-    $section='Repository configuration'
-    $action="Inspect Settings > Rules > Rulesets / Branches for the exact integration branch; require PRs, reviews, code-owner review and block force pushes/deletion."
+function Get-ClcDeploymentPrerequisiteBranchChecks {
+    param($Context, $Config, $Branch)
+    $action="Protect $($Config.IntegrationBranch) in Settings > Rules: require CI status checks and restrict force pushes, deletion and broad bypass actors."
     $path="/repos/$($Config.Repository)"
     $encoded=[uri]::EscapeDataString($Config.IntegrationBranch)
-    $classic=Get-DpApi "$path/branches/$encoded/protection"
-    $effective=Get-DpCollection "$path/rules/branches/$encoded"
-    $rules=if ($effective.ok) { @($effective.data) } else { @() }
-    $protection=if ($classic.ok) { $classic.data } else { @{} }
-    $pr=$protection['required_pull_request_reviews']
-    $pullRules=@($rules | Where-Object { $_['type'] -ceq 'pull_request' })
-    $observations=[ordered]@{
-        'Required pull requests'=($null -ne $pr -or $pullRules.Count -gt 0)
-        'Required independent reviews'=($null -ne $pr -and $pr['required_approving_review_count'] -ge 1)
-        'Force pushes restricted'=($null -ne $protection['allow_force_pushes'] -and $protection['allow_force_pushes']['enabled'] -eq $false)
-        'Branch deletion restricted'=($null -ne $protection['allow_deletions'] -and $protection['allow_deletions']['enabled'] -eq $false)
-        'Code-owner review enforced'=($null -ne $pr -and $pr['require_code_owner_reviews'] -eq $true)
-    }
-    foreach ($rule in $pullRules) {
-        if ($rule['parameters']['required_approving_review_count'] -ge 1) { $observations['Required independent reviews']=$true }
-        if ($rule['parameters']['require_code_owner_review'] -eq $true) { $observations['Code-owner review enforced']=$true }
-    }
-    if (@($rules | Where-Object { $_['type'] -ceq 'non_fast_forward' }).Count) { $observations['Force pushes restricted']=$true }
-    if (@($rules | Where-Object { $_['type'] -ceq 'deletion' }).Count) { $observations['Branch deletion restricted']=$true }
-    # A classic 404 proves absence only when branch metadata says unprotected AND active rules were enumerated.
+    $classic=Get-ClcDeploymentPrerequisiteApi $Context "$path/branches/$encoded/protection"
+    $effective=Get-ClcDeploymentPrerequisiteCollection $Context "$path/rules/branches/$encoded"
+    $rules=if ($effective.ok) {@($effective.data)} else {@()}
+    $p=if ($classic.ok -and $classic.data -is [Collections.IDictionary]) {$classic.data} else {@{}}
     $complete=$effective.ok -and ($classic.ok -or ($classic.code -eq 404 -and $Branch['protected'] -eq $false))
-    foreach ($item in $observations.GetEnumerator()) {
-        if ($item.Value) { Add-DpResult $Results $section $item.Key PASS 'Enforced classic protection or an active applicable branch rule was observed.' }
-        elseif ($complete) { Add-DpResult $Results $section $item.Key FAIL 'The required protection was not configured in the observed rules.' $action }
-        else { Add-DpResult $Results $section $item.Key UNVERIFIED 'Classic or inherited protection could not be fully read.' $action }
+    $status=if ($Branch['protected'] -isnot [bool]) {'UNVERIFIED'} elseif ($Branch['protected']) {'PASS'} else {'FAIL'}
+    New-ClcDeploymentPrerequisiteCheck 'github.branch.protection' $status 'The integration branch protected flag was inspected at the selected branch.' $action -Name 'Integration branch protection'
+    foreach ($item in @(@('force-push','allow_force_pushes','non_fast_forward'),@('deletion','allow_deletions','deletion'))) {
+        $flag=$p[$item[1]]
+        $present=($flag -is [Collections.IDictionary] -and $flag['enabled'] -is [bool] -and -not $flag['enabled']) -or @($rules | Where-Object {$_['type'] -ceq $item[2]}).Count -gt 0
+        $status=if ($present) {'PASS'} elseif ($complete) {'FAIL'} else {'UNVERIFIED'}
+        New-ClcDeploymentPrerequisiteCheck "github.branch.$($item[0])" $status 'Observed classic protection and active applicable rules were checked for this restriction.' $action -Name "Branch $($item[0]) restriction"
     }
-    Add-DpResult $Results $section 'Branch bypass and workflow ownership' UNVERIFIED 'Rule presence does not establish independent reviewer identities, bypass authority or effective CODEOWNERS coverage.' 'Review rule bypass actors and effective CODEOWNERS for both workflow paths and toolkit pins; require infrastructure ownership.'
-    if ($protection['enforce_admins'] -is [Collections.IDictionary] -and $protection['enforce_admins']['enabled'] -is [bool]) {
-        Add-DpResult $Results $section 'Classic administrator enforcement' $(if ($protection['enforce_admins']['enabled']) {'PASS'} else {'UNVERIFIED'}) 'The classic enforce_admins flag was directly observed; disabled classic enforcement does not establish the effective inherited ruleset bypass model.' $action
-    } else { Add-DpResult $Results $section 'Classic administrator enforcement' UNVERIFIED 'Classic administrator enforcement is inaccessible or not applicable; effective ruleset bypass requires independent review.' $action }
+    $ci=$p['required_status_checks']
+    $ciRules=@($rules | Where-Object {$_['type'] -ceq 'required_status_checks'})
+    $checks=@(@(if ($ci -is [Collections.IDictionary]) {@($ci['contexts']); @($ci['checks'])}) | Where-Object {$null -ne $_})
+    foreach ($rule in $ciRules) {$checks+=@($rule['parameters']['required_status_checks']) | Where-Object {$null -ne $_}}
+    $status=if ($checks.Count -gt 0) {'PASS'} elseif ($complete) {'FAIL'} else {'UNVERIFIED'}
+    New-ClcDeploymentPrerequisiteCheck 'github.branch.required-checks' $status 'Required CI checks were inspected in classic protection and active rules.' $action -Name 'Required CI protections'
+    $bypassKnown=$complete; $broad=$false
+    foreach ($id in @($rules | Where-Object {$_.Contains('ruleset_id')} | ForEach-Object {$_['ruleset_id']} | Select-Object -Unique)) {
+        if ($id -isnot [long] -and $id -isnot [int]) {$bypassKnown=$false;continue}
+        $detail=Get-ClcDeploymentPrerequisiteApi $Context "$path/rulesets/$($id)?includes_parents=true"
+        if (-not $detail.ok -or $detail.data['bypass_actors'] -isnot [array]) {$bypassKnown=$false;continue}
+        if (@($detail.data['bypass_actors'] | Where-Object {$_['actor_type'] -ceq 'RepositoryRole'}).Count) {$broad=$true}
+    }
+    $status=if ($broad) {'FAIL'} elseif ($bypassKnown) {'PASS'} else {'UNVERIFIED'}
+    New-ClcDeploymentPrerequisiteCheck 'github.branch.bypass' $status 'Observable applicable branch bypass settings were checked; broad repository-role bypass is not suitable for protected deployment source.' $action -Name 'Branch bypass restrictions'
+    $pr=$p['required_pull_request_reviews']
+    New-ClcDeploymentPrerequisiteCheck 'github.branch.reviews' PASS $(if ($null -ne $pr) {'Optional PR review controls are configured. No universal reviewer count or CODEOWNERS approval is required by commissioning.'} else {'No mandatory PR review or CODEOWNERS control is required by this checker.'}) -Name 'Optional branch reviews'
 }
 
-function Get-DpTagResults {
-    param($Config, $Results)
+function Get-ClcDeploymentPrerequisiteTagChecks {
+    param($Context, $Config, $SourcePolicy)
     $path="/repos/$($Config.Repository)/rulesets"
-    $list=Get-DpCollection "$($path)?includes_parents=true"
-    $action='Inspect Settings > Rules > Rulesets (including inherited rules): active tag rules covering all v* tags must restrict creation, updates and deletion; review authorized bypass actors.'
-    $found=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $unknown=-not $list.ok
-    $bypassUnknown=-not $list.ok; $hasBypass=$false; $activeTags=0
-    if ($list.ok) {
-        foreach ($entry in $list.data) {
-            if ($entry['id'] -isnot [long] -and $entry['id'] -isnot [int]) { $unknown=$true; continue }
-            $detail=Get-DpApi "$path/$($entry['id'])?includes_parents=true"
-            if (-not $detail.ok) { $unknown=$true; continue }
-            $rule=$detail.data
-            if ($rule -isnot [Collections.IDictionary] -or -not $rule.Contains('target') -or -not $rule.Contains('enforcement')) { $unknown=$true; continue }
-            if ($rule['target'] -cne 'tag' -or $rule['enforcement'] -cne 'active') { continue }
-            $activeTags++
-            if ($rule['bypass_actors'] -isnot [array]) { $bypassUnknown=$true }
-            elseif ($rule['bypass_actors'].Count) { $hasBypass=$true }
-            $conditions=$rule['conditions']
-            if ($null -eq $conditions -or $null -eq $conditions['ref_name']) { $unknown=$true; continue }
-            $refs=$conditions['ref_name']
-            # Only prove full-pattern coverage for these simple GitHub patterns. Never approximate fnmatch.
-            if (@($refs['exclude']).Count -gt 0) { $unknown=$true; continue }
-            if (-not @($refs['include'] | Where-Object { $_ -cin @('~ALL','refs/tags/*','refs/tags/v*') }).Count) {
-                if (@($refs['include'] | Where-Object { $_ -match '[?\[\\]' }).Count) { $unknown=$true }
-                continue
-            }
-            if ($null -eq $rule['rules']) { $unknown=$true; continue }
-            foreach ($item in $rule['rules']) { if ($item['type'] -cin @('creation','update','deletion')) { [void]$found.Add($item['type']) } }
-        }
+    $list=Get-ClcDeploymentPrerequisiteCollection $Context "$($path)?includes_parents=true"
+    $action="Configure active tag creation/update/deletion restrictions for the selected $($Config.DeploymentChannel) version tags, with only independently controlled release bypass actors."
+    $patterns=switch -CaseSensitive ($Config.DeploymentChannel) {
+        DEV {@('refs/tags/v*-dev.*')}; Test {@('refs/tags/v*-beta.*','refs/tags/v*-rc.*')}; Production {@('refs/tags/v*')}
     }
+    $found=@{};foreach ($pattern in $patterns) {$found[$pattern]=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)}
+    $unknown=-not $list.ok; $bypassKnown=$list.ok; $broad=$false; $actors=$false
+    if ($list.ok) { foreach ($entry in $list.data) {
+        if ($entry['id'] -isnot [long] -and $entry['id'] -isnot [int]) {$unknown=$true;continue}
+        $response=Get-ClcDeploymentPrerequisiteApi $Context "$path/$($entry['id'])?includes_parents=true"
+        if (-not $response.ok) {$unknown=$true;$bypassKnown=$false;continue}
+        $rule=$response.data
+        if ($rule -isnot [Collections.IDictionary]) {$unknown=$true;continue}
+        if ($rule['target'] -cne 'tag' -or $rule['enforcement'] -cne 'active') {continue}
+        $refs=$rule['conditions']['ref_name']
+        if ($null -eq $refs -or $refs['include'] -isnot [array] -or $refs['exclude'] -isnot [array]) {$unknown=$true;continue}
+        if (@($refs['exclude']).Count) {$unknown=$true;continue}
+        $applicable=@($patterns | Where-Object {$pattern=$_; @($refs['include'] | Where-Object {$_ -cin @('~ALL','refs/tags/*','refs/tags/v*',$pattern)}).Count -gt 0})
+        if (-not $applicable.Count) {continue}
+        if ($rule['bypass_actors'] -isnot [array]) {$bypassKnown=$false}
+        else {
+            $actors=$actors -or $rule['bypass_actors'].Count -gt 0
+            if (@($rule['bypass_actors'] | Where-Object {$_['actor_type'] -ceq 'RepositoryRole'}).Count) {$broad=$true}
+        }
+        if ($rule['rules'] -isnot [array]) {$unknown=$true;continue}
+        foreach ($pattern in $applicable) {foreach ($item in $rule['rules']) {if ($item['type'] -cin @('creation','update','deletion')) {[void]$found[$pattern].Add($item['type'])}}}
+    }}
     foreach ($type in @('creation','update','deletion')) {
-        if ($found.Contains($type)) { Add-DpResult $Results 'Repository configuration' "Release tag $type restricted" PASS 'An active inherited/repository tag ruleset covers all v* tags and enforces this operation restriction.' }
-        elseif ($unknown) { Add-DpResult $Results 'Repository configuration' "Release tag $type restricted" UNVERIFIED 'Ruleset access or full v* pattern coverage could not be established.' $action }
-        else { Add-DpResult $Results 'Repository configuration' "Release tag $type restricted" FAIL 'No active v* rule enforcing this operation restriction was found.' $action }
+        $covered=@($patterns | Where-Object {-not $found[$_].Contains($type)}).Count -eq 0
+        $status=if ($covered) {'PASS'} elseif ($unknown) {'UNVERIFIED'} else {'FAIL'}
+        New-ClcDeploymentPrerequisiteCheck "github.tags.$type" $status "Active rules were inspected for $type of selected-channel version tags; evaluate-only rules do not enforce protection." $action -Name "Release tag $type restriction"
     }
-    Add-DpResult $Results 'Repository configuration' 'Tag bypass authority' UNVERIFIED 'Authorized release producers and bypass identities require independent administrative review.' $action
-    if ($activeTags -gt 0 -and -not $bypassUnknown -and -not $unknown -and -not $hasBypass) {
-        Add-DpResult $Results 'Repository configuration' 'Observed tag ruleset bypass actors' PASS 'Every enumerated active tag ruleset exposes an empty bypass list; branch/workflow ownership still requires independent review.'
-    } else { Add-DpResult $Results 'Repository configuration' 'Observed tag ruleset bypass actors' UNVERIFIED 'Active tag rulesets have bypass actors, unavailable details or incomplete coverage; actor authority and effective scope require review.' $action }
+    $status=if ($broad) {'FAIL'} elseif (-not $bypassKnown -or $unknown) {'UNVERIFIED'} else {'PASS'}
+    New-ClcDeploymentPrerequisiteCheck 'github.tags.bypass' $status 'Observable tag bypass restrictions were inspected; unrestricted repository-role bypass broadens release admission.' $action -Name 'Tag bypass restrictions'
+    New-ClcDeploymentPrerequisiteCheck 'github.tags.authority' UNVERIFIED $(if ($actors) {'Configured release bypass actors still require infrastructure ownership; API settings do not prove their future behavior.'} else {'API observations do not prove future release-producer or administrator behavior.'}) 'Retain independent control of release producers and authorized bypass identities.' -Name 'Release authority limitation'
 }
 
-function Get-DpWorkflow {
-    param($Config, $Results, [string] $Path, [string] $Commit, [string] $Name)
-    $file=Get-DpFile $Config.Repository $Path $Commit
-    $action="Review $Path at the integration branch; configure the documented automatic release/deployment structure."
+function Get-ClcDeploymentPrerequisiteWorkflowObservation {
+    param($Context,$Config,[string] $Path,[string] $Commit,[string] $Id)
+    $action="Correct $Path at the protected integration branch; use the expected producer or deployment caller."
+    $file=Get-ClcDeploymentPrerequisiteFile $Context $Config.Repository $Path $Commit
     if (-not $file.ok) {
-        $status=if ($file.code -eq 404) { 'FAIL' } else { 'UNVERIFIED' }
-        Add-DpResult $Results 'Repository configuration' "$Name workflow present" $status $file.reason $action
-        return $null
+        # Contents 404 on an identity-verified readable source is a missing required file.
+        return @{workflow=$null;check=(New-ClcDeploymentPrerequisiteCheck $Id $(if ($file.code -eq 404) {'FAIL'} else {'UNVERIFIED'}) $file.reason $action -Name 'Required workflow source')}
     }
     try {
-        $workflow=ConvertFrom-DpYaml $file.text
-        if ($workflow['jobs'] -isnot [Collections.IDictionary] -or $workflow['jobs'].Count -eq 0 -or -not $workflow.Contains('on')) { throw 'InvalidYaml' }
+        $workflow=ConvertFrom-ClcDeploymentPrerequisiteYaml $file.text
+        if ($workflow['jobs'] -isnot [Collections.IDictionary] -or -not $workflow['jobs'].Count -or -not $workflow.Contains('on')) {
+            return @{workflow=$null;check=(New-ClcDeploymentPrerequisiteCheck $Id FAIL 'The workflow lacks required jobs or triggers.' $action -Name 'Required workflow structure')}
+        }
+        @{workflow=$workflow;check=(New-ClcDeploymentPrerequisiteCheck $Id PASS "The expected workflow $Path has bounded valid YAML, jobs and triggers at the observed source commit." -Name 'Required workflow source')}
     } catch {
-        $status=if ($_.Exception.Message -match 'UnsupportedYaml') { 'UNVERIFIED' } else { 'FAIL' }
-        Add-DpResult $Results 'Repository configuration' "$Name workflow structure" $status 'Workflow YAML is invalid or uses unsupported constructs (anchors, tags, merges or size/depth bounds).' $action
-        return $null
-    }
-    Add-DpResult $Results 'Repository configuration' "$Name workflow present" PASS 'A workflow mapping with jobs and triggers exists at the observed integration commit.'
-    return ,$workflow
-}
-
-function Get-DpWorkflowResults {
-    param($Config, $Results, $Release, $Deployment)
-    $action='Review the release and deployment workflows: v* tag builds, successful qualification, automatic trusted-branch deployment, separately authorized protected dispatch and immutable shared callers.'
-    if ($null -ne $Release) {
-        $events=$Release['on']
-        if ($events -is [Collections.IDictionary] -and $events['push'] -is [Collections.IDictionary]) {
-            $tags=@($events['push']['tags'])
-            if ($tags -ccontains 'v*' -and -not @($tags | Where-Object { $_ -like '!*' }).Count -and -not $events['push'].Contains('tags-ignore')) {
-                Add-DpResult $Results 'Repository configuration' 'Version-tag release trigger' PASS 'push.tags includes v* without tag exclusions; optional fresh-build dispatch is permitted.'
-            } else { Add-DpResult $Results 'Repository configuration' 'Version-tag release trigger' UNVERIFIED 'Complete v* trigger coverage could not be proved from the observed tag filters.' $action }
-        } else { Add-DpResult $Results 'Repository configuration' 'Version-tag release trigger' FAIL 'No explicit push tag filter was found.' $action }
-    }
-    if ($null -ne $Deployment) {
-        $events=$Deployment['on']
-        $dispatch=($events -is [Collections.IDictionary] -and $events.Contains('workflow_dispatch')) -or ($events -is [array] -and $events -ccontains 'workflow_dispatch') -or ($events -is [string] -and $events -ceq 'workflow_dispatch')
-        if ($dispatch) { Add-DpResult $Results 'Repository configuration' 'Protected manual deployment dispatch' UNVERIFIED 'Dispatch is supported but is never authority. Protected caller/ref, actor authority, exact producer/source/artifact and independent host authorization require verified shared admission.' $action }
-        else { Add-DpResult $Results 'Repository configuration' 'Protected manual deployment dispatch' PASS 'The inspected caller has no manual dispatch entry point.' }
-        $completion=if ($events -is [Collections.IDictionary]) { $events['workflow_run'] } else { $null }
-        if ($null -ne $Release -and $completion -is [Collections.IDictionary] -and @($completion['types']) -ccontains 'completed' -and @($completion['workflows']) -ccontains $Release['name']) {
-            Add-DpResult $Results 'Repository configuration' 'Automatic release-completion trigger' PASS 'workflow_run names the release workflow and completed activity; success guards are assessed separately.'
-        } else { Add-DpResult $Results 'Repository configuration' 'Automatic release-completion trigger' UNVERIFIED 'The small structural check cannot establish this automatic qualification handoff (including same-workflow/reusable alternatives).' $action }
-    }
-    Add-DpResult $Results 'Repository configuration' 'Successful qualification and trusted execution' UNVERIFIED 'YAML structure alone cannot prove expression logic, immutable checkout, helper code or artifact/source qualification.' 'Review success/repository/event/ref/source guards and every privileged checkout/helper; reject consumer PR/tag code on the host.'
-}
-
-function Get-DpSharedResults {
-    param($Config, $Results, $Deployment, [string] $Commit)
-    $action='Review the protected caller, .clc/release.json and the exact reviewed shared revision; dispatch/input assertions never establish authority.'
-    $jobs=if ($null -ne $Deployment) { @($Deployment['jobs'].Values) } else { @() }
-    $calls=@($jobs | Where-Object { $_ -is [Collections.IDictionary] -and $_['uses'] -is [string] -and $_['uses'] -cmatch '/\.github/workflows/application-deploy\.yml@' })
-    $expected=if ($Config.ContainsKey('SharedRevision')) { [string]$Config.SharedRevision } else { '' }
-    if (-not $expected -and -not $calls.Count) { return '' } # Legacy direct job remains supported.
-    if (-not $expected) {
-        Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' UNVERIFIED 'A shared deployment caller exists but no independently reviewed immutable shared revision was selected.' $action
-        return '?'
-    }
-    $identity="clcdpc/clc-deployment/.github/workflows/application-deploy.yml@$expected"
-    if ($null -eq $Deployment) { Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' UNVERIFIED 'The protected consumer caller could not be inspected.' $action; return '' }
-    $allUses=@($jobs | Where-Object { $_ -is [Collections.IDictionary] -and $_['uses'] } | ForEach-Object { [string]$_['uses'] })
-    $deployCalls=@($jobs | Where-Object { $_ -is [Collections.IDictionary] -and $_['uses'] -ceq $identity })
-    if ($deployCalls.Count -ne 1 -or $calls.Count -ne 1 -or
-        @($allUses | Where-Object { $_ -cmatch '/\.github/workflows/application-release\.yml@' -and $_ -cne "clcdpc/clc-deployment/.github/workflows/application-release.yml@$expected" }).Count -gt 0) {
-        Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' FAIL 'The caller does not select exactly the reviewed shared deployment/publication identities; missing, different or duplicate shared calls were observed.' $action
-        return ''
-    }
-    $directPrivileged=@($jobs | Where-Object { $_ -is [Collections.IDictionary] -and $_['runs-on'] -is [Collections.IDictionary] -and $_['runs-on']['group'] -ceq $Config.RunnerGroup })
-    if ($directPrivileged.Count) {
-        Add-DpResult $Results 'Repository configuration' 'Additional privileged caller jobs' FAIL 'The shared caller also directly selects the privileged runner group; only the selected shared defining workflow and separate diagnostic may use it.' $action
-    }
-    if (@($allUses | Where-Object { $_ -cne $identity -and $_ -cne "clcdpc/clc-deployment/.github/workflows/application-release.yml@$expected" }).Count) {
-        Add-DpResult $Results 'Repository configuration' 'Other reusable caller jobs' UNVERIFIED 'Additional reusable jobs need independent routing/source review. The exact runner-group allowlist remains separately required.' $action
-    }
-    $file=Get-DpFile $Config.Repository '.clc/release.json' $Commit
-    if (-not $file.ok) { Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' UNVERIFIED $file.reason $action; return '' }
-    try {
-        # Existing strict distribution JSON reader rejects duplicate/case-ambiguous keys.
-        $record=Read-DistJson ([Text.Encoding]::UTF8.GetBytes($file.text))
-        if ($record -isnot [Collections.IDictionary] -or ($record['contractVersion'] -isnot [int] -and $record['contractVersion'] -isnot [long]) -or $record['contractVersion'] -ne 1 -or $record['orchestration'] -isnot [Collections.IDictionary] -or
-            $record['producer'] -isnot [Collections.IDictionary] -or $record['targets'] -isnot [array]) { throw 'Unsupported shared configuration' }
-        if ($record['repository'] -cne $Config.Repository -or $record['integrationBranch'] -cne $Config.IntegrationBranch -or
-            $record['orchestration']['sharedRevision'] -cne $expected -or $record['orchestration']['deploymentWorkflowPath'] -cne $Config.DeploymentWorkflow -or
-            $record['producer']['workflowPath'] -cne $Config.ReleaseWorkflow -or
-            ($Config.ContainsKey('ApplicationId') -and $Config.ApplicationId -and $record['applicationId'] -cne $Config.ApplicationId)) {
-            Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' FAIL 'Protected consumer configuration disagrees with the selected repository, producer, caller, integration source or reviewed shared revision.' $action
-            return ''
-        }
-        Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' PASS "The observed integration caller and orchestration.sharedRevision reference exactly $identity. This establishes immutable references only, not executable admission semantics."
-        $targets=@($record['targets'] | Where-Object { $_ -is [Collections.IDictionary] -and $_['channel'] -ceq $Config.DeploymentChannel })
-        if ($targets.Count -ne 1 -or $targets[0]['environment'] -cne $Config.EnvironmentName -or $targets[0]['runnerGroup'] -cne $Config.RunnerGroup -or
-            ($Config.ContainsKey('TargetId') -and $Config.TargetId -and $targets[0]['targetId'] -cne $Config.TargetId) -or
-            $targets[0]['runnerLabels'] -isnot [array] -or (@($targets[0]['runnerLabels']) -join ',') -cne $Config.RunnerLabels) {
-            Add-DpResult $Results 'Deployment configuration' 'Protected shared deployment routing' FAIL 'The exact channel/target/environment/runner group/labels disagree with the protected configuration.' $action
-        } else {
-            Add-DpResult $Results 'Deployment configuration' 'Protected shared deployment routing' PASS 'The protected channel route matches the exact selected target, environment, runner group and labels; dynamic shared code enforcement remains a separate unverified requirement.'
-            $route=$targets[0]
-            $state=if ($route['enabled'] -isnot [bool] -or $route['runnerAdmissionReady'] -isnot [bool]) {'UNVERIFIED'} elseif ($route['enabled'] -and $route['runnerAdmissionReady']) {'PASS'} else {'FAIL'}
-            Add-DpResult $Results 'Deployment configuration' 'Activation indicator' $state 'Observed protected shared target enabled and runnerAdmissionReady switches. These are indicators, never host authorization.' $(if ($state -cne 'PASS') {$action})
-        }
-        $events=$Deployment['on']
-        $dispatch=($events -is [Collections.IDictionary] -and $events.Contains('workflow_dispatch')) -or ($events -is [array] -and $events -ccontains 'workflow_dispatch') -or $events -ceq 'workflow_dispatch'
-        if ($dispatch -and $deployCalls[0]['with'] -is [Collections.IDictionary] -and $deployCalls[0]['with']['automatic'] -ceq 'true') {
-            Add-DpResult $Results 'Repository configuration' 'Manual shared operation selection' FAIL 'The dispatch-capable caller always selects automatic admission, bypassing the explicit manual operation route. It must preserve shared actor-authority verification.' $action
-        } elseif ($dispatch) {
-            Add-DpResult $Results 'Repository configuration' 'Manual shared operation selection' UNVERIFIED 'Verify that dispatch selects automatic=false and that the immutable shared code checks protected workflow identity and current repository write authority. Dispatch itself grants no authority.' $action
-        }
-        $shared=Get-DpFile 'clcdpc/clc-deployment' '.github/workflows/application-deploy.yml' $expected
-        if (-not $shared.ok) { Add-DpResult $Results 'Repository configuration' 'Shared deployment implementation inspection' UNVERIFIED $shared.reason $action }
-        else { Add-DpResult $Results 'Repository configuration' 'Shared deployment implementation inspection' UNVERIFIED 'The immutable shared definition is accessible. Its OIDC/caller/actor/source/producer/artifact checks and dynamic route require review of that complete revision; YAML tokens cannot prove effective enforcement.' $action }
-        return $identity
-    } catch {
-        Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' UNVERIFIED 'Protected shared configuration is malformed or unsupported; its authority and routing were not established.' $action
-        return ''
+        $status=if ($_.Exception -is [YamlDotNet.Core.YamlException] -or $_.Exception.InnerException -is [YamlDotNet.Core.YamlException] -or $_.Exception.Data['prerequisite_status'] -ceq 'FAIL') {'FAIL'} else {'UNVERIFIED'}
+        @{workflow=$null;check=(New-ClcDeploymentPrerequisiteCheck $Id $status 'Workflow YAML is invalid or cannot be safely interpreted; inspect unsupported aliases/tags/merges and bounded syntax.' $action -Name 'Required workflow structure')}
     }
 }
 
-function Get-DpEnvironmentResults {
-    param($Config, $Results)
-    $section='GitHub Environment'
-    $action='Inspect Settings > Environments for the exact name, integration-branch-only deployment policy and the chosen protection model; check GitHub plan/visibility support.'
-    $path="/repos/$($Config.Repository)"
-    $list=Get-DpCollection "$path/environments" 'environments'
-    if (-not $list.ok) { Add-DpResult $Results $section 'Environment exists' UNVERIFIED $list.reason $action; return }
-    $matches=@($list.data | Where-Object { $_['name'] -ceq $Config.EnvironmentName })
-    if ($matches.Count -ne 1) { Add-DpResult $Results $section 'Environment exists' FAIL 'The exact environment name is absent from the complete visible list.' $action; return }
-    Add-DpResult $Results $section 'Environment exists' PASS 'The exact name was observed; existence alone does not satisfy its restrictions.'
-    $encoded=[uri]::EscapeDataString($Config.EnvironmentName)
-    $response=Get-DpApi "$path/environments/$encoded"
-    if (-not $response.ok) { Add-DpResult $Results $section 'Environment restrictions' UNVERIFIED $response.reason $action; return }
-    $environment=$response.data
-    $policy=$environment['deployment_branch_policy']
-    if ($null -eq $policy) { Add-DpResult $Results $section 'Environment branch restrictions' FAIL 'The environment allows unrestricted deployment refs.' $action }
-    elseif ($policy['custom_branch_policies'] -eq $true -and $policy['protected_branches'] -eq $false) {
-        $policies=Get-DpCollection "$path/environments/$encoded/deployment-branch-policies" 'branch_policies'
-        if (-not $policies.ok) { Add-DpResult $Results $section 'Environment branch restrictions' UNVERIFIED $policies.reason $action }
-        elseif (@($policies.data).Count -eq 1 -and $policies.data[0]['name'] -ceq $Config.IntegrationBranch -and $policies.data[0]['type'] -ceq 'branch') {
-            Add-DpResult $Results $section 'Environment branch restrictions' PASS 'Exactly the integration branch is allowed, with no tag rules.'
-        } else { Add-DpResult $Results $section 'Environment branch restrictions' FAIL 'Selected deployment rules do not allow only the expected integration branch.' $action }
-    } else { Add-DpResult $Results $section 'Environment branch restrictions' UNVERIFIED 'Protected-branches-only or an unknown policy does not prove exact branch/workflow admission.' $action }
-    if ($Config.EnvironmentProtection -ceq 'required-reviewers') {
-        $reviewers=@($environment['protection_rules'] | Where-Object { $_['type'] -ceq 'required_reviewers' })
-        if ($reviewers.Count -gt 0 -and @($reviewers[0]['reviewers']).Count -gt 0 -and $reviewers[0]['prevent_self_review'] -eq $true) {
-            Add-DpResult $Results $section 'Required reviewers and no self-review' PASS 'Required reviewers and prevent_self_review are configured; reviewer independence still needs review.'
-        } elseif ($environment.Contains('protection_rules')) { Add-DpResult $Results $section 'Required reviewers and no self-review' FAIL 'The selected reviewer model requires reviewers and prevention of self-review.' $action }
-        else { Add-DpResult $Results $section 'Required reviewers and no self-review' UNVERIFIED 'Protection rule fields were not exposed.' $action }
-        if ($environment.Contains('can_admins_bypass')) {
-            $status=if ($environment['can_admins_bypass'] -eq $false) { 'PASS' } else { 'FAIL' }
-            Add-DpResult $Results $section 'Environment administrator bypass disabled' $status 'Observed can_admins_bypass setting.' $(if ($status -ceq 'FAIL') { $action })
-        } else { Add-DpResult $Results $section 'Environment administrator bypass disabled' UNVERIFIED 'GitHub did not expose can_admins_bypass.' $action }
+function Test-ClcDeploymentPrerequisiteDispatch {
+    param($Workflow)
+    if ($null -eq $Workflow) {return $false}
+    $events=$Workflow['on']
+    ($events -is [Collections.IDictionary] -and $events.Contains('workflow_dispatch')) -or ($events -is [array] -and $events -ccontains 'workflow_dispatch') -or ($events -is [string] -and $events -ceq 'workflow_dispatch')
+}
+
+function Get-ClcDeploymentPrerequisiteWorkflowChecks {
+    param($Config,$Release,$Deployment)
+    $action='Configure the producer version-tag trigger and protected caller completion trigger for that exact producer; dispatch never grants independent authority.'
+    if ($null -eq $Release) {
+        New-ClcDeploymentPrerequisiteCheck 'github.workflow.release-trigger' SKIPPED 'Producer workflow observation was not established.' $action -Reason 'github.workflow.producer' -Name 'Producer trigger'
     } else {
-        Add-DpResult $Results $section 'Unattended protection model' UNVERIFIED 'Manual approval is not required by the selected model; independently enforced runner/workflow admission must be qualified.' 'Infrastructure must review selected-workflow runner admission and environment protection/bypass settings for unattended operation.'
+        $events=$Release['on'];$tags=@()
+        if ($events -is [Collections.IDictionary] -and $events['push'] -is [Collections.IDictionary]) {$tags=@($events['push']['tags'])}
+        $status=if ($tags -ccontains 'v*' -and -not @($tags | Where-Object {$_ -like '!*'}).Count) {'PASS'} elseif (-not $tags.Count) {'FAIL'} else {'UNVERIFIED'}
+        New-ClcDeploymentPrerequisiteCheck 'github.workflow.release-trigger' $status 'The producer push tag filter was inspected for supported version-tag coverage.' $action -Name 'Producer trigger'
     }
+    if ($null -eq $Deployment -or $null -eq $Release) {
+        New-ClcDeploymentPrerequisiteCheck 'github.workflow.completion-trigger' SKIPPED 'Producer or caller source was unavailable.' $action -Reason 'workflow-source' -Name 'Producer completion routing'
+    } else {
+        $events=$Deployment['on'];$completion=if ($events -is [Collections.IDictionary]) {$events['workflow_run']} else {$null}
+        $status=if ($completion -is [Collections.IDictionary] -and @($completion['types']) -ccontains 'completed' -and @($completion['workflows']) -ccontains $Release['name']) {'PASS'} else {'UNVERIFIED'}
+        New-ClcDeploymentPrerequisiteCheck 'github.workflow.completion-trigger' $status 'The caller completion event was compared with the expected producer identity.' $action -Name 'Producer completion routing'
+    }
+    New-ClcDeploymentPrerequisiteCheck 'github.workflow.manual-dispatch' $(if (Test-ClcDeploymentPrerequisiteDispatch $Deployment) {'UNVERIFIED'} else {'PASS'}) 'Manual dispatch is only a request; independent actor, source, artifact and host authority remain enforced by trusted deployment code.' 'Keep protected manual redeployment authorization in the reviewed shared implementation.' -Name 'Manual dispatch authority'
+    New-ClcDeploymentPrerequisiteCheck 'github.workflow.runtime-semantics' UNVERIFIED 'Static source/configuration inspection cannot prove every expression, future execution, artifact qualification or application behavior.' 'Review the immutable shared revision and perform separately authorized consumer deployment/recovery acceptance.' -Name 'Runtime behavior limitation'
+}
+function Get-ClcDeploymentPrerequisiteSharedWorkflowAssessment {
+    param($Context,$Config,$Deployment,[string] $Commit)
+    $checks=[Collections.Generic.List[object]]::new();$identity=$null;$established=$false;$record=$null;$definition=$null
+    $action='Align the protected consumer caller, .clc/release.json and reviewed immutable shared orchestration revision; keep installed-toolkit identity separate.'
+    $jobs=if ($null -ne $Deployment) {@($Deployment['jobs'].Values)} else {@()}
+    $calls=@($jobs | Where-Object {$_['uses'] -is [string] -and $_['uses'] -cmatch '/\.github/workflows/application-deploy\.yml@'})
+    $shared=($Config.SharedRevision -ne '') -or $calls.Count -gt 0
+    if (-not $shared) {
+        foreach ($id in @('shared-identity','shared-definition')) {$checks.Add((New-ClcDeploymentPrerequisiteCheck "github.workflow.$id" NOT_APPLICABLE 'The selected caller directly defines its deployment job.' -Reason 'direct-workflow' -Name 'Shared workflow identity'))}
+        $identity="$($Config.Repository)/$($Config.DeploymentWorkflow)@refs/heads/$($Config.IntegrationBranch)"
+        $established=$null -ne $Deployment
+    } elseif (-not $Config.SharedRevision -or $null -eq $Deployment) {
+        $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-identity' UNVERIFIED 'The reviewed shared revision or observed consumer caller is unavailable.' $action -Name 'Shared workflow identity'))
+    } else {
+        $expected="clcdpc/clc-deployment/.github/workflows/application-deploy.yml@$($Config.SharedRevision)"
+        $uses=@($jobs | Where-Object {$_['uses']} | ForEach-Object {$_['uses']})
+        $bad=$calls.Count -ne 1 -or @($uses | Where-Object {$_ -ceq $expected}).Count -ne 1 -or
+            @($uses | Where-Object {$_ -cmatch '/\.github/workflows/application-release\.yml@' -and $_ -cne "clcdpc/clc-deployment/.github/workflows/application-release.yml@$($Config.SharedRevision)"}).Count -gt 0
+        $file=Get-ClcDeploymentPrerequisiteFile $Context $Config.Repository '.clc/release.json' $Commit
+        if ($bad) {
+            $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-identity' FAIL 'The caller selects missing, duplicate or incorrect shared deployment/publication identities.' $action -Name 'Shared workflow identity'))
+        } elseif (-not $file.ok) {
+            $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-identity' $(if ($file.code -eq 404) {'FAIL'} else {'UNVERIFIED'}) $file.reason $action -Name 'Shared workflow identity'))
+        } else {
+            try {$record=Read-ClcConsumerConfiguration -Bytes ([Text.Encoding]::UTF8.GetBytes($file.text))} catch {$record=$null}
+            if ($null -eq $record -or $record['contractVersion'] -ne 1 -or $record['orchestration'] -isnot [Collections.IDictionary] -or $record['producer'] -isnot [Collections.IDictionary] -or $record['targets'] -isnot [array]) {
+                $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-identity' FAIL 'The protected consumer configuration is malformed or uses an unsupported contract.' $action -Name 'Shared workflow identity'))
+                $record=$null
+            } elseif ($record['repository'] -cne $Config.Repository -or $record['applicationId'] -cne $Config.ApplicationId -or
+                $record['integrationBranch'] -cne $Config.IntegrationBranch -or $record['orchestration']['sharedRevision'] -cne $Config.SharedRevision -or
+                $record['orchestration']['deploymentWorkflowPath'] -cne $Config.DeploymentWorkflow -or $record['producer']['workflowPath'] -cne $Config.ReleaseWorkflow) {
+                $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-identity' FAIL 'Protected configuration disagrees with the repository, application, branch, producer, caller or shared revision.' $action -Name 'Shared workflow identity'))
+            } else {
+                $identity=$expected;$established=$true
+                $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-identity' PASS "The observed caller and protected orchestration configuration select exactly $identity." -Name 'Shared workflow identity'))
+            }
+        }
+        if ($established) {
+            $file=Get-ClcDeploymentPrerequisiteFile $Context 'clcdpc/clc-deployment' '.github/workflows/application-deploy.yml' $Config.SharedRevision
+            if ($file.ok) {
+                try {
+                    $definition=ConvertFrom-ClcDeploymentPrerequisiteYaml $file.text -AllowAnchors
+                    $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-definition' PASS 'The exact immutable shared job definition is accessible and its bounded YAML syntax is valid. Runtime semantics remain an advisory limitation.' -Name 'Shared workflow source'))
+                } catch {$checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-definition' UNVERIFIED 'The shared definition could not be parsed within safe bounds.' $action -Name 'Shared workflow source'))}
+            } else {$checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-definition' UNVERIFIED $file.reason $action -Name 'Shared workflow source'))}
+        }
+    }
+    if ($shared -and -not @($checks | Where-Object id -CEQ 'github.workflow.shared-definition').Count) {
+        $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.shared-definition' SKIPPED 'The shared identity was not established.' $action -Reason 'github.workflow.shared-identity' -Name 'Shared workflow source'))
+    }
+    $extra=@($jobs | Where-Object {$_['runs-on'] -is [Collections.IDictionary] -and $_['runs-on']['group'] -ceq $Config.RunnerGroup})
+    $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.additional-jobs' $(if ($shared -and $extra.Count) {'FAIL'} elseif ($null -eq $Deployment) {'SKIPPED'} else {'PASS'}) 'The consumer caller was inspected for additional jobs directly selecting the privileged group.' $action -Reason 'caller-source' -Name 'Additional privileged caller jobs'))
+    if (Test-ClcDeploymentPrerequisiteDispatch $Deployment) {
+        $automatic=@($calls | Where-Object {$_['with'] -is [Collections.IDictionary] -and $_['with']['automatic'] -ceq 'true'}).Count -gt 0
+        $checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.manual-selection' $(if ($automatic) {'FAIL'} else {'PASS'}) 'Dispatch must preserve the explicit shared manual operation path and its independent actor verification; an automatic=true literal on a dispatch-capable caller is invalid.' $action -Name 'Manual operation selection'))
+    } else {$checks.Add((New-ClcDeploymentPrerequisiteCheck 'github.workflow.manual-selection' NOT_APPLICABLE 'No manual dispatch entry point was observed.' -Reason 'no-dispatch' -Name 'Manual operation selection'))}
+    @{checks=$checks.ToArray();identity=$identity;identityEstablished=$established;shared=$shared;configuration=$record;definition=$definition;
+        unavailableEvidence=$(if ($established) {@()} else {@('protected workflow identity')})}
 }
 
-function Get-DpRunnerResults {
-    param($Config, $Results, [string] $RepositoryVisibility, [string] $PrivilegedWorkflow = '')
+function Get-ClcDeploymentPrerequisiteEnvironmentChecks {
+    param($Context,$Config)
+    $action="Configure environment $($Config.EnvironmentName) with exactly the $($Config.IntegrationBranch) branch rule and no additional branch/tag rules. Review compatibility with unattended runner/workflow admission."
+    $path="/repos/$($Config.Repository)/environments"
+    $list=Get-ClcDeploymentPrerequisiteCollection $Context $path 'environments'
+    $status=if (-not $list.ok) {'UNVERIFIED'} elseif (@($list.data | Where-Object {$_['name'] -ceq $Config.EnvironmentName}).Count -ne 1) {'FAIL'} else {'PASS'}
+    New-ClcDeploymentPrerequisiteCheck 'github.environment.exists' $status 'The complete accessible environment list was checked for the exact expected name.' $action -Name 'Deployment environment'
+    if ($status -cne 'PASS') {
+        New-ClcDeploymentPrerequisiteCheck 'github.environment.restrictions' SKIPPED 'The exact environment was not established.' $action -Reason 'github.environment.exists' -Name 'Environment branch restrictions'
+        return
+    }
+    $encoded=[uri]::EscapeDataString($Config.EnvironmentName)
+    $response=Get-ClcDeploymentPrerequisiteApi $Context "$path/$encoded"
+    if (-not $response.ok) {New-ClcDeploymentPrerequisiteCheck 'github.environment.restrictions' UNVERIFIED $response.reason $action -Name 'Environment branch restrictions';return}
+    $environment=$response.data;$policy=$environment['deployment_branch_policy']
+    $status='UNVERIFIED';$detail='The environment branch policy was not exposed in a supported shape.'
+    if ($null -eq $policy) {$status='FAIL';$detail='The environment permits unrestricted deployment refs.'}
+    elseif ($policy['custom_branch_policies'] -eq $true -and $policy['protected_branches'] -eq $false) {
+        $policies=Get-ClcDeploymentPrerequisiteCollection $Context "$path/$encoded/deployment-branch-policies" 'branch_policies'
+        if ($policies.ok) {
+            $status=if ($policies.data.Count -eq 1 -and $policies.data[0]['name'] -ceq $Config.IntegrationBranch -and $policies.data[0]['type'] -ceq 'branch') {'PASS'} else {'FAIL'}
+            $detail='The exact integration-branch-only environment policy was inspected, including additional tag or branch rules.'
+        } else {$detail=$policies.reason}
+    }
+    New-ClcDeploymentPrerequisiteCheck 'github.environment.restrictions' $status $detail $action -Name 'Environment branch restrictions'
+    $reviewers=@($environment['protection_rules'] | Where-Object {$_['type'] -ceq 'required_reviewers'})
+    New-ClcDeploymentPrerequisiteCheck 'github.environment.protection' $(if ($reviewers.Count) {'UNVERIFIED'} else {'PASS'}) $(if ($reviewers.Count) {'Reviewers are configured and may require manual intervention. They are not a universal commissioning requirement.'} else {'No mandatory environment reviewers are imposed; exact runner/workflow admission remains independently required.'}) 'Remove unintended manual approval dependencies through the infrastructure procedure if unattended execution is intended.' -Name 'Environment protection compatibility'
+}
+
+function Get-ClcDeploymentPrerequisiteRunnerChecks {
+    param($Context, $Config, [string] $RepositoryVisibility, $Assessment)
+    $PrivilegedWorkflow=$Assessment.identity
     $section='Deployment runner'
     $owner=$Config.Repository.Split('/')[0]
     $path="/orgs/$owner/actions/runner-groups"
@@ -404,41 +380,41 @@ function Get-DpRunnerResults {
         'public' { 'enable public repositories for this public caller' }
         default { 'verify caller visibility through the repository API before choosing public repository access' }
     }
-    $action="Organization Settings > Actions > Runner groups > $($Config.RunnerGroup): select only this repository, $publicAccess, restrict to the exact job-defining deployment workflow (shared immutable SHA or legacy protected branch), and inspect group runner labels. Organization Self-hosted runners: read may be unavailable to GITHUB_TOKEN; no administrator credential is required by this validator."
+    $action="Organization Settings > Actions > Runner groups > $($Config.RunnerGroup): select only this repository, $publicAccess, restrict to the exact job-defining deployment workflow (shared immutable SHA or legacy protected branch), and inspect group runner labels. Organization Self-hosted runners: read may be unavailable to GITHUB_TOKEN; use explicitly authorized read-only administrative inspection when needed."
     if ($RepositoryVisibility) {
-        Add-DpResult $Results $section 'Calling repository visibility' PASS "The identity-verified repository API reports a $RepositoryVisibility caller."
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.visibility' PASS "The identity-verified repository API reports a $RepositoryVisibility caller."
     } else {
-        Add-DpResult $Results $section 'Calling repository visibility' UNVERIFIED 'The repository API did not establish a consistent public/private visibility for the caller.' $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.visibility' UNVERIFIED 'The repository API did not establish a consistent public/private visibility for the caller.' $action
     }
     if ($RepositoryVisibility -ceq 'public') {
-        Add-DpResult $Results $section 'Public self-hosted runner risk' UNVERIFIED 'Public self-hosted runners risk executing untrusted PR/fork code. Public access enables job eligibility only; it does not establish safe admission or readiness.' 'Infrastructure must independently review public self-hosted runner risk, exact selected repository/workflow enforcement and every privileged code path; never execute untrusted PR/fork code on the deployment host.'
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.public-risk' UNVERIFIED 'Public self-hosted runners risk executing untrusted PR/fork code. Public access enables job eligibility only; it does not establish safe admission or readiness.' 'Infrastructure must independently review public self-hosted runner risk, exact selected repository/workflow enforcement and every privileged code path; never execute untrusted PR/fork code on the deployment host.'
     }
-    $list=Get-DpCollection $path 'runner_groups'
-    if (-not $list.ok) { Add-DpResult $Results $section 'Restricted runner group' UNVERIFIED $list.reason $action; return }
+    $list=Get-ClcDeploymentPrerequisiteCollection $Context $path 'runner_groups'
+    if (-not $list.ok) { New-ClcDeploymentPrerequisiteCheck 'github.runner.group' UNVERIFIED $list.reason $action; return }
     $matches=@($list.data | Where-Object { $_['name'] -ceq $Config.RunnerGroup })
-    if ($matches.Count -ne 1) { Add-DpResult $Results $section 'Restricted runner group' FAIL 'Expected group absent from the complete accessible organization list.' $action; return }
+    if ($matches.Count -ne 1) { New-ClcDeploymentPrerequisiteCheck 'github.runner.group' FAIL 'Expected group absent from the complete accessible organization list.' $action; return }
     $id=$matches[0]['id']
-    if ($id -isnot [int] -and $id -isnot [long]) { Add-DpResult $Results $section 'Restricted runner group' UNVERIFIED 'Malformed runner group identity.' $action; return }
-    $response=Get-DpApi "$path/$id"
-    if (-not $response.ok) { Add-DpResult $Results $section 'Restricted runner group' UNVERIFIED $response.reason $action; return }
+    if ($id -isnot [int] -and $id -isnot [long]) { New-ClcDeploymentPrerequisiteCheck 'github.runner.group' UNVERIFIED 'Malformed runner group identity.' $action; return }
+    $response=Get-ClcDeploymentPrerequisiteApi $Context "$path/$id"
+    if (-not $response.ok) { New-ClcDeploymentPrerequisiteCheck 'github.runner.group' UNVERIFIED $response.reason $action; return }
     $group=$response.data
+    New-ClcDeploymentPrerequisiteCheck 'github.runner.group' PASS 'The exact expected runner group was found and its settings were read.' -Name 'Deployment runner group'
     if (-not $RepositoryVisibility) {
-        Add-DpResult $Results $section 'Runner repository access' UNVERIFIED 'Caller visibility could not be verified; public repository admission cannot be assessed.' $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.repository-access' UNVERIFIED 'Caller visibility could not be verified; public repository admission cannot be assessed.' $action
     } elseif ($group -isnot [Collections.IDictionary] -or $group['visibility'] -isnot [string] -or $group['allows_public_repositories'] -isnot [bool]) {
-        Add-DpResult $Results $section 'Runner repository access' UNVERIFIED 'Repository admission fields were missing or malformed.' $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.repository-access' UNVERIFIED 'Repository admission fields were missing or malformed.' $action
     } elseif ($group['visibility'] -cne 'selected') {
-        Add-DpResult $Results $section 'Runner repository access' FAIL 'Runner group access is not restricted to selected repositories.' $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.repository-access' FAIL 'Runner group access is not restricted to selected repositories.' $action
     } elseif ($group['allows_public_repositories'] -ne ($RepositoryVisibility -ceq 'public')) {
         $detail = if ($RepositoryVisibility -ceq 'public') { 'Public repository access is disabled, so this public caller cannot use the runner group.' } else { 'Public repository access must remain disabled for this private caller.' }
-        Add-DpResult $Results $section 'Runner repository access' FAIL $detail $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.repository-access' FAIL $detail $action
     } else {
-        $repos=Get-DpCollection "$path/$id/repositories" 'repositories'
-        if (-not $repos.ok) { Add-DpResult $Results $section 'Runner repository access' UNVERIFIED $repos.reason $action }
-        elseif (@($repos.data).Count -eq 1 -and $repos.data[0]['full_name'] -ieq $Config.Repository) { Add-DpResult $Results $section 'Runner repository access' PASS "Selected repository access is limited to the verified $RepositoryVisibility caller; public access matches its visibility. Workflow admission and independent administrative review remain separate requirements." }
-        else { Add-DpResult $Results $section 'Runner repository access' FAIL 'Selected repositories are not limited to the caller.' $action }
+        $repos=Get-ClcDeploymentPrerequisiteCollection $Context "$path/$id/repositories" 'repositories'
+        if (-not $repos.ok) { New-ClcDeploymentPrerequisiteCheck 'github.runner.repository-access' UNVERIFIED $repos.reason $action }
+        elseif (@($repos.data).Count -eq 1 -and $repos.data[0]['full_name'] -ieq $Config.Repository) { New-ClcDeploymentPrerequisiteCheck 'github.runner.repository-access' PASS "Selected repository access is limited to the verified $RepositoryVisibility caller; public access matches its visibility. Workflow admission and independent administrative review remain separate requirements." }
+        else { New-ClcDeploymentPrerequisiteCheck 'github.runner.repository-access' FAIL 'Selected repositories are not limited to the caller.' $action }
     }
-    $sharedExpected=($Config.ContainsKey('SharedRevision') -and $Config.SharedRevision) -or $PrivilegedWorkflow -eq '?'
-    if ($PrivilegedWorkflow -eq '?') { $PrivilegedWorkflow='' }
+    $sharedExpected=$Assessment.shared
     $allowed=@(if ($PrivilegedWorkflow) { $PrivilegedWorkflow }
         elseif ($Config.ContainsKey('SharedRevision') -and $Config.SharedRevision) { "clcdpc/clc-deployment/.github/workflows/application-deploy.yml@$($Config.SharedRevision)" }
         elseif (-not $sharedExpected) { "$($Config.Repository)/$($Config.DeploymentWorkflow)@refs/heads/$($Config.IntegrationBranch)" })
@@ -446,209 +422,147 @@ function Get-DpRunnerResults {
     if ($Config.ContainsKey('DiagnosticWorkflow') -and $Config.DiagnosticWorkflow) { $allowed+= "$($Config.Repository)/$($Config.DiagnosticWorkflow)@refs/heads/$($Config.IntegrationBranch)" }
     $selected=@($group['selected_workflows'])
     if ($group['restricted_to_workflows'] -is [bool] -and -not $group['restricted_to_workflows']) {
-        Add-DpResult $Results $section 'Runner selected-workflow access' FAIL 'The runner group does not enforce selected-workflow restrictions.' $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.workflow-access' FAIL 'The runner group does not enforce selected-workflow restrictions.' $action
     } elseif ($group['restricted_to_workflows'] -isnot [bool] -or $group['selected_workflows'] -isnot [array] -or @($selected | Where-Object { $_ -isnot [string] }).Count) {
-        Add-DpResult $Results $section 'Runner selected-workflow access' UNVERIFIED 'Workflow admission fields were missing or malformed.' $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.workflow-access' UNVERIFIED 'Workflow admission fields were missing or malformed.' $action
     } elseif ($expectedIdentityKnown -and ($selected.Count -ne $allowed.Count -or @($allowed | Where-Object { $selected -cnotcontains $_ }).Count -gt 0)) {
         # Reviewed expected identities can reject excess/wrong access even when
         # protected caller/config evidence is unavailable. They cannot grant PASS.
-        Add-DpResult $Results $section 'Runner selected-workflow access' FAIL 'Repository access alone is insufficient; expected workflow restriction is broader or inconsistent.' $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.workflow-access' FAIL 'Repository access alone is insufficient; expected workflow restriction is broader or inconsistent.' $action
     } elseif ($sharedExpected -and $owner -ine 'clcdpc' -and $group['inherited'] -is [bool] -and -not $group['inherited']) {
-        Add-DpResult $Results $section 'Runner selected-workflow access' FAIL 'The observed non-inherited organization-owned group cannot admit the shared workflow from another organization.' $action
-    } elseif ($sharedExpected -and $owner -ine 'clcdpc') {
-        Add-DpResult $Results $section 'Runner selected-workflow access' UNVERIFIED 'Cross-organization shared workflow access may use an enterprise-owned group, but inherited or unavailable ownership evidence does not establish its effective enterprise admission.' $action
-    } elseif ($sharedExpected -and -not $PrivilegedWorkflow) {
-        Add-DpResult $Results $section 'Runner selected-workflow access' UNVERIFIED 'The defining reusable workflow identity was not independently established; caller-only admission is insufficient.' $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.workflow-access' FAIL 'The observed non-inherited organization-owned group cannot admit the shared workflow from another organization.' $action
+    } elseif ($sharedExpected -and $owner -ine 'clcdpc' -and $group['inherited'] -isnot [bool]) {
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.workflow-access' UNVERIFIED 'The cross-organization group ownership could not be inspected.' $action
+    } elseif ($sharedExpected -and -not $Assessment.identityEstablished) {
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.workflow-access' UNVERIFIED 'The defining reusable workflow identity was not independently established; caller-only admission is insufficient.' $action
     } else {
-        Add-DpResult $Results $section 'Runner selected-workflow access' PASS 'Only the exact expected job-defining deployment workflow and optional protected-branch diagnostic definition are selected; reusable caller selection does not admit callee jobs.'
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.workflow-access' PASS 'Only the exact expected job-defining deployment workflow and optional protected-branch diagnostic definition are selected; reusable caller selection does not admit callee jobs.'
     }
-    $runners=Get-DpCollection "$path/$id/runners" 'runners'
-    if (-not $runners.ok) { Add-DpResult $Results $section 'Expected runner labels' UNVERIFIED $runners.reason $action; return }
+    if ($sharedExpected -and $owner -ine 'clcdpc' -and $group['inherited'] -eq $true) {
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.enterprise' UNVERIFIED 'An inherited enterprise group exposes the exact repository/workflow restrictions; complete enterprise enforcement cannot be proven through this organization API.' 'Retain enterprise control of the configured admission restrictions.'
+    }
+    $runners=Get-ClcDeploymentPrerequisiteCollection $Context "$path/$id/runners" 'runners'
+    if (-not $runners.ok) { New-ClcDeploymentPrerequisiteCheck 'github.runner.labels' UNVERIFIED $runners.reason $action; return }
     $expected=$Config.RunnerLabels.Split(',')
     if (@($runners.data | Where-Object { $_ -isnot [Collections.IDictionary] -or $_['labels'] -isnot [array] }).Count) {
-        Add-DpResult $Results $section 'Expected runner labels' UNVERIFIED 'Runner label fields were not fully exposed.' $action
+        New-ClcDeploymentPrerequisiteCheck 'github.runner.labels' UNVERIFIED 'Runner label fields were not fully exposed.' $action
         return
     }
     $matching=@($runners.data | Where-Object {
         $observed=@($_['labels'] | ForEach-Object { $_['name'] })
         @($expected | Where-Object { $observed -inotcontains $_ }).Count -eq 0
     })
-    if ($matching.Count) { Add-DpResult $Results $section 'Expected runner labels' PASS 'One group runner has all expected labels; this does not qualify its installation or future availability.' }
-    else { Add-DpResult $Results $section 'Expected runner labels' FAIL 'No group runner has all expected labels.' $action }
+    if (@($matching | Where-Object {$_['status'] -ceq 'online'}).Count) { New-ClcDeploymentPrerequisiteCheck 'github.runner.labels' PASS 'One group runner has all expected labels; this does not qualify its installation or future availability.' }
+    else { New-ClcDeploymentPrerequisiteCheck 'github.runner.labels' FAIL 'No online group runner has all expected labels.' $action }
 }
 
-function Get-DpDeploymentResults {
-    param($Config, $Results, $Deployment)
-    $section='Deployment configuration'
-    $action="Inspect repository/organization Actions variable $($Config.ActivationVariable) and the protected workflow. Leave disabled until independent infrastructure authorization."
-    $shared=($Config.ContainsKey('SharedRevision') -and $Config.SharedRevision) -or ($null -ne $Deployment -and @($Deployment['jobs'].Values | Where-Object { $_ -is [Collections.IDictionary] -and $_['uses'] -cmatch '/\.github/workflows/application-deploy\.yml@' }).Count -gt 0)
-    if ($shared) {
-        Add-DpResult $Results $section 'Shared activation configuration' UNVERIFIED 'Shared target enabled/runnerAdmissionReady controls are inspected from protected .clc/release.json when available; legacy Actions activation variables do not establish this route.' 'Verify protected shared routing and independent host authorization; the diagnostic never enables either.'
+function Get-ClcDeploymentPrerequisiteRoutingChecks {
+    param($Config,$Deployment,$Assessment)
+    $action='Correct the protected application/channel/target/environment/group/label route; never infer Test or production authority from DEV or ASP.NET runtimeEnvironment.'
+    if ($Assessment.shared) {
+        $record=$Assessment.configuration
+        if ($null -eq $record -or -not $Assessment.identityEstablished) {
+            foreach ($id in @('target','channel')) {New-ClcDeploymentPrerequisiteCheck "github.routing.$id" SKIPPED 'Protected shared configuration and identity were not established.' $action -Reason 'github.workflow.shared-identity' -Name "Protected $id routing"}
+            return
+        }
+        $targets=@($record['targets'] | Where-Object {$_['channel'] -ceq $Config.DeploymentChannel})
+        $bad=$targets.Count -ne 1
+        if (-not $bad) {
+            $route=$targets[0]
+            $bad=$route['targetId'] -cne $Config.TargetId -or $route['environment'] -cne $Config.EnvironmentName -or
+                $route['runnerGroup'] -cne $Config.RunnerGroup -or $route['runnerLabels'] -isnot [array] -or
+                (@($route['runnerLabels'] | Sort-Object -CaseSensitive) -join ',') -cne (@($Config.RunnerLabels.Split(',') | Sort-Object -CaseSensitive) -join ',') -or
+                $route['enabled'] -isnot [bool] -or $route['runnerAdmissionReady'] -isnot [bool]
+        }
+        $definition=$Assessment.definition
+        $routing=$null -ne $definition -and $definition['jobs'] -is [Collections.IDictionary] -and $definition['jobs']['deploy'] -is [Collections.IDictionary]
+        if ($routing) {
+            $job=$definition['jobs']['deploy']
+            $routing=$job['runs-on'] -is [Collections.IDictionary] -and $job['runs-on']['group'] -ceq '${{ needs.admit.outputs.runner-group }}' -and
+                $job['runs-on']['labels'] -ceq '${{ fromJSON(needs.admit.outputs.runner-labels) }}' -and $job['environment'] -ceq '${{ needs.admit.outputs.environment }}'
+        }
+        $status=if ($bad) {'FAIL'} elseif ($null -eq $definition) {'SKIPPED'} elseif (-not $routing) {'FAIL'} else {'PASS'}
+        New-ClcDeploymentPrerequisiteCheck 'github.routing.target' $status 'The protected route and actual shared deployment job group/labels/environment expressions were compared with the selected target.' $action -Reason 'shared-definition' -Name 'Protected deployment routing'
+        $policy=$record['sourcePolicy']
+        $valid=$policy -is [Collections.IDictionary] -and $policy['allowSnapshots'] -is [bool] -and $policy['allowUnmergedDevTags'] -is [bool] -and $policy['allowTestTags'] -is [bool]
+        $separate=@($record['targets'] | Where-Object {$_['channel'] -cne $Config.DeploymentChannel -and ($_.targetId -ceq $Config.TargetId -or $_.environment -ceq $Config.EnvironmentName -or $_.runnerGroup -ceq $Config.RunnerGroup)})
+        $status=if (-not $valid -or $separate.Count -or ($Config.DeploymentChannel -ceq 'Test' -and -not $policy['allowTestTags'])) {'FAIL'} else {'PASS'}
+        New-ClcDeploymentPrerequisiteCheck 'github.routing.channel' $status 'Source-policy flags and explicit independent channel routing were inspected; Test requires allowTestTags=true and its own target/environment/runner scope.' $action -Name 'Channel authority scope'
+        if (-not $bad) {
+            New-ClcDeploymentPrerequisiteCheck 'github.routing.activation' $(if ($route['enabled'] -and $route['runnerAdmissionReady']) {'PASS'} else {'UNVERIFIED'}) 'Protected activation and runnerAdmissionReady are indicators only; disabled indicators are a pending activation step after commissioning.' 'Have infrastructure enable the reviewed target route when independently authorized to proceed.' -Name 'Pending target activation'
+        }
     } else {
-        $status='UNVERIFIED'; $detail='The calling Actions configuration-variable observation is unavailable.'
-        switch -CaseSensitive ($Config.ActivationState) {
-            enabled { $status='PASS'; $detail='Configured and enabled in repository/organization Actions context. This is an indicator, never authorization.' }
-            disabled { $status='FAIL'; $detail='Configured but intentionally disabled; activation requires independent authorization.' }
-            missing-or-empty { $status='FAIL'; $detail='The activation variable is missing or empty in the calling Actions context.' }
-            invalid { $status='FAIL'; $detail='The activation variable must compare as true or false in the Actions context; its value is not disclosed.' }
-        }
-        Add-DpResult $Results $section 'Activation indicator' $status $detail $(if ($status -cne 'PASS') { $action })
-        $encoded=[uri]::EscapeDataString($Config.EnvironmentName)
-        $variables=Get-DpCollection "/repos/$($Config.Repository)/environments/$encoded/variables" 'variables' -PageSize 30
-        if (-not $variables.ok) { Add-DpResult $Results $section 'Environment activation override' UNVERIFIED $variables.reason 'Inspect environment Actions variables for conflicting activation values; pre-job admission must use repository/organization variables.' }
-        else {
-            $override=@($variables.data | Where-Object { $_['name'] -ceq $Config.ActivationVariable })
-            if ($override.Count) { Add-DpResult $Results $section 'Environment activation override' FAIL 'An environment-scoped activation value conflicts with the repository/organization-only admission contract.' 'Remove the conflicting scope through independently reviewed configuration; use repository/organization activation for pre-job admission.' }
-            else { Add-DpResult $Results $section 'Environment activation override' PASS 'No environment-scoped override of the selected activation variable was observed.' }
-        }
-    }
-    if ($null -ne $Deployment) {
-        $jobs=@($Deployment['jobs'].Values)
-        $direct=@($jobs | Where-Object { $_ -is [Collections.IDictionary] -and $_['runs-on'] -is [Collections.IDictionary] -and $_['runs-on']['group'] -ceq $Config.RunnerGroup })
-        $bound=@($direct | Where-Object {
-            $envName=if ($_['environment'] -is [Collections.IDictionary]) { $_['environment']['name'] } else { $_['environment'] }
-            $envName -ceq $Config.EnvironmentName
+        $jobs=if ($null -ne $Deployment) {@($Deployment['jobs'].Values)} else {@()}
+        $bound=@($jobs | Where-Object {
+            $job=$_;$envName=if ($job['environment'] -is [Collections.IDictionary]) {$job['environment']['name']} else {$job['environment']}
+            $on=$job['runs-on']
+            $on -is [Collections.IDictionary] -and $on['group'] -ceq $Config.RunnerGroup -and $envName -ceq $Config.EnvironmentName -and
+                @($Config.RunnerLabels.Split(',') | Where-Object {@($on['labels']) -cnotcontains $_}).Count -eq 0
         })
-        if ($bound.Count -gt 0) { Add-DpResult $Results $section 'Privileged job environment binding' PASS 'A job selecting the exact expected runner group also names the exact environment.' }
-        else { Add-DpResult $Results $section 'Privileged job environment binding' UNVERIFIED 'Static group/environment binding was not found; expressions or reusable jobs require review.' 'Verify that every privileged job directly selects the intended group/labels and environment, including reusable job definitions.' }
+        New-ClcDeploymentPrerequisiteCheck 'github.routing.target' $(if ($null -eq $Deployment) {'SKIPPED'} elseif ($bound.Count -eq 1) {'PASS'} else {'UNVERIFIED'}) 'The direct job group, labels and environment were inspected.' $action -Reason 'github.workflow.caller' -Name 'Direct deployment routing'
+        New-ClcDeploymentPrerequisiteCheck 'github.routing.channel' UNVERIFIED 'A legacy direct caller has no protected shared channel-policy record for this application and target.' 'Inspect the protected direct workflow channel authority or adopt the explicit protected shared route.' -Name 'Channel authority scope'
+        New-ClcDeploymentPrerequisiteCheck 'github.routing.activation' $(if ($Config.ActivationState -ceq 'enabled') {'PASS'} else {'UNVERIFIED'}) 'The repository activation indicator was observed; missing or disabled activation is a pending commissioning step and never independent authority.' 'Configure and enable activation through the independently authorized infrastructure process.' -Name 'Pending target activation'
     }
-    if ($Config.DeploymentChannel -ceq 'Production') {
-        Add-DpResult $Results $section 'Explicit production gate' UNVERIFIED 'Production opt-in and its relationship to the chosen environment/runner protection cannot be proved by a variable or YAML token match.' 'Infrastructure must review the production-only opt-in guard and independently enforced protection; this validator never enables production.'
-    }
-    Add-DpResult $Results $section 'DEV and production separation' UNVERIFIED 'The selected environment and channel are explicit; separation of approvals, standing scope, activation and every other workflow requires semantic review.' 'Independently review DEV/production environments, activation variables, host targets and standing policies; never derive channel from ASP.NET runtimeEnvironment.'
 }
 
-function Get-DpToolkitResults {
-    param($Config, $Results, $Release, $Deployment)
-    # GitHub observations never verify installed toolkit bytes or protected standing authority.
-    $section='Host and toolkit'
-    $uses=@()
-    foreach ($workflow in @($Release,$Deployment)) {
-        if ($null -eq $workflow) { continue }
-        foreach ($job in $workflow['jobs'].Values) {
-            if ($job['uses']) { $uses += [string]$job['uses'] }
-            foreach ($step in @($job['steps'])) { if ($null -ne $step -and $step['uses']) { $uses += [string]$step['uses'] } }
-        }
-    }
-    $references=@($uses | Where-Object { $_ -clike 'clcdpc/clc-deployment/*' })
-    if (@($references | Where-Object { $_ -cmatch '^clcdpc/clc-deployment/.+@[0-9a-f]{40}$' }).Count) {
-        Add-DpResult $Results $section 'Shared toolkit workflow pin' PASS 'An immutable shared-toolkit uses reference was observed; this proves the reference only.'
-    } else { Add-DpResult $Results $section 'Shared toolkit workflow pin' UNVERIFIED 'No direct immutable shared-toolkit uses reference was observed; installed-toolkit and script-based integration require review.' 'Review exact toolkit source/distribution pins and shared-toolkit calls in trusted workflow/helpers against docs/verified-workflow-integration.md; do not bundle an independent deployment engine.' }
-    foreach ($item in @(
-        @('Shared toolkit execution model','Verify that trusted deployment invokes the independently installed shared toolkit and preserves its security checks; references/comments alone are insufficient.'),
-        @('Compatible toolkit installation','Infrastructure must authenticate and install a compatible exact source/distribution pin before activation; see docs/installation.md.'),
-        @('IIS target enrollment','Infrastructure must verify the exact target enrollment under separate authority; see docs/host-enrollment.md.'),
-        @('Initial successful deployment baseline','Retain a separately authorized successful consumer baseline before routine activation; see docs/iis-verification.md.'),
-        @('Standing authorization','Infrastructure must independently provision and verify protected standing authorization under docs/automated-deployments.md; do not infer it from activation variables.'),
-        @('Runtime identity and host permissions','Verify actual independent runtime identity and effective protected-resource write isolation on the host.'),
-        @('Application configuration and Data Protection','Application and infrastructure owners must qualify external configuration, key paths and compatibility without disclosing private contents.'),
-        @('Host readiness and recovery qualification','Complete separately scoped real-host readiness/deployment/recovery qualification; actual Server 2022/IIS qualification remains NOT RUN.')
-    )) { Add-DpResult $Results $section $item[0] UNVERIFIED 'No independently trusted host qualification evidence is available to this hosted diagnostic.' $item[1] }
-}
-
-function Complete-DpReport {
-    param($Config, $Results, [string] $Commit = '')
-    $passed=@($Results | Where-Object status -CEQ PASS).Count
-    $failed=@($Results | Where-Object status -CEQ FAIL).Count
-    $unverified=@($Results | Where-Object status -CEQ UNVERIFIED).Count
-    $github=Get-DpCategoryStatus @($Results | Where-Object category -CEQ github)
-    $hostStatus=Get-DpCategoryStatus @($Results | Where-Object category -CEQ host)
-    $ready=$github -ceq 'PASS' -and $hostStatus -ceq 'PASS'
-    [pscustomobject]@{ contract_version=2; repository=$Config.Repository; channel=$Config.DeploymentChannel; environment=$Config.EnvironmentName;
-        application=$(if ($Config.ContainsKey('ApplicationId')) {$Config.ApplicationId} else {''}); target=$(if ($Config.ContainsKey('TargetId')) {$Config.TargetId} else {''});
-        observed_commit=$Commit; github_status=$github; host_status=$hostStatus; overall_ready=$ready; ready=$ready; passed_count=$passed; failed_count=$failed; unverified_count=$unverified; exit_code=$(if ($Config.Strict -and -not $ready) { 1 } else { 0 }); results=$Results.ToArray() }
-}
-
-function Set-DpAuthentication {
-    param($Client, [ValidateSet('Standard','Administrative')][string] $Mode='Standard')
+function Set-ClcDeploymentPrerequisiteAuthentication {
+    param($Client,[ValidateSet('Standard','Administrative')][string] $Mode='Standard')
     $token=if ($Mode -ceq 'Administrative') {$env:CLC_GITHUB_INSPECTION_TOKEN} else {$env:GH_TOKEN}
-    if ($Mode -ceq 'Administrative' -and -not $token) { throw 'Administrative inspection requires the explicitly supplied read-only installation token.' }
-    if ($token) { $Client.DefaultRequestHeaders.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$token) }
+    if ($Mode -ceq 'Administrative' -and -not $token) {throw 'Administrative inspection requires the explicitly supplied read-only installation token.'}
+    if ($token) {$Client.DefaultRequestHeaders.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$token)}
 }
 
-function Invoke-DpSection {
-    param($Results, [string] $Section, [scriptblock] $Check)
-    try { & $Check }
-    catch { Add-DpResult $Results $Section 'Incomplete configuration observation' UNVERIFIED 'An unexpected or incomplete API/configuration shape prevented this section from completing; private response details were suppressed.' 'Retry validation; if reproducible, review the API schema and validator support before activation.' }
-}
-
-function Invoke-DpValidation {
+function Invoke-ClcDeploymentPrerequisiteGitHubInspection {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][hashtable] $Config, [Parameter(Mandatory)][string] $YamlAssemblyPath,
+    param([Parameter(Mandatory)][hashtable] $Config,[Parameter(Mandatory)][string] $YamlAssemblyPath,
         [ValidateSet('Standard','Administrative')][string] $AuthenticationMode='Standard')
-    Test-DpInputs $Config
+    Test-ClcDeploymentPrerequisiteInputs $Config
     $lock=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'dependencies.lock.json') -Raw | ConvertFrom-Json -AsHashtable
-    if ((Get-FileHash -LiteralPath $YamlAssemblyPath).Hash.ToLowerInvariant() -cne $lock.yamlDotNet.assemblySha256) { throw 'Untrusted YAML parser assembly.' }
+    if ((Get-FileHash -LiteralPath $YamlAssemblyPath).Hash.ToLowerInvariant() -cne $lock.yamlDotNet.assemblySha256) {throw 'Untrusted YAML parser assembly.'}
     Add-Type -LiteralPath $YamlAssemblyPath
-    $results=[Collections.Generic.List[object]]::new()
-    $script:Requests=0; $script:Timer=[Diagnostics.Stopwatch]::StartNew()
-    $handler=[Net.Http.HttpClientHandler]::new(); $handler.AllowAutoRedirect=$false
-    $script:Client=[Net.Http.HttpClient]::new($handler)
-    $script:Client.Timeout=[TimeSpan]::FromSeconds(20)
-    $script:Client.MaxResponseContentBufferSize=4194304
-    $script:Client.DefaultRequestHeaders.UserAgent.ParseAdd('CLC-Deployment-Prerequisites/1')
-    $script:Client.DefaultRequestHeaders.Accept.ParseAdd('application/vnd.github+json')
-    $script:Client.DefaultRequestHeaders.Add('X-GitHub-Api-Version','2022-11-28')
-    $commit=''
+    $handler=[Net.Http.HttpClientHandler]::new();$handler.AllowAutoRedirect=$false
+    $context=@{client=[Net.Http.HttpClient]::new($handler);requests=0;timer=[Diagnostics.Stopwatch]::StartNew();authenticationMode=$AuthenticationMode}
+    $context.client.Timeout=[TimeSpan]::FromSeconds(20);$context.client.MaxResponseContentBufferSize=4194304
+    $context.client.DefaultRequestHeaders.UserAgent.ParseAdd('CLC-Deployment-Prerequisites/3')
+    $context.client.DefaultRequestHeaders.Accept.ParseAdd('application/vnd.github+json')
+    $context.client.DefaultRequestHeaders.Add('X-GitHub-Api-Version','2022-11-28')
+    $rows=[Collections.Generic.List[object]]::new();$commit=''
     try {
-        Set-DpAuthentication $script:Client $AuthenticationMode
-        $repo=Get-DpApi "/repos/$($Config.Repository)"
-        # Use this observation only for the exact caller; never infer visibility from runner settings.
-        $repositoryVisibility=''
-        if ($repo.ok -and $repo.data -is [Collections.IDictionary] -and $repo.data['full_name'] -is [string] -and $repo.data['full_name'] -ieq $Config.Repository) {
+        Set-ClcDeploymentPrerequisiteAuthentication $context.client $AuthenticationMode
+        $repo=Get-ClcDeploymentPrerequisiteApi $context "/repos/$($Config.Repository)"
+        $source=$repo.ok -and $repo.data -is [Collections.IDictionary] -and $repo.data['full_name'] -is [string] -and $repo.data['full_name'] -ieq $Config.Repository
+        $rows.Add((New-ClcDeploymentPrerequisiteCheck 'github.repository.identity' $(if ($source) {'PASS'} elseif ($repo.ok) {'FAIL'} else {'UNVERIFIED'}) 'The GitHub repository API was inspected for the exact expected consumer identity.' 'Verify repository identity, contents/actions read permissions and API access; retry.' -Name 'Repository identity'))
+        $visibility=''
+        if ($source) {
             $data=$repo.data
             if ($data.Contains('visibility')) {
-                if ($data['visibility'] -is [string] -and $data['visibility'] -cin @('public','private')) {
-                    if (-not $data.Contains('private') -or ($data['private'] -is [bool] -and $data['private'] -eq ($data['visibility'] -ceq 'private'))) {
-                        $repositoryVisibility=$data['visibility']
-                    }
-                }
-            } elseif ($data['private'] -is [bool]) {
-                $repositoryVisibility=if ($data['private']) { 'private' } else { 'public' }
-            }
+                if ($data['visibility'] -is [string] -and $data['visibility'] -cin @('public','private') -and
+                    (-not $data.Contains('private') -or ($data['private'] -is [bool] -and $data['private'] -eq ($data['visibility'] -ceq 'private')))) {$visibility=$data['visibility']}
+            } elseif ($data['private'] -is [bool]) {$visibility=if ($data['private']) {'private'} else {'public'}}
         }
-        $branch=Get-DpApi "/repos/$($Config.Repository)/branches/$([uri]::EscapeDataString($Config.IntegrationBranch))"
-        $release=$null; $deployment=$null; $sharedObservation=@{identity=''}
-        if ($repo.ok -and $branch.ok -and $repo.data -is [Collections.IDictionary] -and $repo.data['full_name'] -ieq $Config.Repository -and $branch.data -is [Collections.IDictionary] -and $branch.data['commit'] -is [Collections.IDictionary] -and $branch.data['commit']['sha'] -cmatch '^[0-9a-f]{40}$') {
+        $branch=Get-ClcDeploymentPrerequisiteApi $context "/repos/$($Config.Repository)/branches/$([uri]::EscapeDataString($Config.IntegrationBranch))"
+        if ($source -and $branch.ok -and $branch.data['commit'] -is [Collections.IDictionary] -and $branch.data['commit']['sha'] -cmatch '^[a-f0-9]{40}$') {
             $commit=$branch.data['commit']['sha']
-            Invoke-DpSection $results 'Repository configuration' { Get-DpBranchResults $Config $results $branch.data }
-            Invoke-DpSection $results 'Repository configuration' { Get-DpTagResults $Config $results }
-            $release=Get-DpWorkflow $Config $results $Config.ReleaseWorkflow $commit 'Release'
-            $deployment=Get-DpWorkflow $Config $results $Config.DeploymentWorkflow $commit 'Deployment'
-            Invoke-DpSection $results 'Repository configuration' { Get-DpWorkflowResults $Config $results $release $deployment }
-            Invoke-DpSection $results 'Repository configuration' { $sharedObservation.identity=Get-DpSharedResults $Config $results $deployment $commit }
-        } else { Add-DpResult $results 'Repository configuration' 'Integration source inspection' UNVERIFIED 'Repository or integration branch identity could not be read reliably.' 'Verify contents: read and actions: read permissions, expected branch, repository access and API availability; retry.' }
-        Invoke-DpSection $results 'GitHub Environment' { Get-DpEnvironmentResults $Config $results }
-        Invoke-DpSection $results 'Deployment runner' { Get-DpRunnerResults $Config $results $repositoryVisibility $sharedObservation.identity }
-        Invoke-DpSection $results 'Deployment configuration' { Get-DpDeploymentResults $Config $results $deployment }
-        Invoke-DpSection $results 'Host and toolkit' { Get-DpToolkitResults $Config $results $release $deployment }
-        return Complete-DpReport $Config $results $commit
-    } finally { $script:Client.Dispose(); $handler.Dispose(); $script:Timer.Stop() }
-}
-
-function Format-DpSummary {
-    param([Parameter(Mandatory)] $Report)
-    $lines=[Collections.Generic.List[string]]::new()
-    $lines.Add("# Deployment prerequisites — $($Report.repository) / $($Report.channel)")
-    $lines.Add('')
-    $lines.Add("Environment: **$($Report.environment)**. Observed integration commit: ``$($Report.observed_commit)``.")
-    $lines.Add(''); $lines.Add("**GitHub configuration: $($Report.github_status)**")
-    $lines.Add(''); $lines.Add("**Host qualification: $($Report.host_status)**")
-    $lines.Add(''); $lines.Add("**Overall deployment readiness: $(if ($Report.ready) {'READY'} else {'NOT READY'})**")
-    foreach ($section in @($Report.results.section | Select-Object -Unique)) {
-        $lines.Add(''); $lines.Add("## $section"); $lines.Add('')
-        $lines.Add('| Result | Check | Evidence / next action |'); $lines.Add('| --- | --- | --- |')
-        foreach ($row in @($Report.results | Where-Object section -CEQ $section)) {
-            $detail=($row.detail + ' ' + $row.action).Trim().Replace('|','&#124;').Replace('<','&lt;').Replace('>','&gt;').Replace("`n",' ').Replace("`r",' ')
-            $lines.Add("| $($row.status) | $($row.name) | $detail |")
+            foreach ($row in @(Get-ClcDeploymentPrerequisiteBranchChecks $context $Config $branch.data)) {$rows.Add($row)}
+            $release=Get-ClcDeploymentPrerequisiteWorkflowObservation $context $Config $Config.ReleaseWorkflow $commit 'github.workflow.producer'
+            $deployment=Get-ClcDeploymentPrerequisiteWorkflowObservation $context $Config $Config.DeploymentWorkflow $commit 'github.workflow.caller'
+            $rows.Add($release.check);$rows.Add($deployment.check)
+            foreach ($row in @(Get-ClcDeploymentPrerequisiteWorkflowChecks $Config $release.workflow $deployment.workflow)) {$rows.Add($row)}
+            $shared=Get-ClcDeploymentPrerequisiteSharedWorkflowAssessment $context $Config $deployment.workflow $commit
+            foreach ($row in $shared.checks) {$rows.Add($row)}
+            foreach ($row in @(Get-ClcDeploymentPrerequisiteTagChecks $context $Config $shared.configuration)) {$rows.Add($row)}
+            foreach ($row in @(Get-ClcDeploymentPrerequisiteRoutingChecks $Config $deployment.workflow $shared)) {$rows.Add($row)}
+            foreach ($row in @(Get-ClcDeploymentPrerequisiteRunnerChecks $context $Config $visibility $shared)) {$rows.Add($row)}
+            foreach ($row in @(Get-ClcDeploymentPrerequisiteEnvironmentChecks $context $Config)) {$rows.Add($row)}
+        } else {
+            $rows.Add((New-ClcDeploymentPrerequisiteCheck 'github.branch.protection' $(if ($source -and $branch.code -eq 404) {'FAIL'} else {'UNVERIFIED'}) 'The configured integration branch identity could not be established.' 'Verify the configured integration branch exists and is readable.' -Name 'Integration source'))
+            $rows.Add((New-ClcDeploymentPrerequisiteCheck 'github.inspection' SKIPPED 'Protected source was not established; dependent GitHub inspections did not execute.' 'Correct repository/branch access and rerun.' -Reason 'github.repository.identity' -Name 'Dependent GitHub inspection'))
         }
-    }
-    $readiness=if ($Report.ready) { 'READY' } else { 'NOT READY' }
-    $lines.Add(''); $lines.Add("Passed: **$($Report.passed_count)** · Failed: **$($Report.failed_count)** · Unverified: **$($Report.unverified_count)**")
-    $lines.Add(''); $lines.Add("**Deployment readiness: $readiness**")
-    $lines.Add(''); $lines.Add('Required next actions are listed beside every FAIL / UNVERIFIED result. Activation is configuration, never authorization. This report cannot replace deployment-engine checks or authorize deployment.')
-    $lines.Add(''); $lines.Add("[Repository settings](https://github.com/$($Report.repository)/settings) · [Validator contract](https://github.com/clcdpc/clc-deployment/blob/master/docs/deployment-prerequisites.md)")
-    return $lines -join "`n"
+    } catch {
+        # Keep completed observations, including confirmed failures; suppress private error text.
+        $rows.Add((New-ClcDeploymentPrerequisiteCheck 'github.inspection' UNVERIFIED 'Unexpected or incomplete API/configuration data interrupted inspection; private details were suppressed.' 'Retry inspection; if reproducible, correct the unsupported observation or checker implementation.' -Reason 'inspection-error' -Name 'GitHub inspection completion'))
+    } finally {$context.client.Dispose();$handler.Dispose();$context.timer.Stop()}
+    New-ClcDeploymentPrerequisiteReport $Config $rows.ToArray() $commit
 }
 
-Export-ModuleMember -Function Invoke-DpValidation,Format-DpSummary,Add-DpResult,Complete-DpReport,Merge-DpReports,Publish-DpReport
+Export-ModuleMember -Function Stop-ClcDeploymentPrerequisiteObservation,Invoke-ClcDeploymentPrerequisiteGitHubInspection,New-ClcDeploymentPrerequisiteCheck,New-ClcDeploymentPrerequisiteReport,Merge-ClcDeploymentPrerequisiteReports,Publish-ClcDeploymentPrerequisiteReport,Format-ClcDeploymentPrerequisiteSummary,ConvertTo-ClcDeploymentPrerequisiteStageReport

@@ -1,35 +1,7 @@
-# Loaded only inside the independently authenticated installed CLC.Deployment module.
-# No public deployment commands, application validators or IIS lifecycle helpers are called.
-function Assert-DhRequirement {
-    param([bool] $Condition)
-    if (-not $Condition) { throw 'Dp.HostRequirementFailed' }
-}
+# Loaded only inside the independently authenticated installed module.
+. "$PSScriptRoot/Reporting.ps1"
 
-function Invoke-DhCheck {
-    param($Rows, [string] $Name, [scriptblock] $Read, [string] $Success)
-    $row=$Rows | Where-Object name -CEQ $Name
-    try {
-        $value=& $Read
-        $row.status='PASS'; $row.detail=$Success; $row.action=''
-        return $value
-    } catch {
-        # Access failures and unsupported effective-access observations are insufficient evidence.
-        # Never log exception text: native errors can contain configuration or identity values.
-        $row.status=if ($_.Exception.Message -ceq 'Dp.HostRequirementFailed' -or $_.FullyQualifiedErrorId -match '^Clc\.(InvalidContract|UnsupportedContract|ApprovalDisabled|ApprovalMismatch|ContentDrift|BackupInvalid)\b') {'FAIL'} else {'UNVERIFIED'}
-        $row.detail=if ($row.status -ceq 'FAIL') {'The observed resource is missing, invalid, disabled or inconsistent with the selected protected contract.'} else {'The read-only observation could not establish this requirement; access, unavailable dependencies or concurrent state may prevent inspection.'}
-        if ($row.status -ceq 'FAIL') {
-            switch -CaseSensitive ($Name) {
-                'Initial successful deployment baseline' { $row.detail='Initial baseline missing: clean observed state has no successful current record; standing deployment cannot initialize it.' }
-                'Host readiness and recovery qualification' { $row.detail='Recovery required: the existing state/terminal/helper reader rejected routine clean-state admission.' }
-                'Pending admission' { $row.detail='An unresolved target admission intent exists; ordinary standing admission is blocked.' }
-                'Inspected machine binding' { $row.detail='The actual inspected local machine UUID does not match protected host enrollment.' }
-            }
-        }
-        return $null
-    }
-}
-
-function Open-DhExistingLock {
+function Open-ClcDeploymentPrerequisiteExistingLock {
     param($Context, $TargetFile, $Identity)
     # FileMode.Open is essential: diagnostics must never create the mutation lock.
     $stream=$null
@@ -41,10 +13,16 @@ function Open-DhExistingLock {
         Assert-ClcNoNamedStreams $Identity.lockPath
         Assert-ClcPathAccess $Context $Identity.lockPath $TargetFile.record.runtimeIdentitySid Mutable
         return $lock
+    } catch [IO.FileNotFoundException] {
+        if ($null -ne $stream) {$stream.Dispose()}
+        Stop-ClcDeploymentPrerequisiteObservation 'FAIL' 'The enrolled canonical lock file is missing; diagnostics never create it.'
+    } catch [IO.DirectoryNotFoundException] {
+        if ($null -ne $stream) {$stream.Dispose()}
+        Stop-ClcDeploymentPrerequisiteObservation 'FAIL' 'The enrolled canonical lock directory is missing.'
     } catch { if ($null -ne $stream) {$stream.Dispose()}; throw }
 }
 
-function Get-DhIisPresence {
+function Get-ClcDeploymentPrerequisiteIisPresence {
     param($Context, $Target)
     $manager=$null
     try {
@@ -60,185 +38,235 @@ function Get-DhIisPresence {
     } finally { if ($null -ne $manager) {$manager.Dispose()} }
 }
 
-function Read-DhStanding {
+function Read-ClcDeploymentPrerequisiteStanding {
     param($Context, $Target, [string] $Id)
     $root=Join-Path $Context.layout.approvalCatalogRoot 'standing'
     $path=Join-Path $root ($Id+'.json')
-    Assert-DhRequirement (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction Stop)
+    Confirm-ClcDeploymentPrerequisiteRequirement (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction Stop)
     foreach ($item in @($root,$path)) { $null=Add-ClcProtectedPathPin $Context $item -Directory:($item -ceq $root) -RuntimeSid $Target.runtimeIdentitySid }
     $file=Read-ClcHeldRecord $path standing-authorization $Context.handles
     $s=$file.record; $p=$Context.policyFile.record
     # The engine intentionally collapses access/parse/revocation errors into one
     # rejection. Establish observable failures before its final read so denied
     # effective-access evidence is never misreported as a proven revocation.
-    Assert-DhRequirement ($s.enabled -and $s.standingAuthorizationId -ceq $Id -and $s.targetId -ceq $Target.targetId -and
+    Confirm-ClcDeploymentPrerequisiteRequirement ($s.enabled -and $s.standingAuthorizationId -ceq $Id -and $s.targetId -ceq $Target.targetId -and
         $s.applicationId -ceq $Target.applicationId -and $s.environmentName -ceq $Target.environmentName -and
         $p.infrastructureOwnerSids -ccontains $s.authorization.authoritySid -and $p.deploymentSids -cnotcontains $s.authorization.authoritySid)
     Read-ClcStandingAuthorization $Context $Target $Id
 }
 
-function Invoke-DhQualification {
-    param([hashtable] $Config)
-    $rows=[Collections.Generic.List[object]]::new()
-    $checks=[ordered]@{
-        'Compatible toolkit installation'='Infrastructure: authenticate first import, install the reviewed contract-compatible toolkit and verify its active source/distribution/inventory pin. Do not upgrade through diagnostics.'
-        'Authorized inspection identity'='Run under the exact policy-admitted deployment SID with its enabled elevated administrator token; never self-elevate.'
-        'Inspected machine binding'='Run locally on the enrolled IIS machine. If the runner is elsewhere, use a separately authorized existing read-only inspection channel; no remoting is provided here.'
-        'IIS target enrollment'='Infrastructure: independently enroll this exact application/environment/target; inspect the protected target and host policy without rewriting them.'
-        'IIS site and pool configuration'='Infrastructure: inspect the dedicated sole root application, physical path, pool identity and one-worker settings against the enrolled target.'
-        'IIS site and pool presence'='Infrastructure: independently provision the exact enrolled dedicated IIS site and pool; diagnostics never create them.'
-        'Runtime identity and host permissions'='Infrastructure: establish separate nonadministrator runtime identity and effective protected-resource write isolation, including group and ancestor authority.'
-        'Hosting components and runtime'='Infrastructure: independently install supported Windows Server 2022, x64 PowerShell 7, IIS/ANCM and .NET/ASP.NET Core 10 runtimes.'
-        'Enrolled readiness and runtime environment'='Infrastructure: inspect the enrolled HTTPS readiness host/binding and runtime environment; application owners must separately qualify functional readiness.'
-        'Application configuration and Data Protection'='Infrastructure/application owners: verify the enrolled external configuration, key directory, paths and effective ACLs without exposing contents; qualify semantics separately.'
-        'Standing authorization'='Infrastructure: independently provision or review the exact enabled protected standing policy; diagnostics cannot create, enable or renew it.'
-        'Standing repository workflow and channel scope'='Review the standing application/environment/channel/repository/build-workflow/build-job scope against this trusted selection; keep DEV and production separate.'
-        'Canonical deployment state access'='Fence concurrent deployment, inspect the existing canonical machine/pool lock and state permissions, then rerun; never delete or create a lock to make this check pass.'
-        'Pending admission'='Infrastructure: inspect retained admission intent and complete separately authorized reconciliation; never clear pending records through diagnostics.'
-        'Host readiness and recovery qualification'='Operator: preserve journal/current/terminal/helper evidence and follow separately authorized recovery when required; no automatic reconciliation is performed.'
-        'Initial successful deployment baseline'='Complete a separately authorized initial consumer baseline and retain its successful current/terminal/approval records before routine standing deployment.'
-        'Standing lineage compatibility'='Infrastructure: verify standing lineage against the successful current baseline; authorize lineage changes independently.'
-        'Current release and retained approval'='Operator: retain valid enabled exact approval and approval-pinned manifest with matching current release identity; restore missing evidence only under independent authority.'
-        'Current installed release bytes'='Operator: inspect file drift against the approval-pinned retained inventory; preserve unexpected files and use separately authorized recovery.'
-        'Retained recovery material'='Operator: retain and verify the latest journal-selected backup/index when present. Diagnostics never create, restore or remove recovery material.'
-        'Stable final observation'='Freeze competing trusted writers and rerun the diagnostic after investigating target, policy, IIS or state drift.'
+function Confirm-ClcDeploymentPrerequisiteRequirement {
+    param([bool] $Condition,[string] $Detail='The observed prerequisite is missing or inconsistent with the enrolled configuration.')
+    if (-not $Condition) {Stop-ClcDeploymentPrerequisiteObservation FAIL $Detail}
+}
+
+function Get-ClcDeploymentPrerequisiteHostObservation {
+    param([string] $Id,[scriptblock] $Read,[string] $Success,[string] $Action,[bool] $CanInspect=$true,[string] $Prerequisite='')
+    if (-not $CanInspect) {
+        return @{established=$false;value=$null;check=(New-ClcDeploymentPrerequisiteCheck $Id SKIPPED "The prerequisite $Prerequisite was not established; this check did not execute." $Action -Reason $Prerequisite)}
     }
-    foreach ($entry in $checks.GetEnumerator()) {
-        $rows.Add([pscustomobject]@{category='host';section='Host qualification';name=$entry.Key;status='UNVERIFIED';detail='A prerequisite observation was unavailable; this check was not established.';action=$entry.Value})
-    }
-    $context=$null; $lock=$null
     try {
-        $context=Invoke-DhCheck $rows 'Compatible toolkit installation' {
-            foreach ($command in @('Open-ClcTrustedContext','Read-ClcStandingAuthorization','Read-ClcApprovedManifest','Get-ClcReconciliationDecision','Get-ClcHostPreflight')) {
-                Assert-DhRequirement ($null -ne (Get-Command $command -ErrorAction SilentlyContinue))
+        $value=& $Read
+        @{established=$true;value=$value;check=(New-ClcDeploymentPrerequisiteCheck $Id PASS $Success)}
+    } catch {
+        $status='UNVERIFIED';$detail='The read-only observation was attempted but could not establish this requirement; permissions, unavailable native evidence or concurrent changes may prevent inspection.'
+        if ($_.Exception.Data.Contains('prerequisite_status')) {
+            $status=$_.Exception.Data['prerequisite_status'];$detail=$_.Exception.Data['prerequisite_detail']
+        }
+        @{established=$false;value=$null;check=(New-ClcDeploymentPrerequisiteCheck $Id $status $detail $Action)}
+    }
+}
+
+function Get-ClcDeploymentPrerequisiteSkippedHostChecks {
+    param([string[]] $Ids,[string] $Prerequisite)
+    foreach ($id in $Ids) {
+        New-ClcDeploymentPrerequisiteCheck $id SKIPPED "The prerequisite $Prerequisite was not established; this check did not execute." 'Correct the prerequisite and rerun the read-only host inspection.' -Reason $Prerequisite
+    }
+}
+
+function Invoke-ClcDeploymentPrerequisiteHostInspection {
+    param([hashtable] $Config)
+    $rows=[Collections.Generic.List[object]]::new();$context=$null;$lock=$null
+    try {
+        $toolkit=Get-ClcDeploymentPrerequisiteHostObservation 'host.toolkit.authentication' {
+            foreach ($command in @('Open-ClcTrustedContext','Read-ClcStandingAuthorization','Read-ClcApprovedManifest','Get-ClcReconciliationDecision','Get-ClcHostPreflight','Get-ClcEmptyBaselineEligibility')) {
+                Confirm-ClcDeploymentPrerequisiteRequirement ($null -ne (Get-Command $command -ErrorAction SilentlyContinue)) 'The authenticated installed toolkit lacks a required compatible host/state reader.'
             }
             Open-ClcTrustedContext
-        } 'The installed version supports the current standing/state/preflight readers; active toolkit version, source, distribution, inventory, protected policy and dependencies were validated.'
-        if ($null -eq $context) { return ,$rows }
-        $pin=$context.executingToolkit
-        ($rows | Where-Object name -CEQ 'Compatible toolkit installation').detail += " Executing toolkit: $($pin.version); source: $($pin.sourceCommit); distribution SHA-256: $($pin.distributionSha256); inventory SHA-256: $($pin.inventorySha256)."
-        $null=Invoke-DhCheck $rows 'Authorized inspection identity' { Assert-ClcDeploymentToken $context.policyFile.record } 'The exact admitted deployment SID has an enabled elevated administrator token. Approval independence remains procedural.'
-        $machine=Invoke-DhCheck $rows 'Inspected machine binding' {
-            $observed=@(Get-ClcMachineUuidObservation)
-            $uuid=[guid]::Empty
-            if ($observed.Count -ne 1 -or $observed[0] -isnot [string] -or
-                -not [guid]::TryParseExact($observed[0],'D',[ref]$uuid) -or $uuid -eq [guid]::Empty -or
-                $uuid.ToString('D') -ceq 'ffffffff-ffff-ffff-ffff-ffffffffffff') { throw 'Unavailable canonical local machine identity' }
-            Assert-DhRequirement ($uuid.ToString('D') -ceq $context.policyFile.record.machineIdentity)
+        } 'Independent bootstrap authentication preceded import; installed policy/source/distribution/inventory and compatible readers were revalidated.' 'Install and independently authenticate a compatible exact toolkit distribution under infrastructure authority.'
+        $rows.Add($toolkit.check);$context=$toolkit.value
+        if ($toolkit.established) {$toolkit.check.detail+=" Executing toolkit: $($context.executingToolkit.version); source: $($context.executingToolkit.sourceCommit)."}
+        if (-not $toolkit.established) {
+            foreach ($row in @(Get-ClcDeploymentPrerequisiteSkippedHostChecks @('host.identity.permissions','host.machine.binding','host.target.enrollment','host.iis.configuration','host.state.lock') 'host.toolkit.authentication')) {$rows.Add($row)}
+            return $rows.ToArray()
+        }
+        $token=Get-ClcDeploymentPrerequisiteHostObservation 'host.identity.permissions' {
+            $p=$context.policyFile.record;$caller=Get-ClcCallerSid
+            Confirm-ClcDeploymentPrerequisiteRequirement ($p.deploymentSids -ccontains $caller -and (Test-ClcAdministratorToken)) 'Inspection requires the exact admitted deployment SID and an enabled elevated administrator token.'
+            Assert-ClcDeploymentToken $p
+        } 'The inspection identity is admitted and elevated. Infrastructure approval independence remains procedural against this administrator.' 'Run under the policy-admitted deployment identity with its enabled elevated token; diagnostics never self-elevate.'
+        $rows.Add($token.check)
+        $machine=Get-ClcDeploymentPrerequisiteHostObservation 'host.machine.binding' {
+            $observed=@(Get-ClcMachineUuidObservation);$uuid=[guid]::Empty
+            if ($observed.Count -ne 1 -or $observed[0] -isnot [string] -or -not [guid]::TryParseExact($observed[0],'D',[ref]$uuid) -or $uuid -eq [guid]::Empty -or $uuid.ToString('D') -ceq 'ffffffff-ffff-ffff-ffff-ffffffffffff') {
+                Stop-ClcDeploymentPrerequisiteObservation UNVERIFIED 'A canonical actual local SMBIOS machine identity could not be observed.'
+            }
+            Confirm-ClcDeploymentPrerequisiteRequirement ($uuid.ToString('D') -ceq $context.policyFile.record.machineIdentity) 'The actual inspected machine UUID differs from protected enrollment.'
             Get-ClcMachineIdentity $context.policyFile.record.machineIdentity
-        } 'The actual local SMBIOS machine UUID matches protected IIS host enrollment; runner location was not inferred from labels.'
-        if ($null -eq $machine) { return ,$rows }
-        $targetFile=Invoke-DhCheck $rows 'IIS target enrollment' {
-            $file=Read-ClcProtectedTarget $context $Config.TargetId
-            Assert-DhRequirement ($file.record.applicationId -ceq $Config.ApplicationId -and $file.record.environmentName -ceq $Config.EnvironmentName)
+        } 'Actual local machine identity matches protected enrollment; runner labels were not used as host evidence.' 'Run on the enrolled machine and reconcile any incorrect machine binding through infrastructure.' $token.established 'host.identity.permissions'
+        $rows.Add($machine.check)
+        if (-not $machine.established) {
+            foreach ($row in @(Get-ClcDeploymentPrerequisiteSkippedHostChecks @('host.target.enrollment','host.iis.configuration','host.runtime.compatibility','host.state.lock') 'host.machine.binding')) {$rows.Add($row)}
+            return $rows.ToArray()
+        }
+        $enrollment=Get-ClcDeploymentPrerequisiteHostObservation 'host.target.enrollment' {
+            $path=Join-Path $context.layout.targetCatalogRoot ($Config.TargetId+'.json')
+            Confirm-ClcDeploymentPrerequisiteRequirement (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction Stop) 'The exact target record is missing from the protected enrollment catalog.'
+            try {$file=Read-ClcProtectedTarget $context $Config.TargetId} catch {
+                # A malformed protected record is a configuration defect; unavailable access remains inconclusive.
+                if ($_.FullyQualifiedErrorId -like 'Clc.InvalidContract*' -or $_.FullyQualifiedErrorId -like 'Clc.UnsupportedContract*') {Stop-ClcDeploymentPrerequisiteObservation FAIL 'The protected target record has an invalid or unsupported contract.'}
+                throw
+            }
+            Confirm-ClcDeploymentPrerequisiteRequirement ($file.record.targetId -ceq $Config.TargetId -and $file.record.applicationId -ceq $Config.ApplicationId -and $file.record.environmentName -ceq $Config.EnvironmentName) 'Protected target application/environment/target bindings disagree with this inspection.'
             $file
-        } 'The protected target is valid and matches the explicit application, environment and target selection.'
-        if ($null -eq $targetFile) { return ,$rows }
-        $target=$targetFile.record
-        $presence=Invoke-DhCheck $rows 'IIS site and pool presence' {
-            $value=Get-DhIisPresence $context $target
-            Assert-DhRequirement ($value.siteCount -eq 1 -and $value.poolCount -eq 1)
+        } 'The exact protected target and application/environment bindings are valid.' 'Independently enroll or reconcile this exact target; diagnostics never create or repair enrollment.'
+        $rows.Add($enrollment.check)
+        if (-not $enrollment.established) {
+            foreach ($row in @(Get-ClcDeploymentPrerequisiteSkippedHostChecks @('host.iis.configuration','host.runtime.compatibility','host.filesystem.permissions','host.state.lock') 'host.target.enrollment')) {$rows.Add($row)}
+            return $rows.ToArray()
+        }
+        $targetFile=$enrollment.value;$target=$targetFile.record
+        $presence=Get-ClcDeploymentPrerequisiteHostObservation 'host.iis.presence' {
+            $value=Get-ClcDeploymentPrerequisiteIisPresence $context $target
+            Confirm-ClcDeploymentPrerequisiteRequirement ($value.siteCount -eq 1 -and $value.poolCount -eq 1) 'The enrolled dedicated IIS site or application pool is missing or ambiguous.'
             $value
-        } 'A bounded read-only IIS enumeration found exactly the enrolled site and application pool.'
-        $iis=Invoke-DhCheck $rows 'IIS site and pool configuration' {
+        } 'Exactly the enrolled dedicated IIS site and pool exist.' 'Provision or reconcile the exact enrolled IIS site and pool through infrastructure; do not mutate them from diagnostics.'
+        $rows.Add($presence.check)
+        $iis=Get-ClcDeploymentPrerequisiteHostObservation 'host.iis.configuration' {
             $value=Get-ClcIisObservation $context $target
             $pool=Get-ClcCanonicalPoolName $target.applicationPoolName (Get-ClcIisPoolNames $context)
-            # This assertion compares already returned facts only; a rejection is
-            # a demonstrated mismatch, unlike an unavailable native observation.
-            try { Assert-ClcStableIisObservation $target $value $pool }
-            catch { if ($_.FullyQualifiedErrorId -like 'Clc.HostPreflightFailed*') { throw 'Dp.HostRequirementFailed' }; throw }
+            try {Assert-ClcStableIisObservation $target $value $pool} catch {
+                Stop-ClcDeploymentPrerequisiteObservation FAIL 'Returned IIS facts do not match the dedicated root application/path/runtime identity/one-worker/pool configuration.'
+            }
             $value
-        } 'Dedicated site/root application/pool, physical root, runtime SID, one-worker/x64/overlap settings and current pool/worker state match the target.'
-        if ($null -ne $iis) {
-            ($rows | Where-Object name -CEQ 'IIS site and pool configuration').detail += " Observed pool state: $($iis.poolState); workers: $($iis.workers.Count)."
-        }
-        $identity=Invoke-DhCheck $rows 'Application configuration and Data Protection' {
+        } 'Dedicated IIS root application/path/runtime SID, x64/one-worker/overlap settings and pool/worker state match enrollment.' 'Correct the observed IIS application/pool settings under separate infrastructure authority.' $presence.established 'host.iis.presence'
+        $rows.Add($iis.check)
+        $paths=Get-ClcDeploymentPrerequisiteHostObservation 'host.filesystem.permissions' {
             $value=Get-ClcTargetIdentity $context $targetFile
             Assert-ClcHostAccess $context $target $value
             foreach ($role in @(@{path=$target.applicationRoot;role='Mutable'},@{path=$target.artifactInboxRoot;role='Mutable'},@{path=[IO.Path]::GetDirectoryName($target.operationalConfigPath);role='Configuration'},@{path=$target.dataProtectionRoot;role='Keys'})) {
                 Assert-ClcSafeDescendants $role.path $context $target.runtimeIdentitySid $role.role
             }
             $value
-        } 'Enrolled disjoint physical directories/configuration file and effective application/configuration/key ACLs were verified without reading secret values or writing probe files. Application semantics require separate acceptance.'
-        $null=Invoke-DhCheck $rows 'Runtime identity and host permissions' {
+        } 'Disjoint physical directories/configuration/key paths and effective filesystem permissions were checked without exposing private configuration or writing probes.' 'Inspect enrolled directories, physical identities, protected configuration/key ACLs and effective deployment/runtime access.' $iis.established 'host.iis.configuration'
+        $rows.Add($paths.check);$identity=$paths.value
+        $runtimeIdentity=Get-ClcDeploymentPrerequisiteHostObservation 'host.identity.runtime' {
             Assert-ClcRuntimeIdentity $context $target.runtimeIdentitySid
-            if ($null -eq $identity) { throw 'Unavailable path/access observation' }
             Assert-ClcHostAccess $context $target $identity
-        } 'Existing Authz-backed checks establish runtime separation, structural infrastructure ACLs and effective protected-resource write isolation, including group/ancestor authority.'
-        $null=Invoke-DhCheck $rows 'Hosting components and runtime' {
-            if ($null -eq $presence) { throw 'Unavailable IIS module observation' }
-            Assert-DhRequirement ($presence.ancmCount -eq 1)
+        } 'Authz-backed readers checked distinct nonadministrator runtime identity, group-derived authority and effective protected-resource write isolation.' 'Reconcile runtime group membership and effective protected-resource permissions under infrastructure authority.' $paths.established 'host.filesystem.permissions'
+        $rows.Add($runtimeIdentity.check)
+        $runtime=Get-ClcDeploymentPrerequisiteHostObservation 'host.runtime.compatibility' {
+            Confirm-ClcDeploymentPrerequisiteRequirement ($presence.value.ancmCount -eq 1) 'Required IIS AspNetCoreModuleV2 is missing or ambiguous.'
             $platform=Get-ClcPlatformObservation
-            Assert-DhRequirement ($platform.build -ceq '20348' -and $platform.productType -in @(2,3) -and $platform.is64Bit -and $platform.powershellMajor -eq 7)
-            if ($null -eq $iis) { throw 'Unavailable IIS observation' }
-            $runtime=Get-ClcRuntimeObservation $context $iis.ancmPath $target.runtimeIdentitySid
-            Assert-DhRequirement ($runtime.ancmX64 -and $runtime.dotnetX64 -and $runtime.ancmMajor -eq 20)
+            Confirm-ClcDeploymentPrerequisiteRequirement ($platform.build -ceq '20348' -and $platform.productType -in @(2,3) -and $platform.is64Bit -and $platform.powershellMajor -eq 7) 'The observed platform is incompatible with Windows Server 2022 and x64 PowerShell 7.'
+            $value=Get-ClcRuntimeObservation $context $iis.value.ancmPath $target.runtimeIdentitySid
+            Confirm-ClcDeploymentPrerequisiteRequirement ($value.ancmX64 -and $value.dotnetX64 -and $value.ancmMajor -eq 20) 'The observed .NET/ANCM architecture or major version is incompatible.'
             foreach ($name in @('Microsoft.NETCore.App','Microsoft.AspNetCore.App')) {
-                Assert-DhRequirement (@($runtime.frameworks | Where-Object { $_.name -ceq $name -and $_.version -cmatch '^10\.0\.[0-9]+$' }).Count -gt 0)
+                Confirm-ClcDeploymentPrerequisiteRequirement (@($value.frameworks | Where-Object {$_.name -ceq $name -and $_.version -cmatch '^10\.0\.[0-9]+$'}).Count -gt 0) "The required $name 10.0 runtime was not observed."
             }
-        } 'Server 2022, x64 PowerShell 7, protected IIS/ANCM and both required .NET 10 shared frameworks were directly observed using the bounded runtime read query.'
-        $null=Invoke-DhCheck $rows 'Enrolled readiness and runtime environment' {
-            if ($null -eq $identity) { throw 'Unavailable target identity' }
+        } 'Supported Windows Server, x64 PowerShell, .NET/ASP.NET Core 10 and ANCM were observed using bounded infrastructure queries.' 'Independently install the supported Windows/IIS/PowerShell/.NET/ANCM components.' $iis.established 'host.iis.configuration'
+        $rows.Add($runtime.check)
+        $preflight=Get-ClcDeploymentPrerequisiteHostObservation 'host.iis.environment' {
             $facts=Get-ClcHostPreflight $context $targetFile $identity 'net10.0'
-            Assert-DhRequirement ($facts.poolState -cin @('Started','Stopped') -and $facts.workerCount -in @(0,1))
-        } 'Existing read-only preflight verifies the enrolled readiness HTTPS binding, runtime environment and relevant current IIS state. No endpoint request or application code was executed.'
-        $standing=Invoke-DhCheck $rows 'Standing authorization' { Read-DhStanding $context $target $Config.StandingAuthorizationId } 'The exact enabled standing policy has valid structure, protected paths/ACLs, independent infrastructure authority and matching target/application/environment.'
-        $null=Invoke-DhCheck $rows 'Standing repository workflow and channel scope' {
-            if ($null -eq $standing) { throw 'Unavailable standing policy' }
-            $s=$standing.record
-            Assert-DhRequirement ($s.channel -ceq $Config.DeploymentChannel -and $s.sourceRepository -ceq $Config.Repository -and $s.buildWorkflowPath -ceq $Config.ReleaseWorkflow -and $s.buildJob -ceq $Config.BuildJob)
-        } 'Standing channel/repository/build workflow/build job exactly match the trusted selection; runtime environment is not used to infer DEV or production.'
-        $null=Invoke-DhCheck $rows 'Pending admission' {
-            $pending=Join-Path $context.layout.approvalCatalogRoot ('standing\'+$target.targetId+'.pending')
-            Assert-DhRequirement (-not (Test-Path -LiteralPath $pending -ErrorAction Stop))
-        } 'No unresolved target admission intent is present.'
-        if ($null -eq $identity) { return ,$rows }
-        $lock=Invoke-DhCheck $rows 'Canonical deployment state access' { Open-DhExistingLock $context $targetFile $identity } 'The existing actual machine/pool lock is held exclusively with read-only access; canonical state can be inspected without creating or clearing locks.'
-        if ($null -eq $lock) { return ,$rows }
-        $decision=Invoke-DhCheck $rows 'Host readiness and recovery qualification' {
+            Confirm-ClcDeploymentPrerequisiteRequirement ($facts.poolState -cin @('Started','Stopped') -and $facts.workerCount -in @(0,1)) 'The observed pool/worker state is incompatible with deployment.'
+        } 'Read-only host preflight verified HTTPS binding, runtime environment and infrastructure state without invoking readiness or application code.' 'Inspect the enrolled HTTPS binding, pool environment and hosting configuration under infrastructure authority.' ($paths.established -and $runtime.established) 'host.filesystem.permissions/runtime.compatibility'
+        $rows.Add($preflight.check)
+        $standing=$null
+        if ($Config.StandingAuthorizationId) {
+            $policy=Get-ClcDeploymentPrerequisiteHostObservation 'host.standing.policy' {Read-ClcDeploymentPrerequisiteStanding $context $target $Config.StandingAuthorizationId} 'The selected optional standing policy is protected, enabled and bound to this target.' 'Reconcile the selected optional standing policy before routine automation; an independently approved initial deployment does not require it.'
+            $rows.Add($policy.check);$standing=$policy.value
+            $scope=Get-ClcDeploymentPrerequisiteHostObservation 'host.standing.scope' {
+                $s=$standing.record
+                Confirm-ClcDeploymentPrerequisiteRequirement ($s.channel -ceq $Config.DeploymentChannel -and $s.sourceRepository -ceq $Config.Repository -and $s.buildWorkflowPath -ceq $Config.ReleaseWorkflow -and $s.buildJob -ceq $Config.BuildJob) 'The selected optional standing policy channel/repository/producer scope differs from this inspection.'
+            } 'Optional standing policy matches the explicit channel, repository and producer.' 'Correct optional standing scope independently; DEV, Test and production remain separate.' $policy.established 'host.standing.policy'
+            $rows.Add($scope.check)
+        } else {
+            foreach ($id in @('host.standing.policy','host.standing.scope')) {$rows.Add((New-ClcDeploymentPrerequisiteCheck $id NOT_APPLICABLE 'No standing policy was selected; independently approved initial deployment does not require standing authority.' -Reason 'not-selected'))}
+        }
+        $lockResult=Get-ClcDeploymentPrerequisiteHostObservation 'host.state.lock' {Open-ClcDeploymentPrerequisiteExistingLock $context $targetFile $identity} 'The existing canonical machine/pool lock is held exclusively for read-only state inspection; it was not created or modified.' 'Fence concurrent deployment and inspect the existing canonical lock/path/permissions; missing enrollment lock infrastructure requires independent reconciliation.' $paths.established 'host.filesystem.permissions'
+        $rows.Add($lockResult.check);$lock=$lockResult.value
+        $pending=Get-ClcDeploymentPrerequisiteHostObservation 'host.state.pending-admission' {
+            $path=Join-Path $context.layout.approvalCatalogRoot ('standing\'+$target.targetId+'.pending')
+            Confirm-ClcDeploymentPrerequisiteRequirement (-not (Test-Path -LiteralPath $path -ErrorAction Stop)) 'An unresolved target admission intent blocks deployment; retain it for independent reconciliation.'
+        } 'No unresolved target pending-admission record exists.' 'Preserve pending evidence and complete separately authorized infrastructure reconciliation; diagnostics never clear it.' $lockResult.established 'host.state.lock'
+        $rows.Add($pending.check)
+        $state=Get-ClcDeploymentPrerequisiteHostObservation 'host.state.consistency' {
             $value=Get-ClcReconciliationDecision $lock
-            Assert-DhRequirement ($value.classification -ceq 'Clean')
-            $value
-        } 'Journal/current/terminal consistency and exact helper-process exit checks show no unresolved deployment/recovery state. This does not constitute a deployment/recovery pilot.'
-        $current=Invoke-DhCheck $rows 'Initial successful deployment baseline' {
-            if ($null -eq $decision) { throw 'Unverified deployment state' }
-            Assert-DhRequirement ($null -ne $lock.state.current)
-            $lock.state.current.record
-        } 'A successful durable current baseline and matching terminal state exist; routine standing deployment has an independently approved starting point.'
-        if ($null -eq $current) { return ,$rows }
-        $null=Invoke-DhCheck $rows 'Standing lineage compatibility' {
-            if ($null -eq $standing) { throw 'Unavailable standing policy' }
-            Assert-DhRequirement ($current.approvalSnapshot.lineageId -ceq $standing.record.lineageId)
-        } 'Current baseline and standing policy have the same lineage.'
-        $release=Invoke-DhCheck $rows 'Current release and retained approval' {
-            foreach ($path in @((Join-Path $context.layout.approvalCatalogRoot ($current.approvalSnapshot.approvalId+'.json')),
-                (Join-Path $lock.identity.controlRoot ('releases\'+$current.approvalSnapshot.approvalId+'.json')))) {
-                Assert-DhRequirement (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction Stop)
+            Confirm-ClcDeploymentPrerequisiteRequirement ($value.classification -cin @('Clean','EmptyRecoveryNeedsVerification')) 'Canonical journal/current/terminal/helper evidence identifies unresolved recovery or contradictory deployment state.'
+            if ($null -eq $lock.state.current) {
+                if ($value.classification -ceq 'EmptyRecoveryNeedsVerification') {
+                    $guard=Read-ClcApprovedManifest $lock $lock.state.journal.record.candidate.approvalId
+                    Confirm-ClcDeploymentPrerequisiteRequirement (Get-ClcEmptyBaselineEligibility $lock $guard).eligible 'Retained RestoreEmpty evidence is incompatible with the engine initial-state rules.'
+                } else {
+                    try {$null=Get-ClcTreeInventory $target.applicationRoot -ExpectedFiles @()} catch {
+                        if ($_.FullyQualifiedErrorId -like 'Clc.ContentDrift*') {Stop-ClcDeploymentPrerequisiteObservation FAIL 'Unexpected application files contradict the engine initial-empty-state rules; retain them for reconciliation.'}
+                        throw
+                    }
+                }
             }
-            $value=Read-ClcApprovedManifest $lock $current.approvalSnapshot.approvalId
-            Assert-ClcReleaseBinding $value $current.release $current.approvalSnapshot
-            if ($value.approvalFile.record.schemaVersion -ge 2) { $null=Read-ClcActiveStandingForApproval $context $target $value.approvalFile }
             $value
-        } 'Current enabled exact approval, retained manifest, source/build/release identity and lineage match; generated approvals also recheck standing revocation and retained admission/tag evidence. Historical ZIP retention is not required by this contract.'
-        $null=Invoke-DhCheck $rows 'Current installed release bytes' {
-            if ($null -eq $release) { throw 'Unavailable retained release' }
-            $null=Get-ClcTreeInventory $target.applicationRoot $release.manifest.files
-        } 'Installed managed files match the complete exact approval-pinned retained inventory; unexpected files are rejected and preserved.'
-        $null=Invoke-DhCheck $rows 'Retained recovery material' {
-            if ($null -ne $lock.state.journal.record.backup) { $null=Assert-ClcBackup @{lock=$lock} $lock.state.journal.record }
-        } 'The latest journal-selected backup/index is verified when present; no backup is required for an attempt that never created one. Historical ZIPs are not required by the current recovery contract.'
-        $null=Invoke-DhCheck $rows 'Stable final observation' {
-            Assert-ClcTrustedContextUnchanged $context
-            Assert-ClcHeldRecordUnchanged $context $targetFile 'Clc.HostPreflightFailed'
-            if ($null -ne $standing) { Assert-ClcHeldRecordUnchanged $context $standing 'Clc.StandingAuthorizationRejected' }
+        } 'Canonical state and helper evidence permit safe commencement. An empty target was checked using the engine initial-state rules; no baseline was fabricated.' 'Preserve state and unexpected files; use separately authorized recovery or infrastructure reconciliation.' $lockResult.established 'host.state.lock'
+        $rows.Add($state.check)
+        $current=if ($state.established -and $null -ne $lock.state.current) {$lock.state.current.record} else {$null}
+        if ($state.established -and $null -eq $current) {
+            foreach ($id in @('host.state.current-release','host.state.inventory')) {$rows.Add((New-ClcDeploymentPrerequisiteCheck $id NOT_APPLICABLE 'Verified empty initial state has no deployed release, current approval or installed release inventory to inspect.' -Reason 'empty-target'))}
+        } else {
+            $release=Get-ClcDeploymentPrerequisiteHostObservation 'host.state.current-release' {
+                foreach ($path in @((Join-Path $context.layout.approvalCatalogRoot ($current.approvalSnapshot.approvalId+'.json')),(Join-Path $lock.identity.controlRoot ('releases\'+$current.approvalSnapshot.approvalId+'.json')))) {
+                    Confirm-ClcDeploymentPrerequisiteRequirement (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction Stop) 'Required current approval or retained release manifest is missing.'
+                }
+                try {
+                    $value=Read-ClcApprovedManifest $lock $current.approvalSnapshot.approvalId
+                    Assert-ClcReleaseBinding $value $current.release $current.approvalSnapshot
+                } catch {
+                    if ($_.FullyQualifiedErrorId -like 'Clc.ApprovalDisabled*' -or $_.FullyQualifiedErrorId -like 'Clc.ApprovalMismatch*') {
+                        Stop-ClcDeploymentPrerequisiteObservation FAIL 'The current retained approval is disabled or its exact approved release/manifest binding is incorrect.'
+                    }
+                    throw
+                }
+                if ($value.approvalFile.record.schemaVersion -ge 2) {$null=Read-ClcActiveStandingForApproval $context $target $value.approvalFile}
+                $value
+            } 'Current exact approval, retained manifest and release bindings are valid; generated schemas 2 and 3 also recheck standing revocation.' 'Retain and reconcile current approval/manifest/binding evidence; generated approval retries require their original active standing authority.' $state.established 'host.state.consistency'
+            $rows.Add($release.check)
+            $inventory=Get-ClcDeploymentPrerequisiteHostObservation 'host.state.inventory' {
+                try {$null=Get-ClcTreeInventory $target.applicationRoot $release.value.manifest.files} catch {
+                    if ($_.FullyQualifiedErrorId -like 'Clc.ContentDrift*') {Stop-ClcDeploymentPrerequisiteObservation FAIL 'Installed files differ from the current approved inventory, or unexpected content is present; preserve the files.'}
+                    throw
+                }
+            } 'Installed managed bytes match the current approval-pinned inventory; unexpected files were rejected and preserved.' 'Preserve drift and follow separately authorized recovery; diagnostics never clean or restore files.' $release.established 'host.state.current-release'
+            $rows.Add($inventory.check)
+        }
+        if ($null -ne $current -and $null -ne $standing) {
+            $lineage=Get-ClcDeploymentPrerequisiteHostObservation 'host.standing.lineage' {Confirm-ClcDeploymentPrerequisiteRequirement ($current.approvalSnapshot.lineageId -ceq $standing.record.lineageId) 'Optional standing lineage differs from the current baseline.'} 'Optional standing lineage agrees with the current baseline.' 'Independently reconcile optional standing lineage before routine releases.'
+            $rows.Add($lineage.check)
+        } else {$rows.Add((New-ClcDeploymentPrerequisiteCheck 'host.standing.lineage' NOT_APPLICABLE 'No current baseline or optional standing policy requires a lineage comparison.' -Reason 'no-baseline-or-policy'))}
+        $stable=Get-ClcDeploymentPrerequisiteHostObservation 'host.state.stability' {
+            Assert-ClcTrustedContextUnchanged $context;Assert-ClcHeldRecordUnchanged $context $targetFile 'Clc.HostPreflightFailed'
+            if ($null -ne $standing) {Assert-ClcHeldRecordUnchanged $context $standing 'Clc.StandingAuthorizationRejected'}
             $actual=Get-ClcTargetIdentity $context $targetFile
-            Assert-DhRequirement (Test-ClcValueEqual $actual.snapshot $identity.snapshot)
-            if ($null -eq $iis) { throw 'Unavailable initial IIS observation' }
-            Assert-DhRequirement ((Get-ClcIisConfigurationHash $actual.iis) -ceq (Get-ClcIisConfigurationHash $iis))
-        } 'Protected toolkit/policy/target/standing bytes and physical/IIS identities remained consistent across this bounded observation. No fresh application validation or readiness request was executed.'
-        return ,$rows
+            if (-not (Test-ClcValueEqual $actual.snapshot $identity.snapshot)) {Stop-ClcDeploymentPrerequisiteObservation UNVERIFIED 'Target physical identity changed during inspection.'}
+            if ((Get-ClcIisConfigurationHash $actual.iis) -cne (Get-ClcIisConfigurationHash $iis.value)) {Stop-ClcDeploymentPrerequisiteObservation UNVERIFIED 'IIS configuration changed during inspection.'}
+            $final=Get-ClcReconciliationDecision $lock
+            if (-not (Test-ClcValueEqual $final $state.value)) {Stop-ClcDeploymentPrerequisiteObservation UNVERIFIED 'Canonical reconciliation state changed during inspection.'}
+        } 'Protected toolkit/policy/target, physical/IIS identities and canonical reconciliation state remained stable across this observation.' 'Freeze competing trusted writers, investigate drift and rerun inspection.' ($paths.established -and $state.established) 'host.state.consistency'
+        $rows.Add($stable.check)
+        $rows.Add((New-ClcDeploymentPrerequisiteCheck 'host.application.acceptance' UNVERIFIED 'Application startup, configuration semantics, database access, HTTPS readiness and Data Protection compatibility were not executed. Deployment/recovery acceptance remains separate.' 'Perform separately authorized application deployment/recovery acceptance after correcting infrastructure prerequisites.'))
+        $rows.ToArray()
+    } catch {
+        $rows.Add((New-ClcDeploymentPrerequisiteCheck 'host.stage' UNVERIFIED 'Unexpected host inspection failure interrupted remaining checks; private exception details were suppressed.' 'Correct the inspection error and rerun; retain confirmed findings.' -Reason 'inspection-error'))
+        $rows.ToArray()
     } finally {
-        if ($null -ne $lock) { $lock.stream.Dispose(); $lock.closed=$true }
-        Close-ClcTrustedContext $context
+        if ($null -ne $lock) {$lock.stream.Dispose();$lock.closed=$true}
+        if ($null -ne $context) {Close-ClcTrustedContext $context}
     }
 }

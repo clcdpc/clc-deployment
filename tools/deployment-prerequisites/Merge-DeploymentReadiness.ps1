@@ -2,17 +2,19 @@
 [CmdletBinding()]
 param([string] $GitHubReportPath='', [string] $HostReportPath='',
     [ValidateSet('success','failure','cancelled','skipped')][string] $GitHubJobResult='skipped',
-    [ValidateSet('success','failure','cancelled','skipped')][string] $HostJobResult='skipped', [switch] $Strict)
+    [ValidateSet('success','failure','cancelled','skipped')][string] $HostJobResult='skipped')
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 Import-Module "$PSScriptRoot/Validation.psm1" -Force
-function Read-DiagnosticReport([string] $Path) {
-    if (-not $Path) { return $null }
+function Read-ClcDeploymentPrerequisiteReport {
+    param([string] $Path)
+    if (-not $Path) {return $null}
     try {
-        if ((Get-Item -LiteralPath $Path).Length -gt 1048576) { return $null }
-        Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -Depth 16
-    } catch { return $null }
+        # Hold and bound the bytes; reject duplicate keys rather than collapsing them.
+        & (Get-Module Validation) {param($File) Read-DistJson (Read-DistFileBytes $File 1048576)} $Path
+    } catch {return $null}
 }
-$report=Merge-DpReports -GitHubReport (Read-DiagnosticReport $GitHubReportPath) -HostReport (Read-DiagnosticReport $HostReportPath) -GitHubJobResult $GitHubJobResult -HostJobResult $HostJobResult -Strict:$Strict
-Publish-DpReport $report
-exit $report.exit_code
+$report=Merge-ClcDeploymentPrerequisiteReports -GitHubReport (Read-ClcDeploymentPrerequisiteReport $GitHubReportPath) -HostReport (Read-ClcDeploymentPrerequisiteReport $HostReportPath) -GitHubJobResult $GitHubJobResult -HostJobResult $HostJobResult
+Publish-ClcDeploymentPrerequisiteReport $report
+if ($report.ready) {exit 0}
+exit 1

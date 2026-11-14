@@ -6,6 +6,8 @@ The [read-only prerequisites diagnostic](deployment-prerequisites.md) can inspec
 
 The retained harness and original NoOp check use V1 packages. For a separately authorized V2 consumer pilot, replace that expectation with a complete repeat deployment: all selected hooks rerun, stop/start occurs, readiness succeeds and current generation advances. Separately authorize application database/hook work and persistent-state reconciliation exercises using [the hook contract](application-hooks.md). No V2 live-host, database or independent-identity acceptance has been run by this implementation task.
 
+The read-only [prerequisite checker](deployment-prerequisites.md) can establish commissioning readiness before the first deployment; it does not require the deployment/recovery acceptance below to have already succeeded. Correct blocking setup findings, then proceed under separate deployment authority. Routine deployments do not require checker execution.
+
 ## Rollout order
 
 1. Complete application-owned compatibility and release integration, including immutable source and distribution pins required by the consumer.

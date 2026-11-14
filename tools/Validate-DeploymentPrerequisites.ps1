@@ -8,16 +8,14 @@ param(
     [Parameter(Mandatory)][string] $RunnerGroup,
     [string] $RunnerLabels = 'self-hosted,Windows,X64',
     [string] $ActivationVariable = 'CLC_DEPLOYMENT_ENABLED',
-    [ValidateSet('DEV','Production')][string] $DeploymentChannel = 'DEV',
-    [ValidateSet('runner-workflow','required-reviewers')][string] $EnvironmentProtection = 'runner-workflow',
+    [ValidateSet('DEV','Test','Production')][string] $DeploymentChannel = 'DEV',
     [Parameter(Mandatory)][string] $YamlAssemblyPath,
     [ValidateSet('Standard','Administrative')][string] $AuthenticationMode='Standard',
-    [string] $ApplicationId='',
-    [string] $TargetId='',
+    [Parameter(Mandatory)][string] $ApplicationId,
+    [Parameter(Mandatory)][string] $TargetId,
     [string] $DiagnosticWorkflow='',
     [string] $SharedRevision='',
-    [string] $ReportPath='',
-    [switch] $Strict
+    [string] $ReportPath=''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -26,11 +24,12 @@ $config=@{
     Repository=$env:GITHUB_REPOSITORY; EnvironmentName=$EnvironmentName; IntegrationBranch=$IntegrationBranch;
     ReleaseWorkflow=$ReleaseWorkflow; DeploymentWorkflow=$DeploymentWorkflow; RunnerGroup=$RunnerGroup;
     RunnerLabels=$RunnerLabels; ActivationVariable=$ActivationVariable; DeploymentChannel=$DeploymentChannel;
-    EnvironmentProtection=$EnvironmentProtection; ActivationState=$(if ($env:CLC_ACTIVATION_STATE) { $env:CLC_ACTIVATION_STATE } else { 'unavailable' }); Strict=[bool]$Strict;
+    ActivationState=$(if ($env:CLC_ACTIVATION_STATE) { $env:CLC_ACTIVATION_STATE } else { 'unavailable' });
     ApplicationId=$ApplicationId;TargetId=$TargetId;DiagnosticWorkflow=$DiagnosticWorkflow;SharedRevision=$SharedRevision
 }
-$report=Invoke-DpValidation -Config $config -YamlAssemblyPath $YamlAssemblyPath -AuthenticationMode $AuthenticationMode
-Publish-DpReport $report
+$report=Invoke-ClcDeploymentPrerequisiteGitHubInspection -Config $config -YamlAssemblyPath $YamlAssemblyPath -AuthenticationMode $AuthenticationMode
+Publish-ClcDeploymentPrerequisiteReport $report
 if ($ReportPath) { $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ReportPath -Encoding utf8NoBOM }
-Write-Host "Deployment prerequisites: ready=$($report.ready); passed=$($report.passed_count); failed=$($report.failed_count); unverified=$($report.unverified_count). See job summary."
-exit $report.exit_code
+# Missing prerequisites are normal diagnostic findings. Only command/report failures throw.
+if (@($report.checks | Where-Object reason -CEQ 'inspection-error').Count) {exit 1}
+exit 0

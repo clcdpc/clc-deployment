@@ -4,41 +4,47 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $ApplicationId,
     [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $TargetId,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_. -]{0,99}$')][string] $EnvironmentName,
-    [Parameter(Mandatory)][ValidateSet('DEV','Production')][string] $DeploymentChannel,
+    [Parameter(Mandatory)][ValidateSet('DEV','Test','Production')][string] $DeploymentChannel,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$')][string] $Repository,
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_./-]{0,127}$')][string] $IntegrationBranch='master',
     [Parameter(Mandatory)][ValidatePattern('^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.ya?ml$')][string] $ReleaseWorkflow,
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]*$')][string] $BuildJob,
-    [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $StandingAuthorizationId,
-    # Trusted operator/workflow literal; never expose this as an arbitrary dispatch input.
+    [ValidatePattern('^$|^[a-z0-9][a-z0-9-]{0,63}$')][string] $StandingAuthorizationId='',
+    # Independently reviewed workflow/operator literal, never an untrusted dispatch input.
     [Parameter(Mandatory)][string] $ToolkitManifestPath
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 Import-Module "$PSScriptRoot/Validation.psm1" -Force
 $config=@{ApplicationId=$ApplicationId;TargetId=$TargetId;EnvironmentName=$EnvironmentName;DeploymentChannel=$DeploymentChannel;
-    Repository=$Repository;ReleaseWorkflow=$ReleaseWorkflow;BuildJob=$BuildJob;StandingAuthorizationId=$StandingAuthorizationId;Strict=$false}
+    Repository=$Repository;IntegrationBranch=$IntegrationBranch;ReleaseWorkflow=$ReleaseWorkflow;BuildJob=$BuildJob;StandingAuthorizationId=$StandingAuthorizationId}
 $rows=[Collections.Generic.List[object]]::new()
 try {
-    if (-not $IsWindows) { throw 'Host inspection requires Windows.' }
-    if (-not [IO.Path]::IsPathFullyQualified($ToolkitManifestPath) -or [IO.Path]::GetFileName($ToolkitManifestPath) -cne 'CLC.Deployment.psd1') { throw 'Invalid trusted installed manifest selector.' }
-    $null=Get-Item -LiteralPath $ToolkitManifestPath -ErrorAction Stop
+    if (-not $IsWindows) {Stop-ClcDeploymentPrerequisiteObservation FAIL 'Actual host inspection requires the enrolled Windows host.'}
+    if (-not [IO.Path]::IsPathFullyQualified($ToolkitManifestPath) -or [IO.Path]::GetFileName($ToolkitManifestPath) -cne 'CLC.Deployment.psd1') {Stop-ClcDeploymentPrerequisiteObservation FAIL 'The installed manifest selector must be the exact independently approved absolute toolkit path.'}
+    try {$null=Get-Item -LiteralPath $ToolkitManifestPath -ErrorAction Stop} catch [Management.Automation.ItemNotFoundException] {Stop-ClcDeploymentPrerequisiteObservation FAIL 'The expected installed toolkit manifest is missing.'}
     . (Join-Path $PSScriptRoot 'Import-TrustedToolkit.ps1')
-    $null=Import-DhTrustedToolkit $ToolkitManifestPath {
+    $null=Import-ClcDeploymentPrerequisiteTrustedToolkit $ToolkitManifestPath {
         param($Module)
         $observations=& $Module {
             param($Implementation,$Configuration)
             . $Implementation
-            Invoke-DhQualification $Configuration
+            Invoke-ClcDeploymentPrerequisiteHostInspection $Configuration
         } (Join-Path $PSScriptRoot 'Host.ps1') $config
-        # Preserve observed failures/actions even if the outer held toolkit
-        # context's final stability check subsequently becomes unavailable.
-        foreach ($observation in $observations) { $rows.Add($observation) }
+        foreach ($observation in $observations) {$rows.Add($observation)}
     }
+    $rows.Add((New-ClcDeploymentPrerequisiteCheck 'host.toolkit.stability' PASS 'Independent authenticated files and physical identities remained held and stable through installed import and inspection.'))
 } catch {
-    $status=if ($_.CategoryInfo.Category -eq [Management.Automation.ErrorCategory]::ObjectNotFound -or $_.Exception.Message -ceq 'Dp.BootstrapMismatch') {'FAIL'} else {'UNVERIFIED'}
-    $check=if ($rows.Count) {'Independent toolkit stability'} else {'Compatible toolkit installation'}
-    Add-DpResult $rows 'Host qualification' $check $status 'Actual host inspection or final independent toolkit stability could not be established; private exception details were suppressed.' 'Infrastructure: authenticate and verify the installed toolkit and diagnostic source, local host access and execution identity, then rerun.'
+    $status='UNVERIFIED';$detail='Independent installed toolkit authentication or final stability observation could not be established; private error details were suppressed.'
+    if ($_.Exception.Data.Contains('prerequisite_status')) {$status=$_.Exception.Data['prerequisite_status'];$detail=$_.Exception.Data['prerequisite_detail']}
+    $id=if ($rows.Count) {'host.toolkit.stability'} else {'host.toolkit.authentication'}
+    $rows.Add((New-ClcDeploymentPrerequisiteCheck $id $status $detail 'Authenticate and verify the exact protected toolkit policy, source/distribution/inventory, local access and deployment identity; rerun.'))
+    if ($id -ceq 'host.toolkit.authentication') {
+        $rows.Add((New-ClcDeploymentPrerequisiteCheck 'host.stage' SKIPPED 'Toolkit authentication failed before candidate import; dependent machine/identity/enrollment/IIS/state inspection did not execute.' 'Correct independent authentication before inspecting this host.' -Reason 'host.toolkit.authentication'))
+    }
 }
-# Return only sanitized observations. The caller may publish this report as an artifact.
-# This script itself writes no host files or GitHub command files.
-Complete-DpReport $config $rows
+# Structured output only; this command does not write host files or GitHub command files.
+$report=New-ClcDeploymentPrerequisiteReport $config $rows.ToArray()
+Write-Output $report
+if (@($report.checks | Where-Object reason -CEQ 'inspection-error').Count) {exit 1}
+exit 0

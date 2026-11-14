@@ -7,9 +7,13 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../SharedReleasePublisher.Common.ps1')
 
 function Read-ClcConsumerConfiguration {
-    param([string] $Path)
-    if ((Get-Item -LiteralPath $Path).Length -gt 65536) { throw 'Consumer configuration exceeds its bound.' }
-    $bytes=[IO.File]::ReadAllBytes($Path)
+    [CmdletBinding(DefaultParameterSetName='Path')]
+    param([Parameter(Mandatory,Position=0,ParameterSetName='Path')][string] $Path,
+        [Parameter(Mandatory,ParameterSetName='Bytes')][byte[]] $Bytes)
+    if ($PSCmdlet.ParameterSetName -ceq 'Path') {
+        if ((Get-Item -LiteralPath $Path).Length -gt 65536) { throw 'Consumer configuration exceeds its bound.' }
+        $Bytes=[IO.File]::ReadAllBytes($Path)
+    }
     if ($bytes.Length -gt 65536) { throw 'Consumer configuration exceeds its bound.' }
     $document=[Text.Json.JsonDocument]::Parse([ReadOnlyMemory[byte]]$bytes)
     try { $c=ConvertFrom-ClcJsonElement $document.RootElement } finally { $document.Dispose() }
