@@ -120,7 +120,11 @@ function Invoke-DhQualification {
         $null=Invoke-DhCheck $rows 'Authorized inspection identity' { Assert-ClcDeploymentToken $context.policyFile.record } 'The exact admitted deployment SID has an enabled elevated administrator token. Approval independence remains procedural.'
         $machine=Invoke-DhCheck $rows 'Inspected machine binding' {
             $observed=@(Get-ClcMachineUuidObservation)
-            Assert-DhRequirement ($observed.Count -eq 1 -and [string]$observed[0] -ieq $context.policyFile.record.machineIdentity)
+            $uuid=[guid]::Empty
+            if ($observed.Count -ne 1 -or $observed[0] -isnot [string] -or
+                -not [guid]::TryParseExact($observed[0],'D',[ref]$uuid) -or $uuid -eq [guid]::Empty -or
+                $uuid.ToString('D') -ceq 'ffffffff-ffff-ffff-ffff-ffffffffffff') { throw 'Unavailable canonical local machine identity' }
+            Assert-DhRequirement ($uuid.ToString('D') -ceq $context.policyFile.record.machineIdentity)
             Get-ClcMachineIdentity $context.policyFile.record.machineIdentity
         } 'The actual local SMBIOS machine UUID matches protected IIS host enrollment; runner location was not inferred from labels.'
         if ($null -eq $machine) { return ,$rows }

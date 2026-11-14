@@ -226,6 +226,17 @@ Describe 'Read-only actual host qualification with isolated native boundaries' {
             @($r | Where-Object status -EQ UNVERIFIED).Count | Should -Be 20
             Should -Invoke Get-ClcMachineUuidObservation -Times 0 -Exactly
         }
+        It 'leaves empty, malformed or sentinel machine UUID evidence UNVERIFIED' -ForEach @(
+            @{Observed=@()}, @{Observed=@('invalid')}, @{Observed=@('00000000-0000-0000-0000-000000000000')},
+            @{Observed=@('ffffffff-ffff-ffff-ffff-ffffffffffff')}, @{Observed=@('11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222')}
+        ) {
+            $script:uuidEvidence=$Observed
+            Mock Get-ClcMachineUuidObservation { $script:uuidEvidence }
+            $r=Invoke-DhQualification $config
+            ($r | Where-Object name -EQ 'Inspected machine binding').status | Should -Be UNVERIFIED
+            Should -Invoke Get-ClcIisObservation -Times 0 -Exactly
+            Should -Invoke Read-ClcProtectedTarget -Times 0 -Exactly
+        }
         It 'rejects mismatched enrolled application or environment' -ForEach @('applicationId','environmentName') {
             $fixtureTarget[$_]='other'
             $r=Invoke-DhQualification $config
