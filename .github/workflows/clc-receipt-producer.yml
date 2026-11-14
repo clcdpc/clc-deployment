@@ -15,6 +15,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+    outputs:
+      artifact_id: ${{ steps.package.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -48,6 +50,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Application release gates failed' }
           $null=Test-ClcRelease -ArchivePath (Join-Path $env:CLC_RELEASE_DIRECTORY 'release.zip')
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        id: package
         with:
           name: clc-package-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/clc-release/release.zip
@@ -75,13 +78,14 @@ jobs:
           path: toolkit
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: clc-package-${{ github.run_id }}-${{ github.run_attempt }}
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
           path: ${{ runner.temp }}/package
       - name: Construct receipt from observed bytes and authenticated context
         id: receipt
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
         run: |
           Set-StrictMode -Version Latest
           $ErrorActionPreference='Stop'
@@ -111,6 +115,7 @@ jobs:
           $artifacts=Invoke-RestMethod -Uri ($api+'/actions/runs/'+$env:GITHUB_RUN_ID+'/artifacts?per_page=100') -Headers $headers -TimeoutSec 30
           $selected=@($artifacts.artifacts | Where-Object name -CEQ ('clc-package-'+$env:GITHUB_RUN_ID+'-'+$env:GITHUB_RUN_ATTEMPT))
           if ($artifacts.total_count -gt 100 -or $selected.Count -ne 1 -or $selected[0].expired -or
+              $env:EXPECTED_ARTIFACT_ID -cnotmatch '^[1-9][0-9]*$' -or [string]$selected[0].id -cne $env:EXPECTED_ARTIFACT_ID -or
               $selected[0].workflow_run.head_sha -cne $env:GITHUB_SHA -or $selected[0].digest -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Ambiguous immutable artifact' }
           $predicate=@{contractFamily='clc-file-iis-v1';schemaVersion=1;recordKind='automated-provenance';
             targetId=$map.targets[$tag.channel];applicationId=$map.applicationId;releaseId=$tag.releaseId;tag=$tag.tag;
