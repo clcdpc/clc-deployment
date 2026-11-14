@@ -141,7 +141,10 @@ function Invoke-ClcDeploymentCore {
         $a=$Session.release.approvalFile.record
         if (($a.lineageId -cne $c.approvalSnapshot.lineageId -or $a.releaseSequence -lt $c.approvalSnapshot.releaseSequence) -and -not $AllowDowngrade) { Stop-ClcError Clc.DowngradeRejected }
         if ($a.lineageId -ceq $c.approvalSnapshot.lineageId -and $a.releaseSequence -eq $c.approvalSnapshot.releaseSequence -and
-            -not (Test-ClcValueEqual (Get-ClcReleaseIdentity $Session.release) $c.release)) { Stop-ClcError Clc.ApprovalMismatch }
+            -not (Test-ClcValueEqual (Get-ClcReleaseIdentity $Session.release) $c.release)) {
+            if ($a.schemaVersion -ne 2) { Stop-ClcError Clc.ApprovalMismatch }
+            Assert-ClcAutomatedOrdering $a $Session.previousRelease.approvalFile.record
+        }
         $previous=@{generation=$c.generation;attemptId=$c.attemptId;approvalSnapshot=$c.approvalSnapshot;release=$c.release;configuration=$c.configuration}
     } elseif ($decision.classification -ceq 'EmptyRecoveryNeedsVerification') {
         $guardRelease=Read-ClcApprovedManifest $lock $state.journal.record.candidate.approvalId

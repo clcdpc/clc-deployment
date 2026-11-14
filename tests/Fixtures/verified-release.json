@@ -1,7 +1,7 @@
 {
   "contractFamily": "clc-file-iis-v1",
   "schemaVersion": 1,
-  "recordKind": "automated-provenance",
+  "recordKind": "verified-release",
   "targetId": "example",
   "applicationId": "probe",
   "releaseId": "v1-0-0-dev-2",

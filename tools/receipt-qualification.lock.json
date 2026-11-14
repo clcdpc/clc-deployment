@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "trustedRootPath": "tests/Fixtures/Attestation/trusted-root.jsonl",
-  "trustedRootSha256": "db07310827da2ae2798ec7eefc5daf8432506ce458d5bc30cd2feba03708d239",
-  "acquisition": "GitHub CLI 2.97.0 attestation trusted-root; reviewed public Sigstore and GitHub trust material retained for offline synthetic qualification only. Production roots require separate infrastructure approval."
-}

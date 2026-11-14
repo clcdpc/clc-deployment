@@ -12,12 +12,10 @@
     "environmentName",
     "channel",
     "sourceRepository",
-    "sourceRepositoryId",
-    "sourceOwnerId",
-    "producer",
     "lineageId",
-    "verifier",
-    "authorization"
+    "authorization",
+    "buildWorkflowPath",
+    "buildJob"
   ],
   "properties": {
     "contractFamily": {
@@ -56,74 +54,8 @@
     "sourceRepository": {
       "$ref": "#/$defs/repository"
     },
-    "sourceRepositoryId": {
-      "type": "string",
-      "maxLength": 20,
-      "pattern": "^[1-9][0-9]{0,19}$"
-    },
-    "sourceOwnerId": {
-      "type": "string",
-      "maxLength": 20,
-      "pattern": "^[1-9][0-9]{0,19}$"
-    },
-    "producer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "repository",
-        "workflowPath",
-        "sourceCommit",
-        "buildWorkflowPath",
-        "buildJob"
-      ],
-      "properties": {
-        "repository": {
-          "$ref": "#/$defs/repository"
-        },
-        "workflowPath": {
-          "$ref": "#/$defs/workflow"
-        },
-        "sourceCommit": {
-          "$ref": "#/$defs/commit"
-        },
-        "buildWorkflowPath": {
-          "$ref": "#/$defs/workflow"
-        },
-        "buildJob": {
-          "$ref": "#/$defs/code"
-        }
-      }
-    },
     "lineageId": {
       "$ref": "#/$defs/id"
-    },
-    "verifier": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "version",
-        "path",
-        "sha256",
-        "trustedRootPath",
-        "trustedRootSha256"
-      ],
-      "properties": {
-        "version": {
-          "const": "2.97.0"
-        },
-        "path": {
-          "$ref": "#/$defs/absolutePath"
-        },
-        "sha256": {
-          "$ref": "#/$defs/hash"
-        },
-        "trustedRootPath": {
-          "$ref": "#/$defs/absolutePath"
-        },
-        "trustedRootSha256": {
-          "$ref": "#/$defs/hash"
-        }
-      }
     },
     "authorization": {
       "type": "object",
@@ -144,6 +76,12 @@
           "$ref": "#/$defs/utc"
         }
       }
+    },
+    "buildWorkflowPath": {
+      "$ref": "#/$defs/workflow"
+    },
+    "buildJob": {
+      "$ref": "#/$defs/code"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

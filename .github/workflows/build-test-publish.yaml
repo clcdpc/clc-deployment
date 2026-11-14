@@ -5,7 +5,7 @@ on:
     branches: [master]
   push:
     branches: [master]
-    # Reserved synthetic receipt qualification tag never builds/publishes a release.
+    # Historical synthetic qualification tags remain excluded from release publication.
     tags: ['v*', '!v9999.9999.9999-dev.*']
 
 permissions:

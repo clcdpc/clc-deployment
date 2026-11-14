@@ -8,7 +8,7 @@ Describe 'Candidate public API and honest inspection' {
             $expected = switch ($command.Name) {
                 New-ClcRelease { @('MetadataPath','OutputPath','PublishRoot') }
                 Test-ClcRelease { @('ArchivePath','ReleaseTag') }
-                Invoke-ClcIisDeployment { @('AllowDowngrade','Reason','ReleaseApprovalId','ReleaseTag','StandingAuthorizationId','TargetId') }
+                Invoke-ClcIisDeployment { @('AllowDowngrade','ArchivePath','Reason','ReleaseApprovalId','ReleaseTag','StandingAuthorizationId','TargetId','VerifiedReleasePath') }
                 Restore-ClcIisDeployment { @('AttemptId','Mode','Reason','RecoveryApprovalId','TargetId') }
             }
             $actual = @($command.Parameters.Keys | Where-Object { $common -cnotcontains $_ } | Sort-Object)
@@ -34,7 +34,7 @@ Describe 'Candidate public API and honest inspection' {
         $tag.releaseId | Should -BeExactly v1-2-3-dev-4
         $tag.authorizedForDeployment | Should -BeFalse
         Test-TestRejection { Test-ClcRelease -ReleaseTag v1.0.0 -ArchivePath x } '*'
-        Test-TestRejection { Invoke-ClcIisDeployment -TargetId x -StandingAuthorizationId x -ReleaseTag v1.0.0 -AllowDowngrade -Reason incident } '*'
+        Test-TestRejection { Invoke-ClcIisDeployment -TargetId x -StandingAuthorizationId x -ReleaseTag v1.0.0 -ArchivePath x -VerifiedReleasePath x -AllowDowngrade -Reason incident } '*'
     }
     It 'returns exact PackageResult and ReleaseInspection field sets without authorization material' {
         $workspace = New-TestWorkspace

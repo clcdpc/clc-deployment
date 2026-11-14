@@ -53,13 +53,6 @@ namespace Clc.Lifecycle {
             foreach (var arg in new[] {operation=="Start" ? "start" : "stop","apppool","/apppool.name:"+pool}) info.ArgumentList.Add(arg);
             return Start(info,8192);
         }
-        // Read-only attestation verifier; never inherits credentials, CLI config,
-        // proxy overrides, PATH or a caller-selected executable/argument string.
-        public static Running Attestation(string executable, string[] arguments) {
-            var info=Info(executable,Path.GetDirectoryName(executable));
-            foreach (var arg in arguments) info.ArgumentList.Add(arg);
-            return Start(info,4194304);
-        }
         public static ValidationOutput Finish(Running running, int milliseconds) {
             var clock=Stopwatch.StartNew(); var all=Task.WhenAll(running.Output,running.Errors);
             if (!all.Wait(milliseconds)) return new ValidationOutput { Failed=true };

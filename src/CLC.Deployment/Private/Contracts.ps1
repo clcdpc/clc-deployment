@@ -432,15 +432,22 @@ function Assert-ClcRecord {
             Assert-ClcCode $Value.authorization.reference
             Assert-ClcTimestamp $Value.authorization.approvedUtc
             if ($Value.schemaVersion -eq 2) {
-                Assert-ClcObject $Value.admission @('standingAuthorizationId','standingAuthorizationSha256','tag','bundleSha256')
+                Assert-ClcObject $Value.admission @('standingAuthorizationId','standingAuthorizationSha256','tag','verifiedReleaseSha256')
                 Assert-ClcId $Value.admission.standingAuthorizationId
                 Assert-ClcHash $Value.admission.standingAuthorizationSha256
-                Assert-ClcHash $Value.admission.bundleSha256
+                Assert-ClcHash $Value.admission.verifiedReleaseSha256
                 $null=Get-ClcDeploymentTag $Value.admission.tag
             }
         }
         standing-authorization { Assert-ClcStandingAuthorization $Value }
-        automated-provenance { Assert-ClcAutomatedProvenance $Value }
+        verified-release { Assert-ClcVerifiedRelease $Value }
+        release-tag-binding {
+            Assert-ClcObject $Value @('contractFamily','schemaVersion','recordKind','targetId','applicationId','lineageId','tag','sourceRepository','sourceCommit')
+            foreach ($key in @('targetId','applicationId','lineageId')) { Assert-ClcId $Value[$key] }
+            $null=Get-ClcDeploymentTag $Value.tag
+            Assert-ClcRepository $Value.sourceRepository
+            Assert-ClcCommit $Value.sourceCommit
+        }
         journal { Assert-ClcJournal $Value }
         current {
             Assert-ClcObject $Value @('contractFamily','schemaVersion','recordKind','generation','targetKey','targetSnapshot','attemptId','recoverySequence','approvalSnapshot','release','executingToolkit','configuration','hostObservationSha256','readiness','completedUtc')

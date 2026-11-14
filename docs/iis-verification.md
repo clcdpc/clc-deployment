@@ -11,7 +11,7 @@
 
 ## Prerequisites
 
-For the optional [standing-policy path](automated-deployments.md), first complete the independent exact baseline and infrastructure policy/verifier setup. Under separately scoped host authorization, repeat upgrade/NoOp/failure/recovery checks with authenticated receipts; verify revocation before effects and require an independent exact RecoveryApprovalId for a generated selected release. The [public-repository custom receipt signing/offline verification](../tests/Fixtures/Attestation/README.md) is qualified separately with actual GitHub tooling and synthetic bytes. It does not qualify privileged-runner or actual IIS integration. Those real-host gates remain NOT RUN.
+For the optional [standing-policy path](automated-deployments.md), first complete the independent exact baseline and infrastructure standing-policy setup. Under separately scoped host authorization, repeat upgrade/NoOp/failure/recovery checks with independently workflow-verified exact releases; verify revocation before effects and require an independent exact RecoveryApprovalId for a generated selected release. Offline admission tests do not qualify privileged-runner or actual IIS integration. Those real-host gates remain NOT RUN.
 
 Infrastructure must explicitly authorize the host, consumer application scope, maintenance window and failure/recovery exercise. The optional harness below accepts only its explicitly designated isolated Server 2022 target and must not be repointed at a consumer or existing application.
 

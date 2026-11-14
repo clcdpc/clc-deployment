@@ -3,46 +3,36 @@ BeforeAll {
     . "$PSScriptRoot/T2Support.ps1"
     . "$PSScriptRoot/T3Support.ps1"
     function New-AutomationFixture {
-        param($Fixture,[string] $Tag='v1.0.0-dev.2')
+        param($Fixture,[string] $Tag='v1.0.0-dev.2',[long] $RunId=1,[long] $RunAttempt=1,[string] $Commit=('2'*40),[string] $ReleaseId)
         $tagInfo=Invoke-T2Private Get-ClcDeploymentTag @($Tag)
-        $build=Join-Path $Fixture.workspace $tagInfo.releaseId
+        $build=Join-Path $Fixture.workspace ($tagInfo.releaseId+'-'+$RunId+'-'+$RunAttempt)
         [void][IO.Directory]::CreateDirectory($build)
         $inputs=New-TestPublish $build
-        $metadata=Get-TestMetadata; $metadata.releaseId=$tagInfo.releaseId; $metadata.source.commit='2'*40
+        $metadata=Get-TestMetadata; $metadata.releaseId='probe-'+$RunId+'-'+$RunAttempt+'-'+$tagInfo.releaseId; $metadata.source.commit=$Commit
+        if ($ReleaseId) { $metadata.releaseId=$ReleaseId }
+        $metadata.build.runId=$RunId; $metadata.build.runAttempt=$RunAttempt
         Write-TestJson $inputs.MetadataPath $metadata
-        [IO.File]::WriteAllText((Join-Path $inputs.PublishRoot 'Probe.dll'),('Synthetic automated DLL '+$Tag))
+        [IO.File]::WriteAllText((Join-Path $inputs.PublishRoot 'Probe.dll'),('Synthetic automated DLL '+$Tag+' '+$RunId+' '+$RunAttempt+' '+$Commit))
         $package=New-ClcRelease @inputs
         $Fixture.dllIdentities[(Get-FileHash -LiteralPath (Join-Path $inputs.PublishRoot 'Probe.dll')).Hash]=$metadata
-        Copy-Item -LiteralPath $package.archivePath -Destination (Join-Path $Fixture.target.artifactInboxRoot ($tagInfo.releaseId+'.zip'))
-        $bundle=Join-Path $Fixture.target.artifactInboxRoot ($tagInfo.releaseId+'.sigstore.json')
-        [IO.File]::WriteAllText($bundle,'synthetic bundle; verifier boundary is mocked')
+        $archive=Join-Path $Fixture.target.artifactInboxRoot ($tagInfo.releaseId+'-'+$RunId+'-'+$RunAttempt+'.zip')
+        Copy-Item -LiteralPath $package.archivePath -Destination $archive
         $root=Join-Path $Fixture.layout.approvalCatalogRoot 'standing'; [void][IO.Directory]::CreateDirectory($root)
         $s=Get-Content -LiteralPath (Join-Path $script:FixtureRoot 'standing-authorization.json') -Raw | ConvertFrom-Json -AsHashtable
         $s.targetId=$Fixture.target.targetId; $s.applicationId=$Fixture.target.applicationId; $s.environmentName=$Fixture.target.environmentName
-        $s.sourceRepository=$metadata.source.repository; $s.producer.buildWorkflowPath=$metadata.build.workflowPath; $s.producer.buildJob=$metadata.build.job
-        $s.verifier.path=Join-Path $Fixture.workspace 'binaries\gh.exe'; $s.verifier.trustedRootPath=Join-Path $Fixture.workspace 'binaries\trusted-root.json'
-        [IO.File]::WriteAllText($s.verifier.path,'synthetic trusted verifier; never executed')
-        [IO.File]::WriteAllText($s.verifier.trustedRootPath,'synthetic trusted root')
-        $s.verifier.sha256=(Get-FileHash -LiteralPath $s.verifier.path).Hash.ToLowerInvariant()
-        $s.verifier.trustedRootSha256=(Get-FileHash -LiteralPath $s.verifier.trustedRootPath).Hash.ToLowerInvariant()
+        $s.sourceRepository=$metadata.source.repository; $s.buildWorkflowPath=$metadata.build.workflowPath; $s.buildJob=$metadata.build.job
         $path=Join-Path $root ($s.standingAuthorizationId+'.json'); Write-TestJson $path $s
-        $p=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=1;recordKind='automated-provenance';targetId=$s.targetId;applicationId=$s.applicationId;
+        $p=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=1;recordKind='verified-release';targetId=$s.targetId;applicationId=$s.applicationId;
             releaseId=$metadata.releaseId;tag=$Tag;sourceRepository=$metadata.source.repository;sourceCommit=$metadata.source.commit;
             releaseZipSha256=$package.archiveSha256;manifestSha256=$package.manifestSha256;
-            provenance=@{workflowPath=$metadata.build.workflowPath;runId=$metadata.build.runId;runAttempt=$metadata.build.runAttempt;buildJob=$metadata.build.job;artifactId=2;transportSha256=('f'*64)}}
-        $ref='refs/tags/'+$Tag
-        $c=@{issuer='https://token.actions.githubusercontent.com';sourceRepositoryURI=('https://github.com/'+$s.sourceRepository);sourceRepositoryDigest=$p.sourceCommit;sourceRepositoryRef=$ref;
-            sourceRepositoryIdentifier=$s.sourceRepositoryId;sourceRepositoryOwnerIdentifier=$s.sourceOwnerId;
-            buildSignerURI=('https://github.com/'+$s.producer.repository+'/'+$s.producer.workflowPath+'@'+$s.producer.sourceCommit);
-            buildSignerDigest=$s.producer.sourceCommit;buildTrigger='push';runnerEnvironment='github-hosted';
-            buildConfigURI=('https://github.com/'+$s.sourceRepository+'/'+$s.producer.buildWorkflowPath+'@'+$ref);
-            runInvocationURI=('https://github.com/'+$s.sourceRepository+'/actions/runs/'+$p.provenance.runId+'/attempts/'+$p.provenance.runAttempt)}
-        $global:ClcAutomation=@{predicate=$p;certificate=$c;arguments=@();exitCode=0}
-        return @{standing=$s;path=$path;tag=$Tag;package=$package;bundle=$bundle;releaseId=$tagInfo.releaseId}
+            provenance=@{workflowPath=$metadata.build.workflowPath;runId=$metadata.build.runId;runAttempt=$metadata.build.runAttempt;buildJob=$metadata.build.job;artifactId=($RunId*10+$RunAttempt);transportSha256=('f'*64)}}
+        $evidence=Join-Path $Fixture.target.artifactInboxRoot ($tagInfo.releaseId+'-'+$RunId+'-'+$RunAttempt+'.json')
+        Write-TestJson $evidence $p
+        return @{standing=$s;path=$path;tag=$Tag;package=$package;archive=$archive;evidence=$evidence;identity=$p;releaseId=$metadata.releaseId}
     }
     function Invoke-Automation {
         param($Fixture,$Automation)
-        Invoke-ClcIisDeployment -TargetId $Fixture.target.targetId -StandingAuthorizationId $Automation.standing.standingAuthorizationId -ReleaseTag $Automation.tag
+        Invoke-ClcIisDeployment -TargetId $Fixture.target.targetId -StandingAuthorizationId $Automation.standing.standingAuthorizationId -ReleaseTag $Automation.tag -ArchivePath $Automation.archive -VerifiedReleasePath $Automation.evidence
     }
 }
 
@@ -66,7 +56,7 @@ Describe 'Standing authority excludes initial deployment' {
         $fixture=New-T2Fixture; Set-T2FixtureInModule $fixture; Set-T3Mocks
         try {
             $before=Get-T2TreeHashes $fixture
-            Test-TestRejection { Invoke-ClcIisDeployment -TargetId example -StandingAuthorizationId example-dev -ReleaseTag v1.0.0-dev.1 } 'Clc.AutomationRequiresBaseline*'
+            Test-TestRejection { Invoke-ClcIisDeployment -TargetId example -StandingAuthorizationId example-dev -ReleaseTag v1.0.0-dev.1 -ArchivePath C:\unused.zip -VerifiedReleasePath C:\unused.json } 'Clc.AutomationRequiresBaseline*'
             (Get-T2TreeHashes $fixture) | Should -BeExactly $before
             $global:ClcLifecycle.operations.Count | Should -Be 0
         } finally { Remove-TestWorkspace $fixture.workspace }
@@ -79,14 +69,10 @@ Describe 'Standing-policy admission using real NTFS, lock and lifecycle state' {
         $baseline=New-T3Approval $fixture -Sequence 1 -Lineage probe-main
         $null=Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId $baseline.record.approvalId
         $auto=New-AutomationFixture $fixture
-        Mock -ModuleName CLC.Deployment Start-ClcAttestationVerifier {
-            $global:ClcAutomation.arguments=$Arguments
-            return Start-T3HarmlessHelper (@(@{predicate=$global:ClcAutomation.predicate;certificate=$global:ClcAutomation.certificate}) | ConvertTo-Json -Depth 24 -Compress -AsArray) $global:ClcAutomation.exitCode
-        }
         $global:ClcLifecycle.operations.Clear()
     }
     AfterEach { Remove-TestWorkspace $fixture.workspace }
-    It 'admits successive authenticated releases and makes identical retries NoOp' {
+    It 'admits successive workflow-verified releases and makes identical retries NoOp' {
         (Invoke-Automation $fixture $auto).status | Should -Be Deployed
         $first=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'current.json') -Raw
         $approvalId=($first | ConvertFrom-Json).release.approvalId
@@ -100,10 +86,6 @@ Describe 'Standing-policy admission using real NTFS, lock and lifecycle state' {
         $auto2=New-AutomationFixture $fixture 'v1.0.0-dev.3'
         (Invoke-Automation $fixture $auto2).status | Should -Be Deployed
         Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.DowngradeRejected*'
-        $global:ClcAutomation.arguments | Should -Contain '--signer-digest'
-        $global:ClcAutomation.arguments | Should -Contain '--source-ref'
-        $global:ClcAutomation.arguments | Should -Contain '--custom-trusted-root'
-        $global:ClcAutomation.arguments | Should -Contain '--deny-self-hosted-runners'
     }
     It 'admits stable releases only under the independent production scope' {
         $production=New-AutomationFixture $fixture 'v1.0.0'
@@ -131,45 +113,34 @@ Describe 'Standing-policy admission using real NTFS, lock and lifecycle state' {
         Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.StandingAuthorizationRejected*'
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
     }
-    It 'rejects fabricated certificate <Field>' -ForEach @(
-        @{Field='issuer'},@{Field='sourceRepositoryURI'},@{Field='sourceRepositoryDigest'},@{Field='sourceRepositoryRef'},@{Field='sourceRepositoryIdentifier'},
-        @{Field='sourceRepositoryOwnerIdentifier'},@{Field='buildSignerURI'},@{Field='buildSignerDigest'},@{Field='buildTrigger'},
-        @{Field='runnerEnvironment'},@{Field='buildConfigURI'},@{Field='runInvocationURI'}
-    ) {
-        $global:ClcAutomation.certificate[$Field]='fabricated'
+    It 'requires the independently admitted elevated identity even with matching JSON and policy' -ForEach @(@{Mode='sid'},@{Mode='token'}) {
+        if ($Mode -ceq 'sid') { Mock -ModuleName CLC.Deployment Get-ClcCallerSid { return 'S-1-5-21-1-2-3-9999' } }
+        else { Mock -ModuleName CLC.Deployment Test-ClcAdministratorToken { return $false } }
         $before=Get-T2TreeHashes $fixture
-        Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.ProvenanceRejected*'
+        Test-TestRejection { Invoke-Automation $fixture $auto }
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
         $global:ClcLifecycle.operations.Count | Should -Be 0
     }
-    It 'rejects signed predicate <Field> mismatch' -ForEach @(
+    It 'rejects verified release <Field> mismatch' -ForEach @(
         @{Field='targetId';Value='other'},@{Field='applicationId';Value='other'},@{Field='sourceRepository';Value='other/repo'},
         @{Field='sourceCommit';Value=('9'*40)},@{Field='releaseZipSha256';Value=('9'*64)},@{Field='manifestSha256';Value=('9'*64)},@{Field='releaseId';Value='other'}
     ) {
-        $global:ClcAutomation.predicate[$Field]=$Value
+        $auto.identity[$Field]=$Value; Write-TestJson $auto.evidence $auto.identity
         $before=Get-T2TreeHashes $fixture
         Test-TestRejection { Invoke-Automation $fixture $auto }
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
     }
-    It 'rejects failed crypto, modified verifier, root or archive' -ForEach @(@{Mode='signature'},@{Mode='verifier'},@{Mode='root'},@{Mode='archive'},@{Mode='verifier-parent'}) {
-        switch ($Mode) {
-            signature { $global:ClcAutomation.exitCode=1 }
-            verifier { [IO.File]::AppendAllText($auto.standing.verifier.path,'tamper') }
-            root { [IO.File]::AppendAllText($auto.standing.verifier.trustedRootPath,'tamper') }
-            archive { [IO.File]::AppendAllText((Join-Path $fixture.target.artifactInboxRoot ($auto.releaseId+'.zip')),'tamper') }
-            verifier-parent {
-                $global:ClcUnsafeVerifierParent=[IO.Path]::GetDirectoryName($auto.standing.verifier.path)
-                Mock -ModuleName CLC.Deployment Assert-ClcAccess { if ($Path -ceq $global:ClcUnsafeVerifierParent) { throw 'Synthetic runtime sibling-file creation' }; return (Invoke-T2Private Get-ClcSecurityObservation @($Path)).sha256 }
-            }
-        }
+    It 'rejects modified package bytes before application effects' {
+        [IO.File]::AppendAllText($auto.archive,'tamper')
         $before=Get-T2TreeHashes $fixture
         Test-TestRejection { Invoke-Automation $fixture $auto }
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
         $global:ClcLifecycle.operations.Count | Should -Be 0
     }
-    It 'rejects artifact-only tags before invoking the verifier' -ForEach @(@{Tag='v1.0.0-beta.1'},@{Tag='v1.0.0-rc.1'}) {
-        Test-TestRejection { Invoke-ClcIisDeployment -TargetId example -StandingAuthorizationId $auto.standing.standingAuthorizationId -ReleaseTag $Tag } 'Clc.StandingAuthorizationRejected*'
-        Should -Invoke -ModuleName CLC.Deployment Start-ClcAttestationVerifier -Times 0 -Exactly
+    It 'rejects artifact-only tags before admission effects' -ForEach @(@{Tag='v1.0.0-beta.1'},@{Tag='v1.0.0-rc.1'}) {
+        $before=Get-T2TreeHashes $fixture
+        Test-TestRejection { Invoke-ClcIisDeployment -TargetId example -StandingAuthorizationId $auto.standing.standingAuthorizationId -ReleaseTag $Tag -ArchivePath $auto.archive -VerifiedReleasePath $auto.evidence } 'Clc.StandingAuthorizationRejected*'
+        (Get-T2TreeHashes $fixture) | Should -BeExactly $before
     }
     It 'does not let saved generated approval IDs bypass revocation or grant downgrade' {
         $null=Invoke-Automation $fixture $auto
@@ -178,24 +149,103 @@ Describe 'Standing-policy admission using real NTFS, lock and lifecycle state' {
         $auto.standing.enabled=$false; Write-TestJson $auto.path $auto.standing
         Test-TestRejection { Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId $current.release.approvalId } 'Clc.StandingAuthorizationRejected*'
     }
-    It 'rejects conflicting reuse of a release identity without overwriting authority' {
+    It 'deploys a fresh build of the same tag and preserves original approvals and evidence' -ForEach @(@{RunId=2;RunAttempt=1},@{RunId=1;RunAttempt=2}) {
         $null=Invoke-Automation $fixture $auto
-        [IO.File]::AppendAllText($auto.bundle,'different bundle')
+        $first=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'current.json') -Raw | ConvertFrom-Json
+        $originalPath=Join-Path $fixture.layout.approvalCatalogRoot ($first.release.approvalId+'.json')
+        $original=[IO.File]::ReadAllText($originalPath)
+        $evidencePath=Join-Path $fixture.layout.approvalCatalogRoot ('standing\'+$first.release.approvalId+'.verified.json')
+        $originalEvidence=[IO.File]::ReadAllText($evidencePath)
+        $rebuilt=New-AutomationFixture $fixture $auto.tag -RunId $RunId -RunAttempt $RunAttempt -ReleaseId $auto.releaseId
+        $rebuilt.package.archiveSha256 | Should -Not -BeExactly $auto.package.archiveSha256
+        (Invoke-Automation $fixture $rebuilt).status | Should -Be Deployed
+        $second=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'current.json') -Raw | ConvertFrom-Json
+        $second.release.approvalId | Should -Not -BeExactly $first.release.approvalId
+        $second.approvalSnapshot.releaseSequence | Should -Be $first.approvalSnapshot.releaseSequence
+        [IO.File]::ReadAllText($originalPath) | Should -BeExactly $original
+        [IO.File]::ReadAllText($evidencePath) | Should -BeExactly $originalEvidence
+        (Invoke-Automation $fixture $rebuilt).status | Should -Be NoOp
+        $before=Get-T2TreeHashes $fixture
+        Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.ReleaseIdentityConflict*'
+        Test-TestRejection { Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId $first.release.approvalId } 'Clc.ReleaseIdentityConflict*'
+        (Get-T2TreeHashes $fixture) | Should -BeExactly $before
+    }
+    It 'rejects a different source commit for an admitted tag even after a manual downgrade' {
+        $null=Invoke-Automation $fixture $auto
+        $null=Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId $baseline.record.approvalId -AllowDowngrade -Reason maintenance
+        $rebuilt=New-AutomationFixture $fixture $auto.tag -RunId 2 -Commit ('3'*40)
+        $before=Get-T2TreeHashes $fixture
+        $global:ClcLifecycle.operations.Clear()
+        Test-TestRejection { Invoke-Automation $fixture $rebuilt } 'Clc.ReleaseIdentityConflict*'
+        (Get-T2TreeHashes $fixture) | Should -BeExactly $before
+        $global:ClcLifecycle.operations.Count | Should -Be 0
+    }
+    It 'rejects conflicting reuse of the exact build approval without overwriting it' {
+        $null=Invoke-Automation $fixture $auto
+        $current=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'current.json') -Raw | ConvertFrom-Json
+        $path=Join-Path $fixture.layout.approvalCatalogRoot ($current.release.approvalId+'.json')
+        $approval=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
+        $approval.admission.verifiedReleaseSha256='9'*64; Write-TestJson $path $approval
         $before=Get-T2TreeHashes $fixture
         Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.ReleaseIdentityConflict*'
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
     }
+    It 'refuses missing or corrupt durable admission material on exact retries' -ForEach @(@{Mode='binding'},@{Mode='zip'},@{Mode='evidence'}) {
+        $null=Invoke-Automation $fixture $auto
+        $current=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'current.json') -Raw | ConvertFrom-Json
+        if ($Mode -ceq 'binding') {
+            $binding=Get-ChildItem -LiteralPath (Join-Path $fixture.layout.approvalCatalogRoot 'standing') -Filter 'tag-*.json'
+            Remove-Item -LiteralPath $binding.FullName
+        } elseif ($Mode -ceq 'zip') { [IO.File]::AppendAllText((Join-Path $fixture.target.artifactInboxRoot ($current.release.approvalId+'.zip')),'tamper') }
+        else {
+            $auto.identity.sourceCommit='9'*40
+            Write-TestJson (Join-Path $fixture.layout.approvalCatalogRoot ('standing\'+$current.release.approvalId+'.verified.json')) $auto.identity
+        }
+        $before=Get-T2TreeHashes $fixture
+        $global:ClcLifecycle.operations.Clear()
+        Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.AdmissionIncomplete*'
+        (Get-T2TreeHashes $fixture) | Should -BeExactly $before
+        $global:ClcLifecycle.operations.Count | Should -Be 0
+    }
     It 'retains interrupted admission intent and refuses repair' {
-        $global:ClcAdmissionDestination=Join-Path $fixture.target.artifactInboxRoot ('auto-'+(Invoke-T2Private Get-ClcBytesHash @(,[Text.Encoding]::UTF8.GetBytes($fixture.target.targetId+[char]0+$auto.releaseId))).Substring(0,59)+'.zip')
-        [IO.File]::WriteAllText($global:ClcAdmissionDestination,'unexpected destination')
+        Mock -ModuleName CLC.Deployment Publish-ClcAutomatedApproval { throw 'Synthetic interruption before atomic approval publication' }
         try { Invoke-Automation $fixture $auto; throw 'Expected admission failure.' }
         catch {
             $_.FullyQualifiedErrorId | Should -BeLike 'Clc.AdmissionIncomplete*'
             $_.Exception.Message | Should -Match 'infrastructure maintenance'
-            $_.Exception.Message | Should -Match 'standing.*example.pending'
         }
         @(Get-ChildItem -LiteralPath (Join-Path $fixture.layout.approvalCatalogRoot 'standing') -Filter '*.pending').Count | Should -Be 1
         Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.AdmissionIncomplete*'
+        Test-TestRejection { Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId $baseline.record.approvalId } 'Clc.AdmissionIncomplete*'
+        $global:ClcLifecycle.operations.Count | Should -Be 0
+    }
+    It 'rejects malformed identity JSON and build mismatches before authority publication' -ForEach @(
+        @{Mode='duplicate'},@{Mode='extra'},@{Mode='run'},@{Mode='attempt'},@{Mode='workflow'},@{Mode='job'},@{Mode='tag'},@{Mode='legacy'}
+    ) {
+        switch ($Mode) {
+            duplicate { [IO.File]::WriteAllText($auto.evidence,([IO.File]::ReadAllText($auto.evidence).TrimEnd('}')+',"targetId":"example"}')) }
+            extra { $auto.identity.untrustedOverride=$true; Write-TestJson $auto.evidence $auto.identity }
+            run { $auto.identity.provenance.runId=99; Write-TestJson $auto.evidence $auto.identity }
+            attempt { $auto.identity.provenance.runAttempt=99; Write-TestJson $auto.evidence $auto.identity }
+            workflow { $auto.identity.provenance.workflowPath='.github/workflows/other.yml'; Write-TestJson $auto.evidence $auto.identity }
+            job { $auto.identity.provenance.buildJob='other'; Write-TestJson $auto.evidence $auto.identity }
+            tag { $auto.identity.tag='v1.0.0-dev.3'; Write-TestJson $auto.evidence $auto.identity }
+            legacy { $auto.identity.recordKind='automated-provenance'; Write-TestJson $auto.evidence $auto.identity }
+        }
+        $before=Get-T2TreeHashes $fixture
+        Test-TestRejection { Invoke-Automation $fixture $auto }
+        (Get-T2TreeHashes $fixture) | Should -BeExactly $before
+        $global:ClcLifecycle.operations.Count | Should -Be 0
+    }
+    It 'rejects unsafe or unprotected inputs before new authority' -ForEach @(@{Mode='outside'},@{Mode='writable'},@{Mode='hardlink'}) {
+        switch ($Mode) {
+            outside { $outside=Join-Path $fixture.workspace 'outside.json'; Copy-Item -LiteralPath $auto.evidence -Destination $outside; $auto.evidence=$outside }
+            writable { $global:ClcUnsafeInput=$auto.evidence; Mock -ModuleName CLC.Deployment Assert-ClcAccess { throw 'Synthetic runtime write grant' } -ParameterFilter { $Path -ceq $global:ClcUnsafeInput } }
+            hardlink { $null=New-Item -ItemType HardLink -Path (Join-Path $fixture.target.artifactInboxRoot 'alias.json') -Target $auto.evidence }
+        }
+        $before=Get-T2TreeHashes $fixture
+        Test-TestRejection { Invoke-Automation $fixture $auto }
+        (Get-T2TreeHashes $fixture) | Should -BeExactly $before
         $global:ClcLifecycle.operations.Count | Should -Be 0
     }
     It 'serializes admission with the existing machine/pool deployment handle' {

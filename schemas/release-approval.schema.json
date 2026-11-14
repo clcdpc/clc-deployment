@@ -136,7 +136,7 @@
         "standingAuthorizationId",
         "standingAuthorizationSha256",
         "tag",
-        "bundleSha256"
+        "verifiedReleaseSha256"
       ],
       "properties": {
         "standingAuthorizationId": {
@@ -148,7 +148,7 @@
         "tag": {
           "$ref": "#/$defs/tag"
         },
-        "bundleSha256": {
+        "verifiedReleaseSha256": {
           "$ref": "#/$defs/hash"
         }
       }

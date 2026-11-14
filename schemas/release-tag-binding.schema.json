@@ -1,0 +1,109 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9_-]+/[A-Za-z0-9_-][A-Za-z0-9_.-]*$"
+    },
+    "commit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "hash": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "workflow": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^\\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]*\\.ya?ml$"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "sid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 184,
+      "pattern": "^S-1-(0|[1-9][0-9]*)(-(0|[1-9][0-9]*)){1,15}$"
+    },
+    "utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 28,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?Z$",
+      "format": "date-time"
+    },
+    "absolutePath": {
+      "type": "string",
+      "maxLength": 240,
+      "pattern": "^[A-Za-z]:\\\\[^\\x00-\\x1f\\x7f/:*?\"<>|]+$",
+      "minLength": 4
+    },
+    "tag": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^v(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})(-(dev|beta|rc)\\.([1-9][0-9]{0,3}))?$"
+    }
+  },
+  "title": "release-tag-binding",
+  "properties": {
+    "contractFamily": {
+      "const": "clc-file-iis-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "targetId": {
+      "$ref": "#/$defs/id"
+    },
+    "applicationId": {
+      "$ref": "#/$defs/id"
+    },
+    "sourceRepository": {
+      "$ref": "#/$defs/repository"
+    },
+    "sourceCommit": {
+      "$ref": "#/$defs/commit"
+    },
+    "tag": {
+      "$ref": "#/$defs/tag"
+    },
+    "recordKind": {
+      "const": "release-tag-binding"
+    },
+    "lineageId": {
+      "$ref": "#/$defs/id"
+    }
+  },
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "targetId",
+    "applicationId",
+    "sourceRepository",
+    "sourceCommit",
+    "tag",
+    "recordKind",
+    "lineageId"
+  ]
+}

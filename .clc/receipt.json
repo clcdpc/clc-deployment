@@ -1,8 +1,0 @@
-{
-  "applicationId": "probe",
-  "targets": {
-    "DEV": "receipt-qualification",
-    "Production": "receipt-qualification",
-    "ArtifactOnly": "receipt-qualification"
-  }
-}

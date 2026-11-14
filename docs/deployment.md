@@ -17,7 +17,7 @@ Restore-ClcIisDeployment -TargetId example -AttemptId '<latest-attempt-guid>' -M
 
 These are nonoperational placeholders. Public commands accept no credentials, callbacks, arbitrary target/state paths or trust-bypass flag. The independently protected enabled approval supplies the expected hashes; an inspection result, manifest, caller expectation or release name never authorizes code. Deployment never provisions credentials or operational configuration.
 
-For an already deployed baseline, infrastructure may separately enable [tag-authorized routine deployment](automated-deployments.md). `Invoke-ClcIisDeployment -TargetId $target -StandingAuthorizationId $standing -ReleaseTag $tag` authenticates a signed producer receipt and publishes exact authority under the same lock before this sequence. Revoked/changed policy blocks routine use of its generated approvals, including direct exact-ID retries. Existing manual approval commands need no standing policy or verifier.
+For an already deployed baseline, infrastructure may separately enable [tag-authorized routine deployment](automated-deployments.md). `Invoke-ClcIisDeployment -TargetId $target -StandingAuthorizationId $standing -ReleaseTag $tag -ArchivePath $zip -VerifiedReleasePath $identity` validates trusted workflow-supplied release identity and exact package bytes and publishes exact authority under the same lock before this sequence. Revoked/changed policy blocks routine use of its generated approvals, including direct exact-ID retries. Existing manual approval commands need no standing policy.
 
 ## Deployment sequence and safeguards
 
