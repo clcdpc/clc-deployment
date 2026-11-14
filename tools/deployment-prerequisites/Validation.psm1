@@ -155,6 +155,25 @@ function Test-ClcDeploymentPrerequisiteInputs {
     if ($labels.Count -gt 10 -or @($labels | Where-Object { $_ -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$' }).Count) { throw 'Invalid comma-separated runner labels.' }
 }
 
+function Get-ClcDeploymentPrerequisiteBypassStatus {
+    param($Rule, [ValidateSet('branch','tag')][string] $Target)
+    if ($Rule -isnot [Collections.IDictionary] -or $Rule['bypass_actors'] -isnot [array]) {return 'UNVERIFIED'}
+    $unknown=$false; $broad=$false
+    foreach ($actor in $Rule['bypass_actors']) {
+        if ($actor -isnot [Collections.IDictionary]) {$unknown=$true;continue}
+        $type=$actor['actor_type'];$mode=$actor['bypass_mode'];$id=$actor['actor_id']
+        # Both always/exempt and PR-only bypass can bypass required CI. PR-only
+        # bypass is invalid for tags and deploy keys. Never infer a hidden list.
+        if ($mode -cnotin @('always','pull_request','exempt') -or
+            ($mode -ceq 'pull_request' -and ($Target -ceq 'tag' -or $type -ceq 'DeployKey'))) {$unknown=$true;continue}
+        if ($type -cin @('OrganizationAdmin','EnterpriseOwner')) {$broad=$true;continue}
+        if (($id -isnot [int] -and $id -isnot [long]) -or $id -le 0) {$unknown=$true;continue}
+        if ($type -cin @('RepositoryRole','EnterpriseRole')) {$broad=$true}
+        elseif ($type -cnotin @('Integration','Team','DeployKey','User')) {$unknown=$true}
+    }
+    if ($broad) {'FAIL'} elseif ($unknown) {'UNVERIFIED'} else {'PASS'}
+}
+
 function Get-ClcDeploymentPrerequisiteBranchChecks {
     param($Context, $Config, $Branch)
     $action="Protect $($Config.IntegrationBranch) in Settings > Rules: require CI status checks and restrict force pushes, deletion and broad bypass actors."
@@ -162,34 +181,104 @@ function Get-ClcDeploymentPrerequisiteBranchChecks {
     $encoded=[uri]::EscapeDataString($Config.IntegrationBranch)
     $classic=Get-ClcDeploymentPrerequisiteApi $Context "$path/branches/$encoded/protection"
     $effective=Get-ClcDeploymentPrerequisiteCollection $Context "$path/rules/branches/$encoded"
-    $rules=if ($effective.ok) {@($effective.data)} else {@()}
+    # The effective-rules endpoint returns active applicable rules, including
+    # inherited rulesets. It does not require classic protection to exist.
+    # https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch
+    $rules=if ($effective.ok -and $effective.data -is [array]) {@($effective.data)} else {@()}
     $p=if ($classic.ok -and $classic.data -is [Collections.IDictionary]) {$classic.data} else {@{}}
-    $complete=$effective.ok -and ($classic.ok -or ($classic.code -eq 404 -and $Branch['protected'] -eq $false))
+    $classicKnown=($classic.ok -and $classic.data -is [Collections.IDictionary]) -or
+        ($classic.code -eq 404 -and $Branch['protected'] -is [bool] -and -not $Branch['protected'])
+    $effectiveKnown=$effective.ok -and $effective.data -is [array] -and
+        @($rules | Where-Object {$_ -isnot [Collections.IDictionary] -or $_['type'] -isnot [string]}).Count -eq 0
     $status=if ($Branch['protected'] -isnot [bool]) {'UNVERIFIED'} elseif ($Branch['protected']) {'PASS'} else {'FAIL'}
     New-ClcDeploymentPrerequisiteCheck 'github.branch.protection' $status 'The integration branch protected flag was inspected at the selected branch.' $action -Name 'Integration branch protection'
-    foreach ($item in @(@('force-push','allow_force_pushes','non_fast_forward'),@('deletion','allow_deletions','deletion'))) {
-        $flag=$p[$item[1]]
-        $present=($flag -is [Collections.IDictionary] -and $flag['enabled'] -is [bool] -and -not $flag['enabled']) -or @($rules | Where-Object {$_['type'] -ceq $item[2]}).Count -gt 0
-        $status=if ($present) {'PASS'} elseif ($complete) {'FAIL'} else {'UNVERIFIED'}
+    $bypass=@{}; $bypassUnknown=$false; $broad=$false
+    foreach ($item in @(@('force-push','allow_force_pushes','non_fast_forward'),@('deletion','allow_deletions','deletion'),@('required-checks','required_status_checks','required_status_checks'))) {
+        $value=$p[$item[1]]; $known=$classicKnown; $classicPresent=$false
+        if ($null -ne $value) {
+            if ($item[0] -ceq 'required-checks') {
+                $known=$known -and $value -is [Collections.IDictionary] -and $value['contexts'] -is [array] -and $value['checks'] -is [array]
+                if ($known) {
+                    $known=@($value['contexts'] | Where-Object {$_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_)}).Count -eq 0 -and
+                        @($value['checks'] | Where-Object {$_ -isnot [Collections.IDictionary] -or $_['context'] -isnot [string] -or [string]::IsNullOrWhiteSpace($_['context'])}).Count -eq 0
+                    $classicPresent=$known -and ($value['contexts'].Count -gt 0 -or $value['checks'].Count -gt 0)
+                }
+            } else {
+                $known=$known -and $value -is [Collections.IDictionary] -and $value['enabled'] -is [bool]
+                $classicPresent=$known -and -not $value['enabled']
+            }
+        }
+        $ruleKnown=$effectiveKnown
+        $matching=@($rules | Where-Object {$_ -is [Collections.IDictionary] -and $_['type'] -ceq $item[2]})
+        $presentRules=@(foreach ($rule in $matching) {
+            if ($item[0] -ceq 'required-checks') {
+                if ($rule['parameters'] -isnot [Collections.IDictionary] -or $rule['parameters']['required_status_checks'] -isnot [array]) {$ruleKnown=$false;continue}
+                $checks=$rule['parameters']['required_status_checks']
+                if (@($checks | Where-Object {$_ -isnot [Collections.IDictionary] -or $_['context'] -isnot [string] -or [string]::IsNullOrWhiteSpace($_['context'])}).Count) {$ruleKnown=$false;continue}
+                if (-not $checks.Count) {continue}
+            }
+            $rule
+        })
+        $status=if ($classicPresent -or $presentRules.Count) {'PASS'} elseif ($known -and $ruleKnown) {'FAIL'} else {'UNVERIFIED'}
         New-ClcDeploymentPrerequisiteCheck "github.branch.$($item[0])" $status 'Observed classic protection and active applicable rules were checked for this restriction.' $action -Name "Branch $($item[0]) restriction"
+
+        $safe=$false; $controlBroad=$false; $unknown=-not $known -or -not $ruleKnown
+        if ($classicPresent) {
+            $admins=$p['enforce_admins']
+            if ($admins -isnot [Collections.IDictionary] -or $admins['enabled'] -isnot [bool]) {$unknown=$true}
+            elseif ($admins['enabled']) {$safe=$true}
+            else {$controlBroad=$true}
+        }
+        foreach ($rule in $presentRules) {
+            $id=$rule['ruleset_id']
+            if (($id -isnot [long] -and $id -isnot [int]) -or $id -le 0) {$unknown=$true;continue}
+            if (-not $bypass.ContainsKey($id)) {
+                $detail=Get-ClcDeploymentPrerequisiteApi $Context "$path/rulesets/$($id)?includes_parents=true"
+                $bypass[$id]=if ($detail.ok -and $detail.data -is [Collections.IDictionary] -and $detail.data['target'] -ceq 'branch' -and $detail.data['enforcement'] -ceq 'active') {
+                    Get-ClcDeploymentPrerequisiteBypassStatus $detail.data branch
+                } else {'UNVERIFIED'}
+            }
+            switch -CaseSensitive ($bypass[$id]) {PASS {$safe=$true}; FAIL {$controlBroad=$true}; default {$unknown=$true}}
+        }
+        # Protections layer: broad classic/ruleset bypass is harmless to this
+        # control only when another observed source independently enforces it.
+        # https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets#about-rule-layering
+        if (-not $safe) {$broad=$broad -or $controlBroad; $bypassUnknown=$bypassUnknown -or $unknown}
     }
-    $ci=$p['required_status_checks']
-    $ciRules=@($rules | Where-Object {$_['type'] -ceq 'required_status_checks'})
-    $checks=@(@(if ($ci -is [Collections.IDictionary]) {@($ci['contexts']); @($ci['checks'])}) | Where-Object {$null -ne $_})
-    foreach ($rule in $ciRules) {$checks+=@($rule['parameters']['required_status_checks']) | Where-Object {$null -ne $_}}
-    $status=if ($checks.Count -gt 0) {'PASS'} elseif ($complete) {'FAIL'} else {'UNVERIFIED'}
-    New-ClcDeploymentPrerequisiteCheck 'github.branch.required-checks' $status 'Required CI checks were inspected in classic protection and active rules.' $action -Name 'Required CI protections'
-    $bypassKnown=$complete; $broad=$false
-    foreach ($id in @($rules | Where-Object {$_.Contains('ruleset_id')} | ForEach-Object {$_['ruleset_id']} | Select-Object -Unique)) {
-        if ($id -isnot [long] -and $id -isnot [int]) {$bypassKnown=$false;continue}
-        $detail=Get-ClcDeploymentPrerequisiteApi $Context "$path/rulesets/$($id)?includes_parents=true"
-        if (-not $detail.ok -or $detail.data['bypass_actors'] -isnot [array]) {$bypassKnown=$false;continue}
-        if (@($detail.data['bypass_actors'] | Where-Object {$_['actor_type'] -ceq 'RepositoryRole'}).Count) {$broad=$true}
-    }
-    $status=if ($broad) {'FAIL'} elseif ($bypassKnown) {'PASS'} else {'UNVERIFIED'}
-    New-ClcDeploymentPrerequisiteCheck 'github.branch.bypass' $status 'Observable applicable branch bypass settings were checked; broad repository-role bypass is not suitable for protected deployment source.' $action -Name 'Branch bypass restrictions'
+    $status=if ($broad) {'FAIL'} elseif ($bypassUnknown) {'UNVERIFIED'} else {'PASS'}
+    New-ClcDeploymentPrerequisiteCheck 'github.branch.bypass' $status 'Classic administrator enforcement and applicable ruleset actor identities/modes were checked for each required restriction, including independently enforcing layered protections.' $action -Name 'Branch bypass restrictions'
     $pr=$p['required_pull_request_reviews']
     New-ClcDeploymentPrerequisiteCheck 'github.branch.reviews' PASS $(if ($null -ne $pr) {'Optional PR review controls are configured. No universal reviewer count or CODEOWNERS approval is required by commissioning.'} else {'No mandatory PR review or CODEOWNERS control is required by this checker.'}) -Name 'Optional branch reviews'
+}
+
+function Get-ClcDeploymentPrerequisiteTagPatternScope {
+    param($Pattern, [ValidateSet('DEV','Test','Production')][string] $Channel)
+    # A finite set of proven coverage/disjointness cases, not a fnmatch engine.
+    # Unknown overlaps remain inconclusive, even when another policy is broad.
+    if ($Pattern -isnot [string] -or -not $Pattern) {return 'Unknown'}
+    if ($Pattern -cin @('~ALL','refs/tags/*','refs/tags/v*','refs/tags/v*.*.*')) {return 'Full'}
+    foreach ($suffix in @('dev','test','beta','rc')) {
+        if ($Pattern -cin @("refs/tags/v*-$suffix.*","refs/tags/v*.*.*-$suffix.*")) {
+            $selected=($Channel -ceq 'DEV' -and $suffix -ceq 'dev') -or ($Channel -ceq 'Test' -and $suffix -ceq 'test')
+            if ($selected) {return 'Full'} else {return 'Disjoint'}
+        }
+    }
+    if ($Pattern -cmatch '^refs/tags/v[0-9]+\*$') {return 'Partial'}
+    if ($Pattern -cnotmatch '[*?\[\\]') {
+        $selected=switch -CaseSensitive ($Channel) {
+            DEV {'^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$'}
+            Test {'^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-test\.[0-9]+$'}
+            Production {'^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'}
+        }
+        if ($Pattern -cmatch $selected) {return 'Partial'} else {return 'Disjoint'}
+    }
+    # A conflicting literal prefix proves disjointness without interpreting
+    # any wildcard. Every applicable version tag starts refs/tags/v<digit>.
+    $prefix=($Pattern -csplit '[*?\[\\]',2)[0];$base='refs/tags/v'
+    $length=[Math]::Min($prefix.Length,$base.Length)
+    if ($prefix.Substring(0,$length) -cne $base.Substring(0,$length) -or
+        ($prefix.Length -gt $base.Length -and $prefix[$base.Length] -cnotmatch '[0-9]')) {return 'Disjoint'}
+    'Unknown'
 }
 
 function Get-ClcDeploymentPrerequisiteTagChecks {
@@ -197,38 +286,42 @@ function Get-ClcDeploymentPrerequisiteTagChecks {
     $path="/repos/$($Config.Repository)/rulesets"
     $list=Get-ClcDeploymentPrerequisiteCollection $Context "$($path)?includes_parents=true"
     $action="Configure active tag creation/update/deletion restrictions for the selected $($Config.DeploymentChannel) version tags, with only independently controlled release bypass actors."
-    $patterns=switch -CaseSensitive ($Config.DeploymentChannel) {
-        DEV {@('refs/tags/v*-dev.*')}; Test {@('refs/tags/v*-beta.*','refs/tags/v*-rc.*')}; Production {@('refs/tags/v*')}
-    }
-    $found=@{};foreach ($pattern in $patterns) {$found[$pattern]=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)}
+    $found=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $unknown=-not $list.ok; $bypassKnown=$list.ok; $broad=$false; $actors=$false
     if ($list.ok) { foreach ($entry in $list.data) {
-        if ($entry['id'] -isnot [long] -and $entry['id'] -isnot [int]) {$unknown=$true;continue}
+        if ($entry -isnot [Collections.IDictionary]) {$unknown=$true;continue}
+        if ($entry['target'] -cin @('branch','push') -or $entry['enforcement'] -cin @('disabled','evaluate')) {continue}
+        if (($entry['id'] -isnot [long] -and $entry['id'] -isnot [int]) -or $entry['id'] -le 0) {$unknown=$true;continue}
         $response=Get-ClcDeploymentPrerequisiteApi $Context "$path/$($entry['id'])?includes_parents=true"
         if (-not $response.ok) {$unknown=$true;$bypassKnown=$false;continue}
         $rule=$response.data
         if ($rule -isnot [Collections.IDictionary]) {$unknown=$true;continue}
-        if ($rule['target'] -cne 'tag' -or $rule['enforcement'] -cne 'active') {continue}
+        if ($rule['target'] -cin @('branch','push') -or $rule['enforcement'] -cin @('disabled','evaluate')) {continue}
+        if ($rule['target'] -cne 'tag' -or $rule['enforcement'] -cne 'active' -or $rule['conditions'] -isnot [Collections.IDictionary]) {$unknown=$true;continue}
         $refs=$rule['conditions']['ref_name']
-        if ($null -eq $refs -or $refs['include'] -isnot [array] -or $refs['exclude'] -isnot [array]) {$unknown=$true;continue}
-        if (@($refs['exclude']).Count) {$unknown=$true;continue}
-        $applicable=@($patterns | Where-Object {$pattern=$_; @($refs['include'] | Where-Object {$_ -cin @('~ALL','refs/tags/*','refs/tags/v*',$pattern)}).Count -gt 0})
-        if (-not $applicable.Count) {continue}
-        if ($rule['bypass_actors'] -isnot [array]) {$bypassKnown=$false}
-        else {
-            $actors=$actors -or $rule['bypass_actors'].Count -gt 0
-            if (@($rule['bypass_actors'] | Where-Object {$_['actor_type'] -ceq 'RepositoryRole'}).Count) {$broad=$true}
-        }
+        if ($refs -isnot [Collections.IDictionary] -or $refs['include'] -isnot [array]) {$unknown=$true;continue}
+        $scopes=@($refs['include'] | ForEach-Object {Get-ClcDeploymentPrerequisiteTagPatternScope $_ $Config.DeploymentChannel})
+        # Decide relevance before exclusions/unsupported data can contaminate
+        # selected-channel results. Empty includes select no tags.
+        if (-not @($scopes | Where-Object {$_ -cne 'Disjoint'}).Count) {continue}
+        if ($scopes -ccontains 'Unknown') {$unknown=$true}
+        if ($refs['exclude'] -isnot [array] -or $refs['exclude'].Count) {$unknown=$true;continue}
+        $bypassStatus=Get-ClcDeploymentPrerequisiteBypassStatus $rule tag
+        if ($bypassStatus -ceq 'FAIL') {$broad=$true} elseif ($bypassStatus -ceq 'UNVERIFIED') {$bypassKnown=$false}
+        if ($rule['bypass_actors'] -is [array]) {$actors=$actors -or $rule['bypass_actors'].Count -gt 0}
         if ($rule['rules'] -isnot [array]) {$unknown=$true;continue}
-        foreach ($pattern in $applicable) {foreach ($item in $rule['rules']) {if ($item['type'] -cin @('creation','update','deletion')) {[void]$found[$pattern].Add($item['type'])}}}
+        foreach ($item in $rule['rules']) {
+            if ($item -isnot [Collections.IDictionary] -or $item['type'] -isnot [string]) {$unknown=$true;continue}
+            if ($scopes -ccontains 'Full' -and $item['type'] -cin @('creation','update','deletion')) {[void]$found.Add($item['type'])}
+        }
     }}
     foreach ($type in @('creation','update','deletion')) {
-        $covered=@($patterns | Where-Object {-not $found[$_].Contains($type)}).Count -eq 0
+        $covered=$found.Contains($type)
         $status=if ($covered) {'PASS'} elseif ($unknown) {'UNVERIFIED'} else {'FAIL'}
         New-ClcDeploymentPrerequisiteCheck "github.tags.$type" $status "Active rules were inspected for $type of selected-channel version tags; evaluate-only rules do not enforce protection." $action -Name "Release tag $type restriction"
     }
     $status=if ($broad) {'FAIL'} elseif (-not $bypassKnown -or $unknown) {'UNVERIFIED'} else {'PASS'}
-    New-ClcDeploymentPrerequisiteCheck 'github.tags.bypass' $status 'Observable tag bypass restrictions were inspected; unrestricted repository-role bypass broadens release admission.' $action -Name 'Tag bypass restrictions'
+    New-ClcDeploymentPrerequisiteCheck 'github.tags.bypass' $status 'Observable selected-channel tag bypass actor identities and modes were inspected; broad administrator or role bypass broadens release admission.' $action -Name 'Tag bypass restrictions'
     New-ClcDeploymentPrerequisiteCheck 'github.tags.authority' UNVERIFIED $(if ($actors) {'Configured release bypass actors still require infrastructure ownership; API settings do not prove their future behavior.'} else {'API observations do not prove future release-producer or administrator behavior.'}) 'Retain independent control of release producers and authorized bypass identities.' -Name 'Release authority limitation'
 }
 

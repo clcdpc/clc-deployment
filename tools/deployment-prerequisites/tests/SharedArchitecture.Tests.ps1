@@ -62,7 +62,7 @@ Describe 'Commissioning GitHub observations' {
             switch ($Kind) {
                 evaluate {$rule.enforcement='evaluate'}
                 empty {$rule.rules=@()}
-                'role-bypass' {$rule.bypass_actors=@(@{actor_type='RepositoryRole';actor_id=5})}
+                'role-bypass' {$rule.bypass_actors=@(@{actor_type='RepositoryRole';actor_id=5;bypass_mode='always'})}
                 narrow {$rule.conditions.ref_name.include=@('refs/tags/v1*')}
             }
             $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
