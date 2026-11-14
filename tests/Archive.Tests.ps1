@@ -92,10 +92,14 @@ Describe 'Complete raw ZIP validation without extraction' {
         New-TestZip $archivePath ($entries + $key)
         Test-TestRejection { Test-ClcRelease $archivePath } 'Clc.UnsafeArchive*'
     }
-    It 'rejects unsafe web.config even when all declared hashes are rebuilt consistently' {
+    It 'rejects structurally unsafe web.config even with consistent inventory: <Label>' -ForEach @(
+        @{ Label='malformed'; Xml='<configuration>' },
+        @{ Label='DTD/entity'; Xml='<!DOCTYPE configuration [<!ENTITY x "expanded">]><configuration>&x;</configuration>' },
+        @{ Label='oversized'; Xml='<configuration><!--'+('x'*4194304)+'--></configuration>' }
+    ) {
         $entries = @($seedEntries | ForEach-Object { $_.Clone() })
         $web = $entries | Where-Object { $_.name -ceq 'application/web.config' }
-        $web.bytes = [Text.Encoding]::UTF8.GetBytes((Get-TestWebConfig).Replace('processPath="dotnet"','processPath="cmd.exe"'))
+        $web.bytes = [Text.Encoding]::UTF8.GetBytes($Xml)
         $manifest = [Text.Encoding]::UTF8.GetString($entries[0].bytes) | ConvertFrom-Json -AsHashtable
         $file = $manifest.files | Where-Object { $_.path -ceq 'application/web.config' }
         $file.length = $web.bytes.Length

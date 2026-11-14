@@ -239,6 +239,30 @@ Context 'Draft GitHub release lookup and refresh' {
 }
 
 Context 'HTTP credential boundaries' {
+    It 'downloads Actions artifacts from changing Azure storage hosts without forwarding the bearer token' {
+        $handler = [ClcReleaseTests.RecordingHandler]::new()
+        $handler.Enqueue(302,'https://productionresultssa14.blob.core.windows.net/actions-results/artifact.zip?signature=fixture',[byte[]]::new(0))
+        $handler.Enqueue(200,$null,[byte[]]::new(0))
+        $client = New-SharedReleaseHttpClient -Handler $handler
+        try {
+            $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Get,'https://api.github.com/repos/clcdpc/ssrs-web/actions/artifacts/42/zip')
+            $response = Send-SharedReleaseHttpRequest -Client $client -Request $request -Repository clcdpc/ssrs-web -GitHubToken 'github-fixture-token' -GitHubAuthorization -AllowActionsStorageRedirect
+            $response.Dispose()
+            $handler.RequestUris.Count | Should -Be 2
+            $handler.AuthorizationValues[0] | Should -BeExactly 'Bearer github-fixture-token'
+            $handler.AuthorizationValues[1] | Should -BeNullOrEmpty
+        } finally { $client.Dispose(); $handler.Dispose() }
+    }
+    It 'rejects a deceptive storage suffix before redirecting an artifact request' {
+        $handler = [ClcReleaseTests.RecordingHandler]::new()
+        $handler.Enqueue(302,'https://productionresultssa14.blob.core.windows.net.example.invalid/artifact.zip',[byte[]]::new(0))
+        $client = New-SharedReleaseHttpClient -Handler $handler
+        try {
+            $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Get,'https://api.github.com/repos/clcdpc/ssrs-web/actions/artifacts/42/zip')
+            { Send-SharedReleaseHttpRequest -Client $client -Request $request -Repository clcdpc/ssrs-web -GitHubToken 'github-fixture-token' -GitHubAuthorization -AllowActionsStorageRedirect } | Should -Throw '*not allowlisted*'
+            $handler.RequestUris.Count | Should -Be 1
+        } finally { $client.Dispose(); $handler.Dispose() }
+    }
     It 'sends the GitHub token to the API request and omits it from an approved asset redirect' {
         $handler = [ClcReleaseTests.RecordingHandler]::new()
         $handler.Enqueue(302,'https://release-assets.githubusercontent.com/release/asset',[byte[]]::new(0))

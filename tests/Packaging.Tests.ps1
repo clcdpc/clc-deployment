@@ -39,13 +39,26 @@ Describe 'New-ClcRelease safe packaging' {
         [IO.File]::ReadAllText($publishArgs.OutputPath) | Should -Be 'existing-output-sentinel'
         [IO.File]::ReadAllText($sentinel) | Should -Be 'unowned-sentinel'
     }
-    It 'accepts the SDK logging basename only when stdout logging is disabled' {
+    It 'preserves application-owned web.config semantics for <Label>' -ForEach @(
+        @{ Label='conventional ASP.NET Core'; EntryPoint='Probe.dll'; Xml=(Get-TestWebConfig) },
+        @{ Label='ASAP WebDAV removals'; EntryPoint='Probe.dll'; Xml=(Get-TestWebConfig).Replace('<handlers>','<handlers><remove name="WebDAV" />').Replace('</handlers>','</handlers><modules><remove name="WebDAVModule" /></modules>') },
+        @{ Label='Favorite Authors Production launch'; EntryPoint='FavoriteAuthors.Web.dll'; Xml=(Get-TestWebConfig).Replace('.\Probe.dll','.\FavoriteAuthors.Web.dll --environment=Production') },
+        @{ Label='application IIS settings'; EntryPoint='Probe.dll'; Xml=(Get-TestWebConfig).Replace('<handlers>','<httpProtocol><customHeaders><add name="X-App" value="example" /></customHeaders></httpProtocol><handlers>').Replace('stdoutLogEnabled="false"','stdoutLogEnabled="true" stdoutLogFile="C:\app-logs\stdout"').Replace(' /></system.webServer>','><environmentVariables><environmentVariable name="APP_MODE" value="example" /></environmentVariables></aspNetCore></system.webServer>') }
+    ) {
         $path = Join-Path $publishArgs.PublishRoot 'web.config'
-        [IO.File]::WriteAllText($path,(Get-TestWebConfig).Replace('stdoutLogEnabled="false"','stdoutLogEnabled="false" stdoutLogFile=".\logs\stdout"'))
-        $null = New-ClcRelease @publishArgs
-        [IO.File]::Delete($publishArgs.OutputPath)
-        [IO.File]::WriteAllText($path,(Get-TestWebConfig).Replace('stdoutLogEnabled="false"','stdoutLogEnabled="false" stdoutLogFile="C:\private\log"'))
-        Test-TestRejection { New-ClcRelease @publishArgs } 'Clc.UnsafeArchive*'
+        [IO.File]::WriteAllText($path,$Xml)
+        if ($EntryPoint -cne 'Probe.dll') {
+            [IO.File]::Move((Join-Path $publishArgs.PublishRoot 'Probe.dll'),(Join-Path $publishArgs.PublishRoot $EntryPoint))
+            [IO.File]::Move((Join-Path $publishArgs.PublishRoot 'Probe.runtimeconfig.json'),(Join-Path $publishArgs.PublishRoot ([IO.Path]::GetFileNameWithoutExtension($EntryPoint)+'.runtimeconfig.json')))
+            $metadata=Get-TestMetadata; $metadata.validation.entryPoint=$EntryPoint
+            Write-TestJson $publishArgs.MetadataPath $metadata
+        }
+        $before=Get-TestTreeHashes $publishArgs.PublishRoot
+        $release=New-ClcRelease @publishArgs
+        (Test-ClcRelease $release.archivePath).integrityVerified | Should -BeTrue
+        (Get-TestTreeHashes $publishArgs.PublishRoot) | Should -BeExactly $before
+        $packaged=@(Get-TestZipEntries $release.archivePath | Where-Object name -CEQ 'application/web.config')[0]
+        [Text.Encoding]::UTF8.GetString($packaged.bytes) | Should -BeExactly $Xml
     }
     It 'removes only its owned temporary after a bounded build failure' {
         $sentinel = Join-Path (Split-Path $publishArgs.OutputPath) '.clc-build-unowned.tmp'
@@ -62,16 +75,20 @@ Describe 'New-ClcRelease safe packaging' {
         Test-TestRejection { New-ClcRelease @publishArgs } 'Clc.InvalidContract*'
         [IO.File]::Exists($publishArgs.OutputPath) | Should -BeFalse
     }
-    It 'rejects unsafe ANCM XML <Label> before output' -ForEach @(
+    It 'rejects structurally unsafe XML <Label> before output' -ForEach @(
+        @{ Label='empty'; Xml='' },
+        @{ Label='malformed'; Xml='<configuration><system.webServer></configuration>' },
         @{ Label='DTD'; Xml='<!DOCTYPE configuration [<!ENTITY x SYSTEM "file:///C:/missing">]><configuration>&x;</configuration>' },
         @{ Label='external entity'; Xml='<!DOCTYPE configuration SYSTEM "https://synthetic.invalid/remote"><configuration />' },
-        @{ Label='launch arguments'; Xml=(Get-TestWebConfig).Replace('.\Probe.dll','.\Probe.dll --execute') },
-        @{ Label='credentials'; Xml=(Get-TestWebConfig).Replace('hostingModel="inprocess"','hostingModel="inprocess" password="synthetic-sentinel"') },
-        @{ Label='environment'; Xml=(Get-TestWebConfig).Replace(' /></system.webServer>','><environmentVariables><environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Development" /></environmentVariables></aspNetCore></system.webServer>') },
-        @{ Label='out of process'; Xml=(Get-TestWebConfig).Replace('inprocess','outofprocess') },
-        @{ Label='logging'; Xml=(Get-TestWebConfig).Replace('stdoutLogEnabled="false"','stdoutLogEnabled="true"') }
+        @{ Label='internal entity'; Xml='<!DOCTYPE configuration [<!ENTITY x "expanded">]><configuration>&x;</configuration>' },
+        @{ Label='oversized'; Xml='<configuration><!--'+('x'*4194304)+'--></configuration>' }
     ) {
         [IO.File]::WriteAllText((Join-Path $publishArgs.PublishRoot 'web.config'),$Xml)
+        Test-TestRejection { New-ClcRelease @publishArgs } 'Clc.UnsafeArchive*'
+        [IO.File]::Exists($publishArgs.OutputPath) | Should -BeFalse
+    }
+    It 'requires the exact managed web.config path' {
+        [IO.File]::Move((Join-Path $publishArgs.PublishRoot 'web.config'),(Join-Path $workspace 'web.config'))
         Test-TestRejection { New-ClcRelease @publishArgs } 'Clc.UnsafeArchive*'
         [IO.File]::Exists($publishArgs.OutputPath) | Should -BeFalse
     }

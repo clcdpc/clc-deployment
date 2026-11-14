@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "persistent-state-approval",
+  "$comment": "Untrusted shape only. The strict PowerShell parser additionally enforces integer tokens, UTF-8 and size/depth bounds, duplicate/case-duplicate keys, physical paths, native SIDs/timestamps and semantic relationships. This record grants no authority without protected infrastructure ownership and exact target binding.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractFamily",
+    "schemaVersion",
+    "recordKind",
+    "approvalId",
+    "enabled",
+    "targetId",
+    "attemptId",
+    "journalSha256",
+    "mode",
+    "selectedManifestSha256",
+    "externalStateCompatible",
+    "helpersQuiescentConfirmed",
+    "authorization"
+  ],
+  "properties": {
+    "contractFamily": {
+      "const": "clc-file-iis-v1"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "recordKind": {
+      "const": "persistent-state-approval"
+    },
+    "approvalId": {
+      "$ref": "#/$defs/id"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "targetId": {
+      "$ref": "#/$defs/id"
+    },
+    "attemptId": {
+      "$ref": "#/$defs/guid"
+    },
+    "journalSha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "mode": {
+      "enum": [
+        "RestorePrevious",
+        "AcceptCandidate",
+        "RestoreEmpty"
+      ]
+    },
+    "selectedManifestSha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "externalStateCompatible": {
+      "type": "boolean"
+    },
+    "helpersQuiescentConfirmed": {
+      "type": "boolean"
+    },
+    "authorization": {
+      "$ref": "#/$defs/authorization"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "hash": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "sid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 184,
+      "pattern": "^S-1-(0|[1-9][0-9]*)(-(0|[1-9][0-9]*)){1,15}$"
+    },
+    "utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 28,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,7})?Z$",
+      "format": "date-time"
+    },
+    "absolutePath": {
+      "type": "string",
+      "maxLength": 240,
+      "pattern": "^[A-Za-z]:\\\\[^\\x00-\\x1f\\x7f/:*?\"<>|]+$",
+      "minLength": 4
+    },
+    "guid": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 36,
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authoritySid",
+        "reference",
+        "approvedUtc"
+      ],
+      "properties": {
+        "authoritySid": {
+          "$ref": "#/$defs/sid"
+        },
+        "reference": {
+          "$ref": "#/$defs/code"
+        },
+        "approvedUtc": {
+          "$ref": "#/$defs/utc"
+        }
+      }
+    }
+  }
+}

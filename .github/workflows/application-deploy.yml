@@ -1,0 +1,114 @@
+name: Shared application deployment
+on:
+  workflow_call:
+    inputs:
+      reference:
+        type: string
+        required: true
+      source-commit:
+        type: string
+        required: true
+      producer-run-id:
+        type: number
+        required: true
+      producer-run-attempt:
+        type: number
+        required: true
+      artifact-id:
+        type: number
+        default: 0
+      automatic:
+        type: boolean
+        default: true
+      operation:
+        type: string
+        default: Deploy
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+jobs:
+  admit:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    outputs:
+      admitted: ${{ steps.admission.outputs.admitted }}
+      environment: ${{ steps.admission.outputs.environment }}
+      runner-group: ${{ steps.admission.outputs.runner_group }}
+      runner-labels: ${{ steps.admission.outputs.runner_labels }}
+      target-id: ${{ steps.admission.outputs.target_id }}
+      configuration-blob: ${{ steps.admission.outputs.configuration_blob }}
+      artifact-id: ${{ steps.admission.outputs.artifact_id }}
+    steps:
+      - &bootstrap
+        name: Authenticate immutable shared workflow revision
+        id: bootstrap
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          try {
+            $response = Invoke-RestMethod -Uri ($env:ACTIONS_ID_TOKEN_REQUEST_URL + '&audience=clc-deployment') -Headers @{Authorization=('Bearer ' + $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)} -TimeoutSec 30
+            $part = $response.value.Split('.')[1].Replace('-','+').Replace('_','/')
+            $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($part.PadRight($part.Length + (4 - $part.Length % 4) % 4,'='))) | ConvertFrom-Json -AsHashtable
+            $expected = 'clcdpc/clc-deployment/.github/workflows/application-deploy.yml@' + $claims.job_workflow_sha
+            if ($claims.iss -cne 'https://token.actions.githubusercontent.com' -or $claims.aud -cne 'clc-deployment' -or $claims.job_workflow_sha -cnotmatch '^[a-f0-9]{40}$' -or $claims.job_workflow_ref -cne $expected -or $claims.exp -le [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) { throw 'Invalid platform identity.' }
+            $projection = [ordered]@{}
+            foreach ($key in @('iss','aud','repository','workflow_ref','workflow_sha','job_workflow_ref','job_workflow_sha','event_name','actor','environment')) { if ($claims.Contains($key)) { $projection[$key] = $claims[$key] } }
+            'sha=' + $claims.job_workflow_sha | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            'claims=' + ($projection | ConvertTo-Json -Compress) | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } catch { throw 'Cannot authenticate immutable shared workflow through the GitHub job endpoint.' }
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: ${{ steps.bootstrap.outputs.sha }}
+          persist-credentials: false
+      - name: Verify deployment admission before routing
+        id: admission
+        shell: pwsh
+        env: &release-inputs
+          GH_TOKEN: ${{ github.token }}
+          CLC_CLAIMS: ${{ steps.bootstrap.outputs.claims }}
+          CLC_REPOSITORY: ${{ github.repository }}
+          CLC_REFERENCE: ${{ inputs.reference }}
+          CLC_SOURCE: ${{ inputs.source-commit }}
+          CLC_RUN: ${{ inputs.producer-run-id }}
+          CLC_ATTEMPT: ${{ inputs.producer-run-attempt }}
+          CLC_ARTIFACT: ${{ inputs.artifact-id }}
+          CLC_AUTOMATIC: ${{ inputs.automatic }}
+          CLC_OPERATION: ${{ inputs.operation }}
+        run: |
+          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Admit -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_ARTIFACT) -Automatic ([bool]::Parse($env:CLC_AUTOMATIC)) -Operation $env:CLC_OPERATION -OutputDirectory (Join-Path $env:RUNNER_TEMP 'clc-application-admission')
+  deploy:
+    needs: admit
+    env:
+      CLC_QUEUED_ARTIFACT: ${{ needs.admit.outputs.artifact-id }}
+      CLC_CONFIG_BLOB: ${{ needs.admit.outputs.configuration-blob }}
+    if: needs.admit.outputs.admitted == 'true'
+    timeout-minutes: 45
+    environment: ${{ needs.admit.outputs.environment }}
+    runs-on:
+      group: ${{ needs.admit.outputs.runner-group }}
+      labels: ${{ fromJSON(needs.admit.outputs.runner-labels) }}
+    concurrency:
+      group: clc-application-${{ github.repository }}-${{ needs.admit.outputs.target-id }}
+      cancel-in-progress: false
+    steps:
+      - *bootstrap
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: ${{ steps.bootstrap.outputs.sha }}
+          persist-credentials: false
+      - name: Repeat verification and invoke installed toolkit
+        shell: pwsh
+        env: *release-inputs
+        run: |
+          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Deploy -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_QUEUED_ARTIFACT) -Automatic ([bool]::Parse($env:CLC_AUTOMATIC)) -Operation $env:CLC_OPERATION -ExpectedConfigurationBlob $env:CLC_CONFIG_BLOB -OutputDirectory (Join-Path $env:RUNNER_TEMP ('clc-application-deployment-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT))
+      - name: Retain safe deployment summary
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: clc-deployment-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clc-application-deployment-${{ github.run_id }}-${{ github.run_attempt }}/deployment-summary.json
+          if-no-files-found: ignore
+          retention-days: 30

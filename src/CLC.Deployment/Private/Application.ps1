@@ -10,7 +10,7 @@ using System.Threading;
 namespace Clc.Lifecycle {
     public sealed class Captured { public byte[] Bytes; public bool Overflow; }
     public sealed class Running { public Process Process; public Task<Captured> Output, Errors; }
-    public sealed class ValidationOutput { public byte[] Bytes; public bool Failed; }
+    public sealed class ValidationOutput { public byte[] Bytes; public bool Failed; public bool Overflow; }
     public sealed class HealthOutput { public byte[] Bytes; public bool Accepted; }
     public static class Native {
         private static async Task<Captured> Read(Stream source, int limit) {
@@ -45,6 +45,12 @@ namespace Clc.Lifecycle {
             foreach (var arg in new[] {dll,"--validate-deployment","--configuration-path",configuration,"--data-protection-root",keys,"--environment",environment}) info.ArgumentList.Add(arg);
             return Start(info,8192);
         }
+        public static Running Hook(string executable, string script, string context) {
+            if (Path.GetFileName(executable)!="pwsh.exe" || Path.GetExtension(script)!=".ps1") throw new IOException("Invalid hook.");
+            var info=Info(executable,Path.GetDirectoryName(script));
+            foreach (var arg in new[] {"-NoLogo","-NoProfile","-NonInteractive","-File",script,"-ContextPath",context}) info.ArgumentList.Add(arg);
+            return Start(info,8192);
+        }
         public static Running Iis(string executable, string operation, string pool) {
             if (!String.Equals(Path.GetFileName(executable),"appcmd.exe",StringComparison.OrdinalIgnoreCase) ||
                 (operation!="Stop" && operation!="Start") ||
@@ -59,7 +65,7 @@ namespace Clc.Lifecycle {
             int remaining=Math.Max(0,milliseconds-(int)clock.ElapsedMilliseconds);
             if (!running.Process.WaitForExit(remaining)) return new ValidationOutput { Failed=true };
             var output=running.Output.GetAwaiter().GetResult(); var errors=running.Errors.GetAwaiter().GetResult();
-            return new ValidationOutput { Bytes=output.Bytes, Failed=output.Overflow || errors.Overflow || running.Process.ExitCode!=0 };
+            return new ValidationOutput { Bytes=output.Bytes, Overflow=output.Overflow || errors.Overflow, Failed=output.Overflow || errors.Overflow || running.Process.ExitCode!=0 };
         }
         public static HttpClientHandler ReadinessHandler() {
             return new HttpClientHandler { AllowAutoRedirect=false, UseCookies=false, UseDefaultCredentials=false,
