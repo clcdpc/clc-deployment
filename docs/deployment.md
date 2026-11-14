@@ -6,7 +6,7 @@ Follow the [public contracts](contracts.md) for command, approval, package and s
 
 Import the exact independently installed manifest in a fresh trusted PowerShell process. Infrastructure must provision and approve the dedicated Windows Server 2022/IIS target, elevated deployment identity, separate nonadministrator runtime, .NET/ANCM, protected configuration/keys, target/approval catalogs and exact toolkit pin. `Test-ClcRelease` reports integrity only.
 
-For a consumer using GitHub Actions, complete the [GitHub setup checklist](github-setup.md) before enabling its privileged deployment workflow. Runner admission and environment review are separate from protected host and exact-byte release approval.
+For a consumer using GitHub Actions, complete the [GitHub setup checklist](github-setup.md) before enabling its trusted automatic deployment consumer. The recommended integration consumes successful eligible tagged builds under standing policy after an independently approved baseline. Runner admission and infrastructure-approved environment protection are separate from protected host and exact-byte release approval. The exact manual commands below remain supported for independently authorized operations.
 
 ```powershell
 Import-Module 'C:\approved-toolkit\versions\<version>\CLC.Deployment\CLC.Deployment.psd1'

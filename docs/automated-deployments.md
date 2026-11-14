@@ -12,6 +12,8 @@ The strict [standing schema](../schemas/standing-authorization.schema.json) and 
 
 ## Trusted Actions admission
 
+The recommended [GitHub setup](github-setup.md) uses tag-driven release builds and trusted automatic deployment consumers from protected code. A consumer release workflow may permit `workflow_dispatch` for fresh builds against existing immutable tags; it is not a manual IIS deployment trigger. Successful completion still enters the same automatic verification/admission path. Infrastructure independently approves environment gates and activation; unattended routine deployment does not require per-run human review.
+
 Restrict privileged runners and deployment credentials to reviewed protected workflow code. Verify GitHub repository identity, immutable tag/object and source commit, source eligibility, reviewed producer files, successful exact build run/attempt/job and immutable artifact ownership. Download only that artifact, verify the service transport SHA-256, inspect the inner package and exact manifest, and repeat tag/source/eligibility checks after queueing. Do not execute artifact scripts or PR code on the privileged host. Both a tag push and a fresh successful run against an existing immutable tag can qualify; the workflow owns GitHub event eligibility.
 
 Use Test-ClcRelease -ReleaseTag for shared classification: v1.0.0-dev.1 is DEV, v1.0.0 is Production, beta/RC are ArtifactOnly. It returns numeric releaseSequence and a suggested tag-derived releaseId without host access or execution authority. The manifest/compiled application may keep its own safe releaseId, including a run-derived identity.
