@@ -6,7 +6,7 @@ Follow the [public contracts](contracts.md) for command, approval, package and s
 
 Import the exact independently installed manifest in a fresh trusted PowerShell process. Infrastructure must provision and approve the dedicated Windows Server 2022/IIS target, elevated deployment identity, separate nonadministrator runtime, .NET/ANCM, protected configuration/keys, target/approval catalogs and exact toolkit pin. `Test-ClcRelease` reports integrity only.
 
-For a consumer using GitHub Actions, complete the [GitHub setup checklist](github-setup.md) before enabling its privileged deployment workflow. Runner admission and environment review are separate from protected host and exact-byte release approval.
+For a consumer using GitHub Actions, complete the [GitHub setup checklist](github-setup.md) before enabling its trusted automatic deployment consumer. The recommended integration consumes successful eligible tagged builds under standing policy after an independently approved baseline. Runner admission and infrastructure-approved environment protection are separate from protected host and exact-byte release approval. The exact manual commands below remain supported for independently authorized operations.
 
 ```powershell
 Import-Module 'C:\approved-toolkit\versions\<version>\CLC.Deployment\CLC.Deployment.psd1'
@@ -16,6 +16,8 @@ Restore-ClcIisDeployment -TargetId example -AttemptId '<latest-attempt-guid>' -M
 ```
 
 These are nonoperational placeholders. Public commands accept no credentials, callbacks, arbitrary target/state paths or trust-bypass flag. The independently protected enabled approval supplies the expected hashes; an inspection result, manifest, caller expectation or release name never authorizes code. Deployment never provisions credentials or operational configuration.
+
+For an already deployed baseline, infrastructure may separately enable [tag-authorized routine deployment](automated-deployments.md). `Invoke-ClcIisDeployment -TargetId $target -StandingAuthorizationId $standing -ReleaseTag $tag -ArchivePath $zip -VerifiedReleasePath $identity` validates trusted workflow-supplied release identity and exact package bytes and publishes exact authority under the same lock before this sequence. Revoked/changed policy blocks routine use of its generated approvals, including direct exact-ID retries. Existing manual approval commands need no standing policy.
 
 ## Deployment sequence and safeguards
 
@@ -46,6 +48,8 @@ An OS reboot during physical replacement is an explicitly accepted operational l
 ## Explicit recovery
 
 `Restore-ClcIisDeployment` requires the exact latest attempt, an explicit mode and a nonsecret incident/change reason. It takes the same lock, rechecks protected approvals, target identity, unchanged compatible external configuration and helper quiescence. It retains a before-recovery snapshot and never guesses an arbitrary backup path.
+
+When the selected recovery release has an automatically generated approval, also supply `-RecoveryApprovalId` selecting an independent normal schema-1 approval with matching exact release/target/source/lineage/provenance/hashes. Standing authority does not authorize recovery. Preserve the generated approval and journal bytes; a revoked standing policy does not prevent this separately approved recovery. Existing manually approved recovery is unchanged.
 
 | Mode | Required material and outcome |
 | --- | --- |

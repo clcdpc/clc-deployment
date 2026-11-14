@@ -1,0 +1,11 @@
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 1,
+  "targetId": "example",
+  "applicationId": "probe",
+  "sourceRepository": "synthetic/probe",
+  "sourceCommit": "0000000000000000000000000000000000000000",
+  "tag": "v1.0.0-dev.2",
+  "recordKind": "release-tag-binding",
+  "lineageId": "probe-main"
+}

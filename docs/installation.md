@@ -47,11 +47,14 @@ Use the fixed [machine enrollment layout](host-enrollment.md#trust-and-prerequis
 <enrollment>/toolkit/policy/host-policy.json
 <enrollment>/toolkit/policy/targets/<targetId>.json
 <enrollment>/toolkit/policy/approvals/<approvalId>.json
+<enrollment>/toolkit/policy/approvals/standing/<standingAuthorizationId>.json # optional
 <enrollment>/locks/<actual-targetKey>.lock
 <enrollment>/control/<actual-targetKey>/...
 ```
 
 The fixed control root must fit the existing 71-character root budget; locks fit the 170-character budget. Application, inbox, external configuration directory, external keys, trust/policy, control and locks remain disjoint. The disposable harness applies a shorter root bound. Use paths from its checked local configuration; these diagrams invent no production location.
+
+Optional [standing authorization](automated-deployments.md) requires a compatible installed toolkit and independently protected target-scoped policy. Trusted workflow code establishes GitHub provenance before host admission; no additional verifier or signing dependency is installed. Existing manual approvals/installations need no new directory or dependency. Generated approval schema 2 requires a compatible toolkit; retain that compatibility when independently planning toolkit replacement.
 
 1. Authenticate source and exact archive through the independent infrastructure procedure. Review all changes and producer pins. For GitHub output, verify authenticated run/job/head/artifact ID and service transport digest, then independently inspect the inner toolkit ZIP. Retain those observations under infrastructure ownership and normal ACLs, with independent backups; deployment administrator containment is unavailable.
 2. As infrastructure, create a new version directory with infrastructure ownership and read/execute-only deployment access. Its parent must prevent runtime replacement through delete-child, DACL or owner rights and reject unexpected structural write grants. Elevated deployment can inherit Administrators authority; do not add its direct SID as a protected writer or claim NTFS containment. Do not reuse or patch an installed version.

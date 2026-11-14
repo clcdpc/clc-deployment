@@ -21,6 +21,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/Private/Replacement.ps1"
 . "$PSScriptRoot/Private/Deployment.ps1"
 . "$PSScriptRoot/Private/Recovery.ps1"
+. "$PSScriptRoot/Private/Automation.ps1"
 . "$PSScriptRoot/Public/New-ClcRelease.ps1"
 . "$PSScriptRoot/Public/Test-ClcRelease.ps1"
 . "$PSScriptRoot/Public/Invoke-ClcIisDeployment.ps1"
