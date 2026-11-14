@@ -44,7 +44,7 @@ jobs:
         run: throw 'Consumer code MUST NOT execute during validation'
 '@
     $fixture=@{
-        '/repos/example/app'=(New-ApiSuccess @{ private=$true; full_name='example/app' })
+        '/repos/example/app'=(New-ApiSuccess @{ visibility='private'; private=$true; full_name='example/app' })
         '/repos/example/app/branches/master'=(New-ApiSuccess @{ protected=$true; commit=@{ sha=('b'*40) } })
         '/repos/example/app/branches/master/protection'=(New-ApiSuccess @{
             required_pull_request_reviews=@{ required_approving_review_count=1; require_code_owner_reviews=$true }

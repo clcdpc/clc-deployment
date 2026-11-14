@@ -179,15 +179,170 @@ Describe 'Read-only deployment prerequisites diagnostics' {
             $row.action | Should -Match 'no administrator credential'
         }
 
-        It 'does not confuse selected repository access with workflow protection' {
+        It 'requires public access to match the verified <Visibility> caller: <AllowsPublic> gives <Expected>' -ForEach @(
+            @{ Visibility='private'; AllowsPublic=$false; Expected='PASS' },
+            @{ Visibility='private'; AllowsPublic=$true; Expected='FAIL' },
+            @{ Visibility='public'; AllowsPublic=$true; Expected='PASS' },
+            @{ Visibility='public'; AllowsPublic=$false; Expected='FAIL' }
+        ) {
+            $fixture['/repos/example/app'].data.visibility=$Visibility
+            $fixture['/repos/example/app'].data.private=($Visibility -ceq 'private')
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=$AllowsPublic
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Calling repository visibility').status | Should -Be PASS
+            $row=$report.results | Where-Object name -EQ 'Runner repository access'
+            $row.status | Should -Be $Expected
+            if ($Expected -ceq 'FAIL') {
+                $row.detail | Should -Match 'public repository access'
+                $row.action | Should -Match $(if ($Visibility -ceq 'public') { 'enable public repositories' } else { 'disable public repositories' })
+            }
+            ($report.results | Where-Object name -EQ 'Runner selected-workflow access').status | Should -Be PASS
+            $report.ready | Should -BeFalse
+            $report.exit_code | Should -Be 0
+            ($report.passed_count+$report.failed_count+$report.unverified_count) | Should -Be $report.results.Count
+            Should -Invoke Get-DpApi -Times 1 -Exactly -ParameterFilter { $Path -eq '/repos/example/app' }
+        }
+
+        It 'accepts a typed API private flag when visibility is absent: <_>' -ForEach @($true,$false) {
+            $fixture['/repos/example/app'].data.Remove('visibility')
+            $fixture['/repos/example/app'].data.private=$_
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=(-not $_)
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be PASS
+        }
+
+        It 'accepts explicit API visibility without the optional private flag: <_>' -ForEach @('private','public') {
+            $fixture['/repos/example/app'].data.Remove('private')
+            $fixture['/repos/example/app'].data.visibility=$_
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=($_ -ceq 'public')
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be PASS
+        }
+
+        It 'leaves missing, malformed or inconsistent caller visibility UNVERIFIED: <Case>' -ForEach @(
+            @{ Case='no visibility fields'; Data=@{ full_name='example/app' } },
+            @{ Case='null private'; Data=@{ full_name='example/app'; private=$null } },
+            @{ Case='string private'; Data=@{ full_name='example/app'; private='false' } },
+            @{ Case='null visibility'; Data=@{ full_name='example/app'; visibility=$null; private=$true } },
+            @{ Case='unknown visibility'; Data=@{ full_name='example/app'; visibility='internal'; private=$true } },
+            @{ Case='malformed visibility'; Data=@{ full_name='example/app'; visibility=@('public'); private=$false } },
+            @{ Case='public/private disagreement'; Data=@{ full_name='example/app'; visibility='public'; private=$true } },
+            @{ Case='private/public disagreement'; Data=@{ full_name='example/app'; visibility='private'; private=$false } },
+            @{ Case='malformed private with visibility'; Data=@{ full_name='example/app'; visibility='private'; private='true' } },
+            @{ Case='wrong repository'; Data=@{ full_name='other/app'; visibility='public'; private=$false } },
+            @{ Case='malformed repository identity'; Data=@{ full_name=@('example/app'); visibility='public'; private=$false } },
+            @{ Case='missing repository identity'; Data=@{ visibility='public'; private=$false } }
+        ) {
+            $fixture['/repos/example/app']=New-ApiSuccess $Data
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=$true
+            $config.Strict=$true
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Calling repository visibility').status | Should -Be UNVERIFIED
+            ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be UNVERIFIED
+            @($report.results | Where-Object name -EQ 'Incomplete configuration observation').Count | Should -Be 0
+            $report.ready | Should -BeFalse
+            $report.exit_code | Should -Be 1
+        }
+
+        It 'does not infer visibility after a repository API failure: <_>' -ForEach @(0,403,404,500) {
+            $fixture['/repos/example/app']=New-ApiFailure $_
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Calling repository visibility').status | Should -Be UNVERIFIED
+            ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be UNVERIFIED
+        }
+
+        It 'rejects nonexclusive repository admission for <Visibility>: <Case>' -ForEach @(
+            @{ Visibility='private'; Case='all repositories'; GroupVisibility='all'; Repositories=@(@{ full_name='example/app' }) },
+            @{ Visibility='public'; Case='all repositories'; GroupVisibility='all'; Repositories=@(@{ full_name='example/app' }) },
+            @{ Visibility='private'; Case='private repository scope'; GroupVisibility='private'; Repositories=@(@{ full_name='example/app' }) },
+            @{ Visibility='public'; Case='private repository scope'; GroupVisibility='private'; Repositories=@(@{ full_name='example/app' }) },
+            @{ Visibility='private'; Case='extra repository'; GroupVisibility='selected'; Repositories=@(@{ full_name='example/app' },@{ full_name='example/other' }) },
+            @{ Visibility='public'; Case='extra repository'; GroupVisibility='selected'; Repositories=@(@{ full_name='example/app' },@{ full_name='example/other' }) },
+            @{ Visibility='private'; Case='wrong repository'; GroupVisibility='selected'; Repositories=@(@{ full_name='example/other' }) },
+            @{ Visibility='public'; Case='wrong repository'; GroupVisibility='selected'; Repositories=@(@{ full_name='example/other' }) },
+            @{ Visibility='private'; Case='no repository'; GroupVisibility='selected'; Repositories=@() },
+            @{ Visibility='public'; Case='no repository'; GroupVisibility='selected'; Repositories=@() }
+        ) {
+            $fixture['/repos/example/app'].data.visibility=$Visibility
+            $fixture['/repos/example/app'].data.private=($Visibility -ceq 'private')
+            $fixture['/orgs/example/actions/runner-groups/7'].data.visibility=$GroupVisibility
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=($Visibility -ceq 'public')
+            $fixture['/orgs/example/actions/runner-groups/7/repositories'].data=@{ repositories=$Repositories; total_count=$Repositories.Count }
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be FAIL
+        }
+
+        It 'leaves inaccessible selected repositories UNVERIFIED for <_>' -ForEach @('private','public') {
+            $fixture['/repos/example/app'].data.visibility=$_
+            $fixture['/repos/example/app'].data.private=($_ -ceq 'private')
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=($_ -ceq 'public')
+            $fixture['/orgs/example/actions/runner-groups/7/repositories']=New-ApiFailure 403
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be UNVERIFIED
+        }
+
+        It 'does not coerce missing or malformed public access flags: <Case>' -ForEach @(
+            @{ Case='null'; Value=$null },@{ Case='string false'; Value='false' },
+            @{ Case='string true'; Value='true' },@{ Case='zero'; Value=0 },@{ Case='one'; Value=1 }
+        ) {
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=$Value
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be UNVERIFIED
+        }
+
+        It 'requires independent public runner review even when observable admission passes' {
+            $fixture['/repos/example/app'].data.visibility='public'
+            $fixture['/repos/example/app'].data.private=$false
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=$true
+            $report=Invoke-DpValidation $config $assembly
+            $report.failed_count | Should -Be 0
+            ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be PASS
+            ($report.results | Where-Object name -EQ 'Runner selected-workflow access').status | Should -Be PASS
+            $row=$report.results | Where-Object name -EQ 'Public self-hosted runner risk'
+            $row.status | Should -Be UNVERIFIED
+            $row.action | Should -Match 'independently review'
+            (Format-DpSummary $report) | Should -Match 'untrusted PR/fork code'
+            @($report.results | Where-Object { $_.section -ceq 'Host and toolkit' -and $_.status -ceq 'UNVERIFIED' }).Count | Should -BeGreaterThan 7
+            $report.ready | Should -BeFalse
+            $fixture['/orgs/example/actions/runner-groups']=New-ApiFailure 403
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Public self-hosted runner risk').status | Should -Be UNVERIFIED
+        }
+
+        It 'can establish public caller visibility independently of integration branch access' {
+            $fixture['/repos/example/app'].data.visibility='public'
+            $fixture['/repos/example/app'].data.private=$false
+            $fixture['/repos/example/app/branches/master']=New-ApiFailure 403
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=$true
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Integration source inspection').status | Should -Be UNVERIFIED
+            ($report.results | Where-Object name -EQ 'Calling repository visibility').status | Should -Be PASS
+            ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be PASS
+            $report.ready | Should -BeFalse
+        }
+
+        It 'does not confuse selected repository access with workflow protection for <_>' -ForEach @('private','public') {
+            $fixture['/repos/example/app'].data.visibility=$_
+            $fixture['/repos/example/app'].data.private=($_ -ceq 'private')
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=($_ -ceq 'public')
             $fixture['/orgs/example/actions/runner-groups/7'].data.restricted_to_workflows=$false
             $report=Invoke-DpValidation $config $assembly
             ($report.results | Where-Object name -EQ 'Runner repository access').status | Should -Be PASS
             ($report.results | Where-Object name -EQ 'Runner selected-workflow access').status | Should -Be FAIL
         }
 
-        It 'rejects extra selected workflows and tag pinned privileged code' {
-            $fixture['/orgs/example/actions/runner-groups/7'].data.selected_workflows=@('example/app/.github/workflows/deploy-release.yml@refs/tags/v1')
+        It 'requires the single exact protected workflow for <Visibility>: <Case>' -ForEach @(
+            @{ Visibility='private'; Case='tag'; Workflows=@('example/app/.github/workflows/deploy-release.yml@refs/tags/v1') },
+            @{ Visibility='public'; Case='tag'; Workflows=@('example/app/.github/workflows/deploy-release.yml@refs/tags/v1') },
+            @{ Visibility='private'; Case='extra workflow'; Workflows=@('example/app/.github/workflows/deploy-release.yml@refs/heads/master','example/app/.github/workflows/other.yml@refs/heads/master') },
+            @{ Visibility='public'; Case='extra workflow'; Workflows=@('example/app/.github/workflows/deploy-release.yml@refs/heads/master','example/app/.github/workflows/other.yml@refs/heads/master') },
+            @{ Visibility='private'; Case='wrong branch'; Workflows=@('example/app/.github/workflows/deploy-release.yml@refs/heads/other') },
+            @{ Visibility='public'; Case='wrong branch'; Workflows=@('example/app/.github/workflows/deploy-release.yml@refs/heads/other') }
+        ) {
+            $fixture['/repos/example/app'].data.visibility=$Visibility
+            $fixture['/repos/example/app'].data.private=($Visibility -ceq 'private')
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=($Visibility -ceq 'public')
+            $fixture['/orgs/example/actions/runner-groups/7'].data.selected_workflows=$Workflows
             $report=Invoke-DpValidation $config $assembly
             ($report.results | Where-Object name -EQ 'Runner selected-workflow access').status | Should -Be FAIL
         }
@@ -361,7 +516,10 @@ Describe 'Read-only deployment prerequisites diagnostics' {
             (Get-DpCollection '/repos/example/app/rulesets?includes_parents=true').data.Count | Should -Be 1
         }
 
-        It 'never invokes external state mutation or consumer code' {
+        It 'never invokes external state mutation or consumer code for <_>' -ForEach @('private','public') {
+            $fixture['/repos/example/app'].data.visibility=$_
+            $fixture['/repos/example/app'].data.private=($_ -ceq 'private')
+            $fixture['/orgs/example/actions/runner-groups/7'].data.allows_public_repositories=($_ -ceq 'public')
             Mock Invoke-WebRequest { throw 'External web command must not run' }
             Mock Invoke-RestMethod { throw 'External REST command must not run' }
             $report=Invoke-DpValidation $config $assembly

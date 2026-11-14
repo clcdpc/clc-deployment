@@ -305,11 +305,24 @@ function Get-DpEnvironmentResults {
 }
 
 function Get-DpRunnerResults {
-    param($Config, $Results)
+    param($Config, $Results, [string] $RepositoryVisibility)
     $section='Deployment runner'
     $owner=$Config.Repository.Split('/')[0]
     $path="/orgs/$owner/actions/runner-groups"
-    $action="Organization Settings > Actions > Runner groups > $($Config.RunnerGroup): select only this repository, disable public repositories, restrict to the exact deployment workflow@refs/heads/$($Config.IntegrationBranch), and inspect group runner labels. Organization Self-hosted runners: read may be unavailable to GITHUB_TOKEN; no administrator credential is required by this validator."
+    $publicAccess = switch ($RepositoryVisibility) {
+        'private' { 'disable public repositories' }
+        'public' { 'enable public repositories for this public caller' }
+        default { 'verify caller visibility through the repository API before choosing public repository access' }
+    }
+    $action="Organization Settings > Actions > Runner groups > $($Config.RunnerGroup): select only this repository, $publicAccess, restrict to the exact deployment workflow@refs/heads/$($Config.IntegrationBranch), and inspect group runner labels. Organization Self-hosted runners: read may be unavailable to GITHUB_TOKEN; no administrator credential is required by this validator."
+    if ($RepositoryVisibility) {
+        Add-DpResult $Results $section 'Calling repository visibility' PASS "The identity-verified repository API reports a $RepositoryVisibility caller."
+    } else {
+        Add-DpResult $Results $section 'Calling repository visibility' UNVERIFIED 'The repository API did not establish a consistent public/private visibility for the caller.' $action
+    }
+    if ($RepositoryVisibility -ceq 'public') {
+        Add-DpResult $Results $section 'Public self-hosted runner risk' UNVERIFIED 'Public self-hosted runners risk executing untrusted PR/fork code. Public access enables job eligibility only; it does not establish safe admission or readiness.' 'Infrastructure must independently review public self-hosted runner risk, exact selected repository/workflow enforcement and every privileged code path; never execute untrusted PR/fork code on the deployment host.'
+    }
     $list=Get-DpCollection $path 'runner_groups'
     if (-not $list.ok) { Add-DpResult $Results $section 'Restricted runner group' UNVERIFIED $list.reason $action; return }
     $matches=@($list.data | Where-Object { $_['name'] -ceq $Config.RunnerGroup })
@@ -319,14 +332,21 @@ function Get-DpRunnerResults {
     $response=Get-DpApi "$path/$id"
     if (-not $response.ok) { Add-DpResult $Results $section 'Restricted runner group' UNVERIFIED $response.reason $action; return }
     $group=$response.data
-    if ($group['visibility'] -ceq 'selected' -and $group['allows_public_repositories'] -eq $false) {
+    if (-not $RepositoryVisibility) {
+        Add-DpResult $Results $section 'Runner repository access' UNVERIFIED 'Caller visibility could not be verified; public repository admission cannot be assessed.' $action
+    } elseif ($group -isnot [Collections.IDictionary] -or $group['visibility'] -isnot [string] -or $group['allows_public_repositories'] -isnot [bool]) {
+        Add-DpResult $Results $section 'Runner repository access' UNVERIFIED 'Repository admission fields were missing or malformed.' $action
+    } elseif ($group['visibility'] -cne 'selected') {
+        Add-DpResult $Results $section 'Runner repository access' FAIL 'Runner group access is not restricted to selected repositories.' $action
+    } elseif ($group['allows_public_repositories'] -ne ($RepositoryVisibility -ceq 'public')) {
+        $detail = if ($RepositoryVisibility -ceq 'public') { 'Public repository access is disabled, so this public caller cannot use the runner group.' } else { 'Public repository access must remain disabled for this private caller.' }
+        Add-DpResult $Results $section 'Runner repository access' FAIL $detail $action
+    } else {
         $repos=Get-DpCollection "$path/$id/repositories" 'repositories'
         if (-not $repos.ok) { Add-DpResult $Results $section 'Runner repository access' UNVERIFIED $repos.reason $action }
-        elseif (@($repos.data).Count -eq 1 -and $repos.data[0]['full_name'] -ieq $Config.Repository) { Add-DpResult $Results $section 'Runner repository access' PASS 'Selected repository access is limited to the caller; public repository access is disabled.' }
+        elseif (@($repos.data).Count -eq 1 -and $repos.data[0]['full_name'] -ieq $Config.Repository) { Add-DpResult $Results $section 'Runner repository access' PASS "Selected repository access is limited to the verified $RepositoryVisibility caller; public access matches its visibility. Workflow admission and independent administrative review remain separate requirements." }
         else { Add-DpResult $Results $section 'Runner repository access' FAIL 'Selected repositories are not limited to the caller.' $action }
-    } elseif ($group.Contains('visibility') -and $group.Contains('allows_public_repositories')) {
-        Add-DpResult $Results $section 'Runner repository access' FAIL 'Runner group access is broader than the selected private repository model.' $action
-    } else { Add-DpResult $Results $section 'Runner repository access' UNVERIFIED 'Repository admission fields were not exposed.' $action }
+    }
     $allowed="$($Config.Repository)/$($Config.DeploymentWorkflow)@refs/heads/$($Config.IntegrationBranch)"
     if ($group['restricted_to_workflows'] -eq $true -and @($group['selected_workflows']).Count -eq 1 -and $group['selected_workflows'][0] -ceq $allowed) {
         Add-DpResult $Results $section 'Runner selected-workflow access' PASS 'Only the exact expected protected-branch deployment workflow is selected.'
@@ -384,7 +404,7 @@ function Get-DpDeploymentResults {
 
 function Get-DpToolkitResults {
     param($Config, $Results, $Release, $Deployment)
-    # Deliberately independent of the unfinished standing-authorization API/schema.
+    # GitHub observations never verify installed toolkit bytes or protected standing authority.
     $section='Host and toolkit'
     $uses=@()
     foreach ($workflow in @($Release,$Deployment)) {
@@ -397,13 +417,13 @@ function Get-DpToolkitResults {
     $references=@($uses | Where-Object { $_ -clike 'clcdpc/clc-deployment/*' })
     if (@($references | Where-Object { $_ -cmatch '^clcdpc/clc-deployment/.+@[0-9a-f]{40}$' }).Count) {
         Add-DpResult $Results $section 'Shared toolkit workflow pin' PASS 'An immutable shared-toolkit uses reference was observed; this proves the reference only.'
-    } else { Add-DpResult $Results $section 'Shared toolkit workflow pin' UNVERIFIED 'No direct immutable shared-toolkit uses reference was observed; installed-toolkit and script-based integration require review.' 'Review exact toolkit source/distribution pins and shared-toolkit calls in trusted workflow/helpers after PR #2 finalizes; do not bundle an independent deployment engine.' }
+    } else { Add-DpResult $Results $section 'Shared toolkit workflow pin' UNVERIFIED 'No direct immutable shared-toolkit uses reference was observed; installed-toolkit and script-based integration require review.' 'Review exact toolkit source/distribution pins and shared-toolkit calls in trusted workflow/helpers against docs/verified-workflow-integration.md; do not bundle an independent deployment engine.' }
     foreach ($item in @(
         @('Shared toolkit execution model','Verify that trusted deployment invokes the independently installed shared toolkit and preserves its security checks; references/comments alone are insufficient.'),
         @('Compatible toolkit installation','Infrastructure must authenticate and install a compatible exact source/distribution pin before activation; see docs/installation.md.'),
         @('IIS target enrollment','Infrastructure must verify the exact target enrollment under separate authority; see docs/host-enrollment.md.'),
         @('Initial successful deployment baseline','Retain a separately authorized successful consumer baseline before routine activation; see docs/iis-verification.md.'),
-        @('Standing authorization','Infrastructure must independently provision and verify the final standing-authorization contract; do not infer it from activation variables.'),
+        @('Standing authorization','Infrastructure must independently provision and verify protected standing authorization under docs/automated-deployments.md; do not infer it from activation variables.'),
         @('Runtime identity and host permissions','Verify actual independent runtime identity and effective protected-resource write isolation on the host.'),
         @('Application configuration and Data Protection','Application and infrastructure owners must qualify external configuration, key paths and compatibility without disclosing private contents.'),
         @('Host readiness and recovery qualification','Complete separately scoped real-host readiness/deployment/recovery qualification; actual Server 2022/IIS qualification remains NOT RUN.')
@@ -445,6 +465,20 @@ function Invoke-DpValidation {
     $commit=''
     try {
         $repo=Get-DpApi "/repos/$($Config.Repository)"
+        # Use this observation only for the exact caller; never infer visibility from runner settings.
+        $repositoryVisibility=''
+        if ($repo.ok -and $repo.data -is [Collections.IDictionary] -and $repo.data['full_name'] -is [string] -and $repo.data['full_name'] -ieq $Config.Repository) {
+            $data=$repo.data
+            if ($data.Contains('visibility')) {
+                if ($data['visibility'] -is [string] -and $data['visibility'] -cin @('public','private')) {
+                    if (-not $data.Contains('private') -or ($data['private'] -is [bool] -and $data['private'] -eq ($data['visibility'] -ceq 'private'))) {
+                        $repositoryVisibility=$data['visibility']
+                    }
+                }
+            } elseif ($data['private'] -is [bool]) {
+                $repositoryVisibility=if ($data['private']) { 'private' } else { 'public' }
+            }
+        }
         $branch=Get-DpApi "/repos/$($Config.Repository)/branches/$([uri]::EscapeDataString($Config.IntegrationBranch))"
         $release=$null; $deployment=$null
         if ($repo.ok -and $branch.ok -and $repo.data -is [Collections.IDictionary] -and $repo.data['full_name'] -ieq $Config.Repository -and $branch.data -is [Collections.IDictionary] -and $branch.data['commit'] -is [Collections.IDictionary] -and $branch.data['commit']['sha'] -cmatch '^[0-9a-f]{40}$') {
@@ -456,7 +490,7 @@ function Invoke-DpValidation {
             Invoke-DpSection $results 'Repository configuration' { Get-DpWorkflowResults $Config $results $release $deployment }
         } else { Add-DpResult $results 'Repository configuration' 'Integration source inspection' UNVERIFIED 'Repository or integration branch identity could not be read reliably.' 'Verify contents: read and actions: read permissions, expected branch, repository access and API availability; retry.' }
         Invoke-DpSection $results 'GitHub Environment' { Get-DpEnvironmentResults $Config $results }
-        Invoke-DpSection $results 'Deployment runner' { Get-DpRunnerResults $Config $results }
+        Invoke-DpSection $results 'Deployment runner' { Get-DpRunnerResults $Config $results $repositoryVisibility }
         Invoke-DpSection $results 'Deployment configuration' { Get-DpDeploymentResults $Config $results $deployment }
         Invoke-DpSection $results 'Host and toolkit' { Get-DpToolkitResults $Config $results $release $deployment }
         return Complete-DpReport $Config $results $commit
