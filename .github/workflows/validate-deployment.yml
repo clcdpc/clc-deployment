@@ -1,0 +1,234 @@
+name: Validate deployment prerequisites
+
+on:
+  workflow_call:
+    inputs:
+      environment_name:
+        description: Exact caller deployment environment name
+        type: string
+        required: true
+      integration_branch:
+        description: Expected protected integration branch
+        type: string
+        default: master
+      release_workflow:
+        description: Caller release workflow path
+        type: string
+        default: .github/workflows/release.yml
+      deployment_workflow:
+        description: Caller trusted automatic deployment workflow path
+        type: string
+        default: .github/workflows/deploy-release.yml
+      runner_group:
+        description: Expected dedicated organization runner group
+        type: string
+        required: true
+      runner_labels:
+        description: Comma-separated expected labels on one group runner (no whitespace)
+        type: string
+        default: self-hosted,Windows,X64
+      activation_variable:
+        description: Repository/organization activation variable (Actions true/false comparison)
+        type: string
+        default: CLC_DEPLOYMENT_ENABLED
+      deployment_channel:
+        description: DEV or Production (case-sensitive)
+        type: string
+        default: DEV
+      environment_protection:
+        description: runner-workflow for unattended admission, or required-reviewers
+        type: string
+        default: runner-workflow
+      strict:
+        description: Fail after reporting if any requirement fails or remains unverified
+        type: boolean
+        default: false
+      application_id:
+        description: Explicit safe application selector for report binding
+        type: string
+        default: ''
+      target_id:
+        description: Explicit enrolled target selector for report binding
+        type: string
+        default: ''
+      diagnostic_workflow:
+        description: Optional consumer workflow directly defining the read-only host job
+        type: string
+        default: ''
+      administrative:
+        description: Use a protected hosted inspection job with an explicit read-only installation token
+        type: boolean
+        default: false
+    secrets:
+      inspection_token:
+        description: Optional read-only GitHub App installation token; administrative mode only
+        required: false
+    outputs:
+      report_json:
+        description: Sanitized detailed stage report for same-run hosted aggregation
+        value: ${{ jobs.validate.outputs.report_json || jobs.administrative.outputs.report_json }}
+      github_status:
+        description: PASS, FAIL or UNVERIFIED for GitHub configuration
+        value: ${{ jobs.validate.outputs.github_status || jobs.administrative.outputs.github_status }}
+      host_status:
+        description: UNVERIFIED in this independently executable hosted stage
+        value: ${{ jobs.validate.outputs.host_status || jobs.administrative.outputs.host_status }}
+      overall_ready:
+        description: Both mandatory categories must pass
+        value: ${{ jobs.validate.outputs.overall_ready || jobs.administrative.outputs.overall_ready }}
+      ready:
+        description: True only when every requirement is verified PASS; never deployment authority
+        value: ${{ jobs.validate.outputs.ready || jobs.administrative.outputs.ready }}
+      passed_count:
+        description: Verified passing checks
+        value: ${{ jobs.validate.outputs.passed_count || jobs.administrative.outputs.passed_count }}
+      failed_count:
+        description: Verified missing, incorrect or disabled requirements
+        value: ${{ jobs.validate.outputs.failed_count || jobs.administrative.outputs.failed_count }}
+      unverified_count:
+        description: Requirements with insufficient evidence or permission
+        value: ${{ jobs.validate.outputs.unverified_count || jobs.administrative.outputs.unverified_count }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate:
+    if: ${{ !inputs.administrative }}
+    runs-on: windows-2022
+    timeout-minutes: 10
+    outputs:
+      github_status: ${{ steps.validate.outputs.github_status }}
+      host_status: ${{ steps.validate.outputs.host_status }}
+      overall_ready: ${{ steps.validate.outputs.overall_ready }}
+      report_json: ${{ steps.validate.outputs.report_json }}
+      ready: ${{ steps.validate.outputs.ready }}
+      passed_count: ${{ steps.validate.outputs.passed_count }}
+      failed_count: ${{ steps.validate.outputs.failed_count }}
+      unverified_count: ${{ steps.validate.outputs.unverified_count }}
+    steps:
+      # GitHub.com's job workflow identity refers to THIS reusable definition, not the caller.
+      # Fail closed on hosts without it. Never fall back to github.sha or a consumer checkout.
+      - name: Resolve shared validator source
+        id: source
+        shell: pwsh
+        env:
+          CLC_JOB_IDENTITY: ${{ toJSON(job) }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = $env:CLC_JOB_IDENTITY | ConvertFrom-Json -AsHashtable
+          if ($identity['workflow_repository'] -cne 'clcdpc/clc-deployment' -or $identity['workflow_sha'] -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'Exact shared workflow identity unavailable; GitHub.com job workflow identity is required.'
+          }
+          "sha=$($identity['workflow_sha'])" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Read exact shared implementation
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: ${{ steps.source.outputs.sha }}
+          path: shared-validator
+          persist-credentials: false
+      - name: Provision verified YAML parser on hosted runner
+        id: dependencies
+        shell: pwsh
+        run: |
+          $dependencies = & ./shared-validator/tools/deployment-prerequisites/Initialize-Dependencies.ps1 -Destination (Join-Path $env:RUNNER_TEMP ('clc-prerequisites-' + [guid]::NewGuid()))
+          "yaml=$($dependencies.YamlAssemblyPath)" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Inspect calling repository prerequisites
+        id: validate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLC_APPLICATION: ${{ inputs.application_id }}
+          CLC_TARGET: ${{ inputs.target_id }}
+          CLC_DIAGNOSTIC: ${{ inputs.diagnostic_workflow }}
+          CLC_ENVIRONMENT: ${{ inputs.environment_name }}
+          CLC_BRANCH: ${{ inputs.integration_branch }}
+          CLC_RELEASE_WORKFLOW: ${{ inputs.release_workflow }}
+          CLC_DEPLOYMENT_WORKFLOW: ${{ inputs.deployment_workflow }}
+          CLC_RUNNER_GROUP: ${{ inputs.runner_group }}
+          CLC_RUNNER_LABELS: ${{ inputs.runner_labels }}
+          CLC_ACTIVATION_VARIABLE: ${{ inputs.activation_variable }}
+          # Only a classification enters process/log environment; never emit all vars or raw values.
+          CLC_ACTIVATION_STATE: ${{ vars[inputs.activation_variable] == 'true' && 'enabled' || vars[inputs.activation_variable] == 'false' && 'disabled' || vars[inputs.activation_variable] == '' && 'missing-or-empty' || 'invalid' }}
+          CLC_CHANNEL: ${{ inputs.deployment_channel }}
+          CLC_PROTECTION: ${{ inputs.environment_protection }}
+          CLC_STRICT: ${{ inputs.strict }}
+          CLC_YAML_ASSEMBLY: ${{ steps.dependencies.outputs.yaml }}
+        run: |
+          & ./shared-validator/tools/Validate-DeploymentPrerequisites.ps1 -EnvironmentName $env:CLC_ENVIRONMENT -IntegrationBranch $env:CLC_BRANCH -ReleaseWorkflow $env:CLC_RELEASE_WORKFLOW -DeploymentWorkflow $env:CLC_DEPLOYMENT_WORKFLOW -RunnerGroup $env:CLC_RUNNER_GROUP -RunnerLabels $env:CLC_RUNNER_LABELS -ActivationVariable $env:CLC_ACTIVATION_VARIABLE -DeploymentChannel $env:CLC_CHANNEL -EnvironmentProtection $env:CLC_PROTECTION -YamlAssemblyPath $env:CLC_YAML_ASSEMBLY -ApplicationId $env:CLC_APPLICATION -TargetId $env:CLC_TARGET -DiagnosticWorkflow $env:CLC_DIAGNOSTIC -ReportPath (Join-Path $env:RUNNER_TEMP "github-readiness.json") -Strict:($env:CLC_STRICT -ceq 'true')
+          $code=$LASTEXITCODE
+          $json=Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'github-readiness.json') -Raw | ConvertFrom-Json -AsHashtable | ConvertTo-Json -Depth 12 -Compress
+          "report_json=$json" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          exit $code
+
+  administrative:
+    if: inputs.administrative && github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', inputs.integration_branch) && github.ref_protected
+    environment: deployment-configuration-inspection
+    runs-on: windows-2022
+    timeout-minutes: 10
+    outputs:
+      github_status: ${{ steps.validate.outputs.github_status }}
+      host_status: ${{ steps.validate.outputs.host_status }}
+      overall_ready: ${{ steps.validate.outputs.overall_ready }}
+      report_json: ${{ steps.validate.outputs.report_json }}
+      ready: ${{ steps.validate.outputs.ready }}
+      passed_count: ${{ steps.validate.outputs.passed_count }}
+      failed_count: ${{ steps.validate.outputs.failed_count }}
+      unverified_count: ${{ steps.validate.outputs.unverified_count }}
+    steps:
+      # GitHub.com's job workflow identity refers to THIS reusable definition, not the caller.
+      # Fail closed on hosts without it. Never fall back to github.sha or a consumer checkout.
+      - name: Resolve shared validator source
+        id: source
+        shell: pwsh
+        env:
+          CLC_JOB_IDENTITY: ${{ toJSON(job) }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = $env:CLC_JOB_IDENTITY | ConvertFrom-Json -AsHashtable
+          if ($identity['workflow_repository'] -cne 'clcdpc/clc-deployment' -or $identity['workflow_sha'] -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'Exact shared workflow identity unavailable; GitHub.com job workflow identity is required.'
+          }
+          "sha=$($identity['workflow_sha'])" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Read exact shared implementation
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: ${{ steps.source.outputs.sha }}
+          path: shared-validator
+          persist-credentials: false
+      - name: Provision verified YAML parser on hosted runner
+        id: dependencies
+        shell: pwsh
+        run: |
+          $dependencies = & ./shared-validator/tools/deployment-prerequisites/Initialize-Dependencies.ps1 -Destination (Join-Path $env:RUNNER_TEMP ('clc-prerequisites-' + [guid]::NewGuid()))
+          "yaml=$($dependencies.YamlAssemblyPath)" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Inspect calling repository prerequisites
+        id: validate
+        shell: pwsh
+        env:
+          CLC_GITHUB_INSPECTION_TOKEN: ${{ secrets.inspection_token }}
+          CLC_APPLICATION: ${{ inputs.application_id }}
+          CLC_TARGET: ${{ inputs.target_id }}
+          CLC_DIAGNOSTIC: ${{ inputs.diagnostic_workflow }}
+          CLC_ENVIRONMENT: ${{ inputs.environment_name }}
+          CLC_BRANCH: ${{ inputs.integration_branch }}
+          CLC_RELEASE_WORKFLOW: ${{ inputs.release_workflow }}
+          CLC_DEPLOYMENT_WORKFLOW: ${{ inputs.deployment_workflow }}
+          CLC_RUNNER_GROUP: ${{ inputs.runner_group }}
+          CLC_RUNNER_LABELS: ${{ inputs.runner_labels }}
+          CLC_ACTIVATION_VARIABLE: ${{ inputs.activation_variable }}
+          # Only a classification enters process/log environment; never emit all vars or raw values.
+          CLC_ACTIVATION_STATE: ${{ vars[inputs.activation_variable] == 'true' && 'enabled' || vars[inputs.activation_variable] == 'false' && 'disabled' || vars[inputs.activation_variable] == '' && 'missing-or-empty' || 'invalid' }}
+          CLC_CHANNEL: ${{ inputs.deployment_channel }}
+          CLC_PROTECTION: ${{ inputs.environment_protection }}
+          CLC_STRICT: ${{ inputs.strict }}
+          CLC_YAML_ASSEMBLY: ${{ steps.dependencies.outputs.yaml }}
+        run: |
+          & ./shared-validator/tools/Validate-DeploymentPrerequisites.ps1 -AuthenticationMode Administrative -EnvironmentName $env:CLC_ENVIRONMENT -IntegrationBranch $env:CLC_BRANCH -ReleaseWorkflow $env:CLC_RELEASE_WORKFLOW -DeploymentWorkflow $env:CLC_DEPLOYMENT_WORKFLOW -RunnerGroup $env:CLC_RUNNER_GROUP -RunnerLabels $env:CLC_RUNNER_LABELS -ActivationVariable $env:CLC_ACTIVATION_VARIABLE -DeploymentChannel $env:CLC_CHANNEL -EnvironmentProtection $env:CLC_PROTECTION -YamlAssemblyPath $env:CLC_YAML_ASSEMBLY -ApplicationId $env:CLC_APPLICATION -TargetId $env:CLC_TARGET -DiagnosticWorkflow $env:CLC_DIAGNOSTIC -ReportPath (Join-Path $env:RUNNER_TEMP "github-readiness.json") -Strict:($env:CLC_STRICT -ceq 'true')
+          $code=$LASTEXITCODE
+          $json=Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'github-readiness.json') -Raw | ConvertFrom-Json -AsHashtable | ConvertTo-Json -Depth 12 -Compress
+          "report_json=$json" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          exit $code

@@ -1,0 +1,78 @@
+name: deployment-prerequisites-tests
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-smoke:
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/validate-deployment.yml
+    with:
+      environment_name: validator-smoke-not-configured
+      runner_group: validator-smoke-not-configured
+      release_workflow: .github/workflows/build-test-publish.yaml
+      deployment_workflow: .github/workflows/validate-deployment.yml
+
+  smoke-outputs:
+    needs: workflow-smoke
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: Verify diagnostic outputs without enabling deployment
+        shell: pwsh
+        env:
+          CLC_READY: ${{ needs.workflow-smoke.outputs.ready }}
+          CLC_PASSED: ${{ needs.workflow-smoke.outputs.passed_count }}
+          CLC_FAILED: ${{ needs.workflow-smoke.outputs.failed_count }}
+          CLC_UNVERIFIED: ${{ needs.workflow-smoke.outputs.unverified_count }}
+          CLC_GITHUB_STATUS: ${{ needs.workflow-smoke.outputs.github_status }}
+          CLC_HOST_STATUS: ${{ needs.workflow-smoke.outputs.host_status }}
+          CLC_OVERALL: ${{ needs.workflow-smoke.outputs.overall_ready }}
+          CLC_REPORT: ${{ needs.workflow-smoke.outputs.report_json }}
+        run: |
+          if ($env:CLC_READY -cne 'false') { throw 'Unconfigured smoke target must report ready=false.' }
+          if ($env:CLC_OVERALL -cne 'false' -or $env:CLC_HOST_STATUS -cne 'UNVERIFIED' -or $env:CLC_GITHUB_STATUS -cnotin @('FAIL','UNVERIFIED')) { throw 'Invalid category smoke outputs.' }
+          $report=$env:CLC_REPORT | ConvertFrom-Json -AsHashtable
+          if ($report.contract_version -ne 2 -or $report.results.Count -lt 1) { throw 'Missing detailed report output.' }
+          foreach ($count in @($env:CLC_PASSED,$env:CLC_FAILED,$env:CLC_UNVERIFIED)) {
+            if ($count -cnotmatch '^[0-9]+$') { throw 'Missing numeric workflow output.' }
+          }
+          if ([int]$env:CLC_UNVERIFIED -lt 1) { throw 'Host qualification must remain Unverified.' }
+
+  validator:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Provision exact verified test dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP ('clc-prerequisites-tests-' + [guid]::NewGuid())
+          [void][IO.Directory]::CreateDirectory($root)
+          $lock = Get-Content -LiteralPath tools/dependencies.lock.json -Raw | ConvertFrom-Json -AsHashtable
+          foreach ($name in @('powershell','pester')) {
+            $archive = Join-Path $root ($name + '.zip')
+            Invoke-WebRequest -Uri $lock[$name].url -OutFile $archive -TimeoutSec 120
+            if ((Get-FileHash -LiteralPath $archive).Hash.ToLowerInvariant() -cne $lock[$name].sha256) { throw 'Test dependency hash mismatch.' }
+            [IO.Compression.ZipFile]::ExtractToDirectory($archive,(Join-Path $root $name))
+          }
+          $deps = & tools/deployment-prerequisites/Initialize-Dependencies.ps1 -Destination (Join-Path $root 'diagnostics') -IncludeActionlint
+          "CLC_TEST_PWSH=$root/powershell/pwsh.exe" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          "CLC_TEST_PESTER=$root/pester/Pester.psd1" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          "CLC_TEST_YAML=$($deps.YamlAssemblyPath)" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          "CLC_TEST_ACTIONLINT=$($deps.ActionlintPath)" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Run offline API fixtures, YAML syntax and actionlint
+        shell: pwsh
+        run: |
+          & $env:CLC_TEST_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-DeploymentPrerequisites.ps1 -PesterManifestPath $env:CLC_TEST_PESTER -YamlAssemblyPath $env:CLC_TEST_YAML -ActionlintPath $env:CLC_TEST_ACTIONLINT
+          if ($LASTEXITCODE -ne 0) { throw 'Deployment prerequisites verification failed.' }

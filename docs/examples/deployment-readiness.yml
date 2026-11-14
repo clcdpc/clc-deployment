@@ -1,0 +1,108 @@
+# Template only. Install as .github/workflows/diagnose-deployment.yml in the consumer
+# under separate rollout authority. Replace EVERY zero SHA with the SAME reviewed
+# immutable clc-deployment revision containing this diagnostic, and configure the
+# exact repository, environment, group, installed manifest and selectors below.
+# Do not place this template in clc-deployment's active workflows.
+name: Read-only deployment readiness
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        description: Independently approved application/environment/target selection
+        options: [example-app-dev]
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  github:
+    uses: clcdpc/clc-deployment/.github/workflows/validate-deployment.yml@0000000000000000000000000000000000000000
+    with:
+      application_id: example-app
+      target_id: example-app-dev
+      environment_name: example-app-dev
+      deployment_channel: DEV
+      runner_group: example-app-deployment
+      deployment_workflow: .github/workflows/deploy-release.yml
+      diagnostic_workflow: .github/workflows/diagnose-deployment.yml
+      # Optional administrative mode requires the protected inspection environment
+      # in the CALLED workflow and an explicitly supplied short-lived read-only token.
+      # administrative: true
+    # secrets:
+    #   inspection_token: ${{ secrets.READ_ONLY_INSPECTION_TOKEN }}
+
+  host:
+    # Directly defined HERE: allowlist this exact consumer workflow on master.
+    if: github.repository == 'example/app' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.ref_protected && inputs.target == 'example-app-dev' && github.workflow_ref == 'example/app/.github/workflows/diagnose-deployment.yml@refs/heads/master'
+    runs-on:
+      group: example-app-deployment
+      labels: [self-hosted, Windows, X64]
+    environment: example-app-dev
+    timeout-minutes: 20
+    outputs:
+      report_json: ${{ steps.inspect.outputs.report_json }}
+    steps:
+      - name: Verify trusted execution identity before reading shared code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if ($env:GITHUB_REPOSITORY -cne 'example/app' -or $env:GITHUB_EVENT_NAME -cne 'workflow_dispatch' -or
+              $env:GITHUB_REF -cne 'refs/heads/master' -or $env:GITHUB_REF_PROTECTED -cne 'true' -or
+              $env:GITHUB_WORKFLOW_REF -cne 'example/app/.github/workflows/diagnose-deployment.yml@refs/heads/master' -or
+              $env:GITHUB_WORKFLOW_SHA -cne $env:GITHUB_SHA) { throw 'Trusted diagnostic workflow required.' }
+      - name: Read only reviewed shared diagnostic code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: '0000000000000000000000000000000000000000'
+          path: shared-validator
+          persist-credentials: false
+      - name: Inspect the actual enrolled local IIS host
+        id: inspect
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          # Infrastructure authenticates this exact installation before first import.
+          # Keep it a reviewed workflow literal, never a dispatch input or artifact value.
+          $manifest='C:\ProgramData\CLC\Deployment\Enrollment\toolkit\versions\REVIEWED_VERSION\CLC.Deployment\CLC.Deployment.psd1'
+          $report=& ./shared-validator/tools/deployment-prerequisites/Test-DeploymentHost.ps1 -ApplicationId example-app -TargetId example-app-dev -EnvironmentName example-app-dev -DeploymentChannel DEV -Repository example/app -ReleaseWorkflow .github/workflows/release.yml -BuildJob package -StandingAuthorizationId example-app-dev -ToolkitManifestPath $manifest
+          $json=ConvertTo-Json -InputObject $report -Depth 12 -Compress
+          "report_json=$json" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+  report:
+    if: always()
+    needs: [github, host]
+    runs-on: windows-2022
+    timeout-minutes: 5
+    outputs:
+      github_status: ${{ steps.report.outputs.github_status }}
+      host_status: ${{ steps.report.outputs.host_status }}
+      overall_ready: ${{ steps.report.outputs.overall_ready }}
+      passed_count: ${{ steps.report.outputs.passed_count }}
+      failed_count: ${{ steps.report.outputs.failed_count }}
+      unverified_count: ${{ steps.report.outputs.unverified_count }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: '0000000000000000000000000000000000000000'
+          path: shared-validator
+          persist-credentials: false
+      - name: Aggregate every available observation even when a stage fails
+        id: report
+        shell: pwsh
+        env:
+          CLC_GITHUB_REPORT: ${{ needs.github.outputs.report_json }}
+          CLC_HOST_REPORT: ${{ needs.host.outputs.report_json }}
+          CLC_GITHUB_JOB: ${{ needs.github.result }}
+          CLC_HOST_JOB: ${{ needs.host.result }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $github=Join-Path $env:RUNNER_TEMP 'github-readiness.json'
+          $hostReport=Join-Path $env:RUNNER_TEMP 'host-readiness.json'
+          [IO.File]::WriteAllText($github,$env:CLC_GITHUB_REPORT)
+          [IO.File]::WriteAllText($hostReport,$env:CLC_HOST_REPORT)
+          & ./shared-validator/tools/deployment-prerequisites/Merge-DeploymentReadiness.ps1 -GitHubReportPath $github -HostReportPath $hostReport -GitHubJobResult $env:CLC_GITHUB_JOB -HostJobResult $env:CLC_HOST_JOB
