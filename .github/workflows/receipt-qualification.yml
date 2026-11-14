@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   producer:
-    uses: clcdpc/clc-deployment/.github/workflows/clc-receipt-producer.yml@ba6fd6ffd3836fd110c84adeb58aaa5aa01c4c99
+    uses: clcdpc/clc-deployment/.github/workflows/clc-receipt-producer.yml@b85cc05b5646352c87cf0b86246fa7c80c11a1ba
     permissions:
       contents: read
       actions: read
@@ -48,7 +48,7 @@ jobs:
           Copy-Item -LiteralPath $trust.trustedRootPath -Destination (Join-Path $root 'trusted-root.jsonl')
       - name: Verify real custom receipt offline and reject incorrect identities/bytes
         shell: pwsh
-        run: ./tools/Test-SignedReceipt.ps1 -EvidenceRoot (Join-Path $env:RUNNER_TEMP 'evidence') -ProducerCommit ba6fd6ffd3836fd110c84adeb58aaa5aa01c4c99
+        run: ./tools/Test-SignedReceipt.ps1 -EvidenceRoot (Join-Path $env:RUNNER_TEMP 'evidence') -ProducerCommit b85cc05b5646352c87cf0b86246fa7c80c11a1ba
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         if: always()
         with:
