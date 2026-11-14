@@ -16,7 +16,7 @@ Describe 'Read-only deployment prerequisites diagnostics' {
             Mock Get-DpApi {
                 param($Path)
                 $script:seen.Add($Path)
-                $key=$Path -replace '[?&]per_page=100&page=\d+$',''
+                $key=$Path -replace '[?&]per_page=(30|100)&page=\d+$',''
                 if (-not $script:fixture.ContainsKey($key)) { throw "Unexpected test API path: $key" }
                 return $script:fixture[$key]
             }
@@ -134,6 +134,7 @@ Describe 'Read-only deployment prerequisites diagnostics' {
 
         It 'rejects tag or PR deployment policies for the trusted branch workflow' {
             $fixture['/repos/example/app/environments/app-dev/deployment-branch-policies'].data.branch_policies+=@{ name='v*'; type='tag' }
+            $fixture['/repos/example/app/environments/app-dev/deployment-branch-policies'].data.total_count=2
             $report=Invoke-DpValidation $config $assembly
             ($report.results | Where-Object name -EQ 'Environment branch restrictions').status | Should -Be FAIL
         }
@@ -195,6 +196,7 @@ Describe 'Read-only deployment prerequisites diagnostics' {
             $fixture['/orgs/example/actions/runner-groups/7/runners'].data.runners=@(
                 @{ labels=@(@{ name='self-hosted' },@{ name='Windows' }) },@{ labels=@(@{ name='X64' }) }
             )
+            $fixture['/orgs/example/actions/runner-groups/7/runners'].data.total_count=2
             $report=Invoke-DpValidation $config $assembly
             ($report.results | Where-Object name -EQ 'Expected runner labels').status | Should -Be FAIL
         }
@@ -209,6 +211,7 @@ Describe 'Read-only deployment prerequisites diagnostics' {
 
         It 'rejects an environment-scoped activation override without printing its value' {
             $fixture['/repos/example/app/environments/app-dev/variables'].data.variables=@(@{ name='CLC_DEPLOYMENT_ENABLED'; value='PRIVATE-DO-NOT-LOG' })
+            $fixture['/repos/example/app/environments/app-dev/variables'].data.total_count=1
             $report=Invoke-DpValidation $config $assembly
             ($report.results | Where-Object name -EQ 'Environment activation override').status | Should -Be FAIL
             (Format-DpSummary $report) | Should -Not -Match 'PRIVATE-DO-NOT-LOG'
@@ -224,6 +227,29 @@ Describe 'Read-only deployment prerequisites diagnostics' {
             $fixture['/repos/example/app/environments/app-dev/variables']=New-ApiFailure 403
             $report=Invoke-DpValidation $config $assembly
             ($report.results | Where-Object name -EQ 'Environment activation override').status | Should -Be UNVERIFIED
+        }
+
+        It 'finds an activation override on page two using the environment-variable 30-item limit' {
+            Mock Get-DpApi {
+                param($Path)
+                if ($Path -like '*/variables?per_page=30&page=1') {
+                    return New-ApiSuccess @{ total_count=31; variables=@(1..30 | ForEach-Object { @{ name="OTHER_$_"; value='private' } }) }
+                }
+                if ($Path -like '*/variables?per_page=30&page=2') {
+                    return New-ApiSuccess @{ total_count=31; variables=@(@{ name='CLC_DEPLOYMENT_ENABLED'; value='private' }) }
+                }
+                $key=$Path -replace '[?&]per_page=(30|100)&page=\d+$',''
+                return $script:fixture[$key]
+            }
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Environment activation override').status | Should -Be FAIL
+            Should -Invoke Get-DpApi -Times 1 -Exactly -ParameterFilter { $Path -eq '/repos/example/app/environments/app-dev/variables?per_page=30&page=2' }
+        }
+
+        It 'does not report a partial administrative list as complete when total_count disagrees' {
+            $fixture['/orgs/example/actions/runner-groups'].data.total_count=2
+            $report=Invoke-DpValidation $config $assembly
+            ($report.results | Where-Object name -EQ 'Restricted runner group').status | Should -Be UNVERIFIED
         }
 
         It 'rejects a missing workflow' {

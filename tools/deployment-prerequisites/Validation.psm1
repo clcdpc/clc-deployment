@@ -38,20 +38,29 @@ function Get-DpApi {
 }
 
 function Get-DpCollection {
-    param([string] $Path, [string] $Property = '')
+    param([string] $Path, [string] $Property = '', [ValidateRange(1,100)][int] $PageSize = 100)
     $items = [Collections.Generic.List[object]]::new()
+    $total=$null
     for ($page=1; $page -le 20; $page++) {
         $separator = if ($Path.Contains('?')) { '&' } else { '?' }
-        $response = Get-DpApi ($Path + $separator + 'per_page=100&page=' + $page)
+        $response = Get-DpApi ($Path + $separator + "per_page=$PageSize&page=" + $page)
         if (-not $response.ok) { return $response }
         $data = $response.data
         if ($Property) {
             if ($data -isnot [Collections.IDictionary] -or -not $data.Contains($Property)) { break }
+            if ($data.Contains('total_count')) {
+                $observed=$data['total_count']
+                if (($observed -isnot [int] -and $observed -isnot [long]) -or $observed -lt 0 -or ($null -ne $total -and $total -ne $observed)) { break }
+                $total=$observed
+            }
             $data = $data[$Property]
         }
         if ($data -isnot [array]) { break }
         foreach ($item in $data) { $items.Add($item) }
-        if ($data.Count -lt 100) { return @{ ok=$true; code=200; data=$items.ToArray(); reason='' } }
+        if ($null -ne $total -and ($items.Count -gt $total -or ($data.Count -lt $PageSize -and $items.Count -ne $total))) { break }
+        if ($data.Count -lt $PageSize -or ($null -ne $total -and $items.Count -eq $total)) {
+            return @{ ok=$true; code=200; data=$items.ToArray(); reason='' }
+        }
     }
     return @{ ok=$false; code=0; reason='GitHub collection was incomplete, malformed or exceeded the 2,000-item bound.' }
 }
@@ -351,7 +360,7 @@ function Get-DpDeploymentResults {
     }
     Add-DpResult $Results $section 'Activation indicator' $status $detail $(if ($status -cne 'PASS') { $action })
     $encoded=[uri]::EscapeDataString($Config.EnvironmentName)
-    $variables=Get-DpCollection "/repos/$($Config.Repository)/environments/$encoded/variables" 'variables'
+    $variables=Get-DpCollection "/repos/$($Config.Repository)/environments/$encoded/variables" 'variables' -PageSize 30
     if (-not $variables.ok) { Add-DpResult $Results $section 'Environment activation override' UNVERIFIED $variables.reason 'Inspect environment Actions variables for conflicting activation values; pre-job admission must use repository/organization variables.' }
     else {
         $override=@($variables.data | Where-Object { $_['name'] -ceq $Config.ActivationVariable })
