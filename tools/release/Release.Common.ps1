@@ -25,7 +25,7 @@ function Read-ClcConsumerConfiguration {
     $producerKeys=@('workflowPath','job'); if ($c.producer.Contains('jobName')) {$producerKeys+='jobName'}
     Assert-ClcObject $c.producer $producerKeys
     Assert-ClcWorkflow $c.producer.workflowPath; Assert-ClcCode $c.producer.job
-    if ($c.producer.Contains('jobName')) { Assert-ClcText $c.producer.jobName 128 '^[A-Za-z0-9][A-Za-z0-9 /_.-]*$' }
+    if ($c.producer.Contains('jobName')) { Assert-ClcText $c.producer.jobName 128 '^[A-Za-z0-9][A-Za-z0-9 /_,.-]*$' }
     Assert-ClcInteger $c.requiredToolkitContractVersion 2 2
     if ($c.trustedFiles -isnot [array] -or $c.trustedFiles.Count -lt 2 -or $c.trustedFiles.Count -gt 32) { throw 'A bounded trusted file set is required.' }
     $names=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -238,6 +238,7 @@ function New-ClcVerifiedPackageIdentity {
     $s=$Source.identity; $p=$Provenance
     if ($inspection.applicationId -cne $Configuration.applicationId -or $inspection.releaseId -cne $s.releaseId -or $inspection.sourceCommit -cne $s.sourceCommit -or
         $manifest.source.repository -cne $s.repository -or $manifest.build.workflowPath -cne $p.workflowPath -or $manifest.build.runId -ne $p.runId -or $manifest.build.runAttempt -ne $p.runAttempt -or $manifest.build.job -cne $p.buildJob) { throw 'Package bytes do not bind the qualified source and producer.' }
+    if (-not $Configuration.Contains('orchestration') -or $manifest.builder.sourceCommit -cne $Configuration.orchestration.sharedRevision) { throw 'Package builder revision differs from protected orchestration.sharedRevision.' }
     $provenance=[ordered]@{}; foreach ($field in @('workflowPath','runId','runAttempt','buildJob','artifactId','transportSha256')) { $provenance[$field]=$p[$field] }
     return [ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=2L;recordKind='verified-release';targetId=$TargetId;applicationId=$Configuration.applicationId;
         releaseId=$s.releaseId;tag=$s.reference;sourceRepository=$s.repository;sourceCommit=$s.sourceCommit;releaseZipSha256=$inspection.archiveSha256;manifestSha256=$inspection.manifestSha256;provenance=$provenance;sourceIdentity=$s}

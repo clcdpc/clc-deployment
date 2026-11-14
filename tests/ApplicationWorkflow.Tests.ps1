@@ -83,6 +83,26 @@ Describe 'Reusable application workflow trust and routing' {
         $path=Join-Path $TestDrive 'bad.json'; [IO.File]::WriteAllText($path,($script:configuration | ConvertTo-Json -Depth 12))
         { Read-ClcConsumerConfiguration $path } | Should -Throw
     }
+    It 'accepts the bounded producer display name <Kind>' -ForEach @(
+        @{Kind='Favorite Authors';Name='Build, test, publish, and package'},
+        @{Kind='ASAP';Name='Frontend, CI checks and package'},@{Kind='128 characters';Name=('A'*128)}
+    ) {
+        $script:configuration.producer.jobName=$Name
+        $path=Join-Path $TestDrive 'job-name.json'; [IO.File]::WriteAllText($path,($script:configuration | ConvertTo-Json -Depth 12))
+        (Read-ClcConsumerConfiguration $path).producer.jobName | Should -BeExactly $Name
+    }
+    It 'rejects producer display names with <Kind>' -ForEach @(
+        @{Kind='an empty value';Name=''},@{Kind='a null value';Name=$null},@{Kind='a nonstring value';Name=123},
+        @{Kind='leading punctuation';Name=',Build'},@{Kind='unsupported punctuation';Name='Build: package'},
+        @{Kind='a line feed';Name="Build, package`n"},@{Kind='a carriage return';Name="Build`rpackage"},
+        @{Kind='a tab';Name="Build`tpackage"},@{Kind='a NUL';Name="Build`0package"},
+        @{Kind='a DEL';Name=('Build'+[char]0x7f)},@{Kind='a C1 control';Name=('Build'+[char]0x85)},
+        @{Kind='129 characters';Name=('A'*129)}
+    ) {
+        $script:configuration.producer.jobName=$Name
+        $path=Join-Path $TestDrive 'job-name.json'; [IO.File]::WriteAllText($path,($script:configuration | ConvertTo-Json -Depth 12))
+        { Read-ClcConsumerConfiguration $path } | Should -Throw -ErrorId 'Clc.InvalidContract*'
+    }
 }
 Describe 'Infrastructure-owned trust before the installed toolkit first import' {
     It 'rejects a runtime-writable fake policy before importing its selected module' {

@@ -102,6 +102,18 @@ Describe 'Qualified producer and artifact admission' {
         $result=Get-ClcVerifiedProducer $script:configuration $script:source 123 2 456 $script:api
         $result.transportSha256 | Should -BeExactly ('d'*64)
     }
+    It 'requires the exact configured REST job display name including <Difference>' -ForEach @(
+        @{Difference='commas';ActualName='Build test publish and package'},
+        @{Difference='case';ActualName='build, test, publish, and package'},
+        @{Difference='spaces';ActualName='Build, test, publish, and package '}
+    ) {
+        $script:configuration.producer.jobName='Build, test, publish, and package'
+        $job=$script:responses['/repos/clcdpc/ssrs-web/actions/runs/123/attempts/2/jobs?per_page=100&page=1'].jobs[0]
+        $job.name=$script:configuration.producer.jobName
+        (Get-ClcVerifiedProducer $script:configuration $script:source 123 2 456 $script:api).buildJob | Should -BeExactly build
+        $job.name=$ActualName
+        { Get-ClcVerifiedProducer $script:configuration $script:source 123 2 456 $script:api } | Should -Throw '*Exact successful producer job is missing*'
+    }
     It 'rejects wrong workflow, attempt artifact, failed job and stale artifact' -ForEach @(@{mode='workflow'},@{mode='attempt'},@{mode='job'},@{mode='stale'}) {
         if ($mode -ceq 'workflow') {$script:responses['/repos/clcdpc/ssrs-web/actions/runs/123/attempts/2'].path='.github/workflows/untrusted.yml'}
         if ($mode -ceq 'attempt') {$script:responses['/repos/clcdpc/ssrs-web/actions/artifacts/456'].name='old-attempt'}

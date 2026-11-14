@@ -15,7 +15,8 @@ BeforeAll {
         @('config','user.email','fixture@example.invalid'),@('config','core.autocrlf','false'),@('add','.'),@('commit','-m','Exact offline machinery')
     )) { $null=Get-DistGit $script:machinery $arguments }
     $script:sharedCommit=Get-DistGit $script:machinery @('rev-parse','HEAD')
-    function New-EntrypointFixture([string] $Reference='v1.2.3-dev.1',[switch] $Superseded) {
+    function New-EntrypointFixture([string] $Reference='v1.2.3-dev.1',[switch] $Superseded,
+        [string] $ProducerWorkflowPath='.github/workflows/build.yml',[string] $ProducerJob='build',[string] $ProducerJobName='package / build') {
         $script:workspace=New-TestWorkspace
         $script:sourceCommit='a'*40; $script:caller='b'*40
         # Script/module mock scopes share only this explicitly named test state.
@@ -23,8 +24,8 @@ BeforeAll {
         $script:integration=if ($Superseded) {'e'*40} else {$script:sourceCommit}
         $script:reference=$Reference; $script:configurationBlob='d'*40
         $script:configuration=@{contractVersion=1L;applicationId='probe';repository='clcdpc/example';integrationBranch='master';
-            sourcePolicy=@{allowPrDev=$true;allowSnapshots=$true;allowTestTags=$true};producer=@{workflowPath='.github/workflows/build.yml';job='build';jobName='package / build'};
-            trustedFiles=@('.clc/release.json','.github/workflows/build.yml','.github/workflows/deploy.yml');requiredToolkitContractVersion=2L;
+            sourcePolicy=@{allowPrDev=$true;allowSnapshots=$true;allowTestTags=$true};producer=@{workflowPath=$ProducerWorkflowPath;job=$ProducerJob;jobName=$ProducerJobName};
+            trustedFiles=@('.clc/release.json',$ProducerWorkflowPath,'.github/workflows/deploy.yml');requiredToolkitContractVersion=2L;
             orchestration=@{sharedRevision=$script:sharedCommit;deploymentWorkflowPath='.github/workflows/deploy.yml'};
             targets=@(@{channel='DEV';targetId='probe-dev';environment='probe-dev';runnerGroup='probe-dev';runnerLabels=@('self-hosted','Windows','X64','probe-dev');standingAuthorizationId='probe-dev';enabled=$true;runnerAdmissionReady=$true},
                 @{channel='Production';targetId='probe-production';environment='probe-production';runnerGroup='probe-production';runnerLabels=@('self-hosted','Windows','X64','probe-production');standingAuthorizationId='probe-production';enabled=$false;runnerAdmissionReady=$false})}
@@ -43,13 +44,14 @@ BeforeAll {
         $script:responses[$base+'/git/ref/tags/'+$Reference]=@{object=@{type='commit';sha=$script:sourceCommit}}
         $script:responses[$base+'/compare/'+$script:sourceCommit+'...'+$script:integration]=@{status='ahead';merge_base_commit=@{sha=$script:sourceCommit}}
         $branch=if ($Reference.StartsWith('refs/heads/')) {'master'} else {$Reference}
-        $script:responses[$base+'/actions/runs/123/attempts/2']=@{id=123L;run_attempt=2L;status='completed';conclusion='success';head_sha=$script:sourceCommit;repository=@{full_name='clcdpc/example'};head_repository=@{full_name='clcdpc/example'};path='.github/workflows/build.yml';event='push';head_branch=$branch;run_started_at='2026-11-13T00:00:00Z';updated_at='2026-11-13T00:10:00Z'}
-        $script:responses[$base+'/actions/runs/123/attempts/2/jobs?per_page=100&page=1']=@{jobs=@(@{name='package / build';status='completed';conclusion='success';run_id=123L})}
+        $script:responses[$base+'/actions/runs/123/attempts/2']=@{id=123L;run_attempt=2L;status='completed';conclusion='success';head_sha=$script:sourceCommit;repository=@{full_name='clcdpc/example'};head_repository=@{full_name='clcdpc/example'};path=$ProducerWorkflowPath;event='push';head_branch=$branch;run_started_at='2026-11-13T00:00:00Z';updated_at='2026-11-13T00:10:00Z'}
+        $script:responses[$base+'/actions/runs/123/attempts/2/jobs?per_page=100&page=1']=@{jobs=@(@{name=$ProducerJobName;status='completed';conclusion='success';run_id=123L})}
         $script:inputs=New-TestPublish $script:workspace
         $metadata=Get-TestMetadata; $metadata.schemaVersion=2L; $metadata.changeKind='application-deployment'
         $metadata.source=@{repository=$script:configuration.repository;commit=$script:sourceCommit}
         $metadata.releaseId=if ($Reference.StartsWith('refs/heads/')) {'dev-123-'+$script:sourceCommit.Substring(0,12)} else {(Get-ClcApplicationTag $Reference).releaseId}
         $metadata.build.runId=123L; $metadata.build.runAttempt=2L; $metadata.build.dependencyLockSha256=$null
+        $metadata.build.workflowPath=$ProducerWorkflowPath; $metadata.build.job=$ProducerJob; $metadata.builder.sourceCommit=$script:sharedCommit
         Write-TestJson $script:inputs.MetadataPath $metadata
         $script:package=New-ClcRelease @script:inputs
         Set-EntrypointArtifact
@@ -135,6 +137,47 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         $output | Should -Match '(?m)^runner_labels=\["self-hosted","Windows","X64","probe-dev"\]$'
         Should -Invoke Invoke-ClcReleaseApi -Times 2 -Exactly -ParameterFilter { $Path -ceq '/repos/clcdpc/example/actions/runs/123/attempts/2' }
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+    }
+    It 'admits the observed <Consumer> producer workflow, job ID and exact REST display name' -ForEach @(
+        @{Consumer='Favorite Authors';WorkflowPath='.github/workflows/build-test.yml';JobName='Build, test, publish, and package'},
+        @{Consumer='ASAP';WorkflowPath='.github/workflows/dotnet.yml';JobName='Frontend, CI checks and package'}
+    ) {
+        Remove-EntrypointFixture
+        New-EntrypointFixture -ProducerWorkflowPath $WorkflowPath -ProducerJob build-test-package -ProducerJobName $JobName
+        $result=& "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters
+        $result.status | Should -BeExactly Admitted; $result.admitted | Should -BeTrue
+        [IO.File]::ReadAllText($env:GITHUB_OUTPUT) | Should -Match '(?m)^admitted=true$'
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+    }
+    It 'rejects an otherwise verified package with an unapproved builder revision during <Action>' -ForEach @(
+        @{Action='Release'},@{Action='Admit'},@{Action='Deploy'}
+    ) {
+        $metadata=Get-Content -LiteralPath $script:inputs.MetadataPath -Raw | ConvertFrom-Json -AsHashtable
+        $metadata.builder.sourceCommit='e'*40; Write-TestJson $script:inputs.MetadataPath $metadata
+        [IO.File]::Delete($script:package.archivePath); $script:package=New-ClcRelease @script:inputs
+        (Test-ClcRelease $script:package.archivePath).integrityVerified | Should -BeTrue
+        Set-EntrypointArtifact
+        $script:parameters.Action=$Action
+        if ($Action -ceq 'Release') { $script:claims.job_workflow_ref='clcdpc/clc-deployment/.github/workflows/application-release.yml@'+$script:sharedCommit }
+        $script:parameters.ClaimsJson=$script:claims | ConvertTo-Json -Compress
+        $script:parameters.ExpectedConfigurationBlob=$script:configurationBlob
+        $script:heldToolkit=[IO.MemoryStream]::new(); $global:ClcWorkflowEntry.heldToolkit=$script:heldToolkit
+        Mock Open-ClcWorkflowToolkit { return @{policy=@{};handles=@($global:ClcWorkflowEntry.heldToolkit)} }
+        if ($Action -ceq 'Deploy') {
+            Mock Open-ClcTrustedContext { throw 'Unexpected host admission.' } -ModuleName CLC.Deployment
+            Mock Invoke-ClcIisDeployment { throw 'Unexpected deployment.' }
+        }
+        try {
+            { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw '*Package builder revision differs from protected orchestration.sharedRevision*'
+            [IO.File]::Exists($env:GITHUB_OUTPUT) | Should -BeFalse
+            Should -Invoke Send-ClcApplicationReleaseAsset -Times 0 -Exactly
+            $global:ClcWorkflowEntry.release | Should -BeNullOrEmpty
+            if ($Action -ceq 'Deploy') {
+                Should -Invoke Open-ClcTrustedContext -Times 0 -Exactly -ModuleName CLC.Deployment
+                Should -Invoke Invoke-ClcIisDeployment -Times 0 -Exactly
+                $script:heldToolkit.CanRead | Should -BeFalse
+            } else { Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly }
+        } finally { $script:heldToolkit.Dispose() }
     }
     It 'returns <Status> without downloading or invoking infrastructure' -ForEach @(
         @{Reference='v1.2.3';Status='ActivationDisabled';Superseded=$false},
@@ -248,7 +291,7 @@ Describe 'Actual package entry point with independently qualified publish files'
             $record.source.repository | Should -BeExactly 'clcdpc/example'; $record.source.commit | Should -BeExactly $script:sourceCommit
             $record.build.workflowPath | Should -BeExactly '.github/workflows/build.yml'; $record.build.job | Should -BeExactly build
             $record.build.runId | Should -Be 123; $record.build.runAttempt | Should -Be 2; $record.build.sdkVersion | Should -BeExactly '10.0.403'
-            $record.validation.entryPoint | Should -BeExactly Probe.dll; $record.builder.sourceCommit | Should -BeExactly $script:sharedCommit
+            $record.validation.entryPoint | Should -BeExactly Probe.dll; $record.builder.sourceCommit | Should -BeExactly $script:configuration.orchestration.sharedRevision
             $record.builder.distributionSha256 | Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $script:packageParameters.OutputDirectory 'toolkit.zip') -Algorithm SHA256).Hash.ToLowerInvariant()
         }
         (Get-TestTreeHashes $script:inputs.PublishRoot) | Should -BeExactly $before
@@ -258,8 +301,20 @@ Describe 'Actual package entry point with independently qualified publish files'
         # No SDK provisioning or build outputs are created on this path.
         [IO.Directory]::Exists((Join-Path $script:packageParameters.OutputDirectory 'sdk')) | Should -BeFalse
     }
+    It 'rejects an unapproved shared builder revision before <Mode> package work' -ForEach @(@{Mode='Prequalified'},@{Mode='Build'}) {
+        $script:configuration.orchestration.sharedRevision='e'*40
+        if ($Mode -ceq 'Build') {
+            $script:configuration.project='Probe.csproj'
+            foreach ($name in @('QualifiedPublishRoot','SdkVersion','ValidationEntryPoint')) { $script:packageParameters.Remove($name) }
+        }
+        Write-TestJson $script:packageParameters.ConfigurationPath $script:configuration
+        { & "$script:machinery/tools/release/New-ClcApplicationPackage.ps1" @script:packageParameters } | Should -Throw '*Shared builder revision must match consumer orchestration.sharedRevision*'
+        [IO.Directory]::Exists($script:packageParameters.OutputDirectory) | Should -BeFalse
+        [IO.File]::Exists($env:GITHUB_OUTPUT) | Should -BeFalse
+        Should -Invoke Invoke-ClcReleaseApi -Times 0 -Exactly
+    }
     It 'rejects <Mode> without producing or advertising a release ZIP' -ForEach @(
-        @{Mode='invalid SDK'},@{Mode='invalid validator'},@{Mode='missing web.config'},@{Mode='missing producer identity'},@{Mode='missing source identity'}
+        @{Mode='invalid SDK'},@{Mode='invalid validator'},@{Mode='missing web.config'},@{Mode='missing producer identity'},@{Mode='missing source identity'},@{Mode='missing shared pin'}
     ) {
         switch ($Mode) {
             'invalid SDK' {$script:packageParameters.SdkVersion='latest'}
@@ -267,6 +322,7 @@ Describe 'Actual package entry point with independently qualified publish files'
             'missing web.config' {[IO.File]::Delete((Join-Path $script:inputs.PublishRoot 'web.config'))}
             'missing producer identity' {$script:configuration.producer.Remove('job'); Write-TestJson $script:packageParameters.ConfigurationPath $script:configuration}
             'missing source identity' {$script:packageParameters.SourceCommit=''}
+            'missing shared pin' {$script:configuration.Remove('orchestration'); Write-TestJson $script:packageParameters.ConfigurationPath $script:configuration}
         }
         { & "$script:machinery/tools/release/New-ClcApplicationPackage.ps1" @script:packageParameters } | Should -Throw
         [IO.File]::Exists((Join-Path $script:packageParameters.OutputDirectory 'qualified/release.zip')) | Should -BeFalse

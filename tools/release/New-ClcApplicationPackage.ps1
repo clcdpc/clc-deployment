@@ -16,6 +16,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Workflow.Common.ps1')
 $c=Read-ClcConsumerConfiguration $ConfigurationPath
+if (-not $c.Contains('orchestration') -or $SharedSourceCommit -cne $c.orchestration.sharedRevision) { throw 'Shared builder revision must match consumer orchestration.sharedRevision.' }
 if ($PSCmdlet.ParameterSetName -ceq 'Build' -and -not $c.Contains('project')) { throw 'The conventional build requires one application project.' }
 if ([IO.Directory]::Exists($OutputDirectory) -or [IO.File]::Exists($OutputDirectory)) { throw 'Build output must be new.' }
 $null=[IO.Directory]::CreateDirectory($OutputDirectory)
