@@ -22,7 +22,7 @@ function Assert-ClcHookPolicy {
     foreach ($channel in $Value.channels) { Assert-ClcEnum $channel @('DEV','Production','Test') }
     Assert-ClcEnum $Value.exactApprovalChannel @('DEV','Production','Test')
     if ($Value.channels -cnotcontains $Value.exactApprovalChannel) { Stop-ClcError Clc.InvalidContract }
-    foreach ($source in $Value.sourceClasses) { Assert-ClcEnum $source @('ExactApproval','IntegrationTag','ReviewedPr','ProtectedBranch') }
+    foreach ($source in $Value.sourceClasses) { Assert-ClcEnum $source @('ExactApproval','IntegrationTag','UnmergedDevTag','ProtectedBranch') }
     foreach ($stage in $Value.stages) { Assert-ClcEnum $stage @('Preflight','BeforeStop','AfterStop','AfterStart') }
     Assert-ClcAbsolutePath $Value.pwshPath
     if ([IO.Path]::GetFileName($Value.pwshPath) -cne 'pwsh.exe') { Stop-ClcError Clc.InvalidContract }
@@ -57,8 +57,8 @@ function Initialize-ClcHookAuthorization {
     }
     $lock=$Session.lock; $t=$lock.targetFile.record; $a=$Session.release.approvalFile.record
     $file=Read-ClcHookAuthority $Session hooks $t.targetId hook-policy; $p=$file.record
-    # Legacy automatic evidence does not independently distinguish reviewed PR
-    # code from integration history. It cannot authorize executable hooks.
+    # Legacy automatic evidence does not independently distinguish unmerged DEV
+    # source from integration history. It cannot authorize executable hooks.
     if ($a.schemaVersion -eq 2) { Stop-ClcError Clc.HookAuthorizationRejected }
     $sourceClass=if ($a.schemaVersion -eq 3) {$a.admission.sourceIdentity.sourceClass} else {'ExactApproval'}
     $channel=if ($a.schemaVersion -eq 3) {$a.admission.sourceIdentity.channel} else {$p.exactApprovalChannel}

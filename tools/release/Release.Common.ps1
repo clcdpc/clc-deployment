@@ -20,8 +20,8 @@ function Read-ClcConsumerConfiguration {
     Assert-ClcInteger $c.contractVersion 1 1
     Assert-ClcId $c.applicationId; Assert-ClcRepository $c.repository
     Assert-ClcText $c.integrationBranch 100 '^[A-Za-z0-9][A-Za-z0-9_/-]*$'
-    Assert-ClcObject $c.sourcePolicy @('allowPrDev','allowSnapshots','allowTestTags')
-    foreach ($key in @('allowPrDev','allowSnapshots','allowTestTags')) { Assert-ClcBoolean $c.sourcePolicy[$key] }
+    Assert-ClcObject $c.sourcePolicy @('allowUnmergedDevTags','allowSnapshots','allowTestTags')
+    foreach ($key in @('allowUnmergedDevTags','allowSnapshots','allowTestTags')) { Assert-ClcBoolean $c.sourcePolicy[$key] }
     $producerKeys=@('workflowPath','job'); if ($c.producer.Contains('jobName')) {$producerKeys+='jobName'}
     Assert-ClcObject $c.producer $producerKeys
     Assert-ClcWorkflow $c.producer.workflowPath; Assert-ClcCode $c.producer.job
@@ -123,26 +123,13 @@ function Get-ClcVerifiedSource {
     $comparison=& $Api GET ($base+'/compare/'+$SourceCommit+'...'+$integration) $null
     $witness=$comparison.merge_base_commit.sha; Assert-ClcCommit $witness
     if ($comparison.status -cnotin @('ahead','identical')) {
-        if ($kind -cne 'tag' -or $channel -cne 'DEV' -or -not $c.sourcePolicy.allowPrDev) { throw 'Source is outside the protected integration history.' }
-        $pulls=Get-ClcGitHubCollection $Api ($base+'/commits/'+$SourceCommit+'/pulls') ''
-        $eligible=@($pulls | Where-Object { $_.state -ceq 'open' -and -not $_.draft -and $_.head.sha -ceq $SourceCommit -and $_.head.repo.full_name -ceq $c.repository -and $_.base.repo.full_name -ceq $c.repository -and $_.base.ref -ceq $c.integrationBranch })
-        $approved=$false
-        foreach ($pr in $eligible) {
-            $reviews=Get-ClcGitHubCollection $Api ($base+'/pulls/'+$pr.number+'/reviews') ''
-            $latest=@{}
-            foreach ($review in @($reviews | Sort-Object id)) { if ($review.state -cne 'COMMENTED') { $latest[$review.user.login]=$review } }
-            foreach ($review in $latest.Values) {
-                if ($review.state -cne 'APPROVED' -or $review.commit_id -cne $SourceCommit -or $review.user.login -ceq $pr.user.login) { continue }
-                $permission=& $Api GET ($base+'/collaborators/'+[Uri]::EscapeDataString($review.user.login)+'/permission') $null
-                if ($permission.permission -cin @('write','maintain','admin')) { $approved=$true; break }
-            }
-            if ($approved) { break }
-        }
-        if (-not $approved) { throw 'DEV PR source needs current-head approval from independent repository write authority.' }
-        $sourceClass='ReviewedPr'
+        if ($kind -cne 'tag' -or $channel -cne 'DEV' -or -not $c.sourcePolicy.allowUnmergedDevTags) { throw 'Source is outside the protected integration history.' }
+        # Repository permissions and deliberate tag creation authorize DEV source.
+        # PR state, reviews and branch lifetime are not release authority.
+        $sourceClass='UnmergedDevTag'
     }
     # Executable orchestration and its policy must agree with protected code even
-    # for a reviewed unmerged application head. No artifact supplies these bytes.
+    # for tag-authorized unmerged DEV source. No artifact supplies these bytes.
     foreach ($path in $c.trustedFiles) {
         $encoded=($path.Split('/') | ForEach-Object {[Uri]::EscapeDataString($_)}) -join '/'
         $trusted=& $Api GET ($base+'/contents/'+$encoded+'?ref='+$integration) $null

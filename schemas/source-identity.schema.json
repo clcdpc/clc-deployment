@@ -31,7 +31,7 @@
     "sourceClass": {
       "enum": [
         "IntegrationTag",
-        "ReviewedPr",
+        "UnmergedDevTag",
         "ProtectedBranch"
       ]
     },

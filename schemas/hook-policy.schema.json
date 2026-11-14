@@ -75,7 +75,7 @@
         "enum": [
           "ExactApproval",
           "IntegrationTag",
-          "ReviewedPr",
+          "UnmergedDevTag",
           "ProtectedBranch"
         ]
       }

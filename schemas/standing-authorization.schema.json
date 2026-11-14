@@ -91,7 +91,7 @@
       "type": "object",
       "required": [
         "integrationBranch",
-        "allowPrDev",
+        "allowUnmergedDevTags",
         "allowSnapshots",
         "allowTestTags"
       ],
@@ -99,7 +99,7 @@
         "allowTestTags": {
           "type": "boolean"
         },
-        "allowPrDev": {
+        "allowUnmergedDevTags": {
           "type": "boolean"
         },
         "allowSnapshots": {

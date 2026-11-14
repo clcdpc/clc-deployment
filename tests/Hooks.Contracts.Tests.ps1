@@ -5,7 +5,7 @@ BeforeAll {
         switch ($Kind) {
             hook-policy { return @{contractFamily='clc-file-iis-v1';schemaVersion=1;recordKind=$Kind;targetId='example';applicationId='probe';
                 environmentName='arbitrary-dev-label';enabled=$true;channels=@('DEV');exactApprovalChannel='DEV';
-                sourceClasses=@('ExactApproval','ReviewedPr');stages=@('BeforeStop','AfterStop');allowPlanning=$true;
+                sourceClasses=@('ExactApproval','UnmergedDevTag');stages=@('BeforeStop','AfterStop');allowPlanning=$true;
                 pwshPath='C:\Independent\PowerShell\pwsh.exe';pwshSha256=('0'*64);timeoutSeconds=30;authorization=$authority} }
             hook-result { return @{contractVersion=1;outcome='Success';stage='BeforeStop';externalStateMayHaveChanged=$false;diagnosticId='example.applied';requiresOperatorIntervention=$false} }
             persistent-state-approval { return @{contractFamily='clc-file-iis-v1';schemaVersion=1;recordKind=$Kind;approvalId='reconcile-001';enabled=$true;

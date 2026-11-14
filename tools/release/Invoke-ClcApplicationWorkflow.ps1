@@ -95,7 +95,7 @@ $handoff=& (Get-Module CLC.Deployment) {
     } finally { Close-ClcTrustedContext $context }
 } $route.target.targetId $c.applicationId $archive $baseName $bytes
 $target=$handoff.target; $inboxZip=$handoff.zip; $inboxIdentity=$handoff.identity
-# Recheck current tag/PR/head, successful producer attempt and artifact identity
+# Recheck exact tag/source, successful producer attempt and artifact identity
 # immediately before protected host admission, after runner queue and download.
 $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
 $finalRoute=Get-ClcDeploymentRoute $c $again.source $Automatic $claims $api

@@ -3,7 +3,7 @@ BeforeAll {
     function New-WorkflowFixture {
         $script:shared='c'*40; $script:caller='a'*40; $script:integration='b'*40
         $script:claims=@{iss='https://token.actions.githubusercontent.com';aud='clc-deployment';repository='clcdpc/example';workflow_ref='clcdpc/example/.github/workflows/deploy.yml@refs/heads/master';workflow_sha=$script:caller;job_workflow_ref=('clcdpc/clc-deployment/.github/workflows/application-deploy.yml@'+$script:shared);job_workflow_sha=$script:shared;event_name='workflow_run';actor='operator'}
-        $script:configuration=@{contractVersion=1L;applicationId='example';repository='clcdpc/example';integrationBranch='master';sourcePolicy=@{allowPrDev=$true;allowSnapshots=$true;allowTestTags=$true};producer=@{workflowPath='.github/workflows/build.yml';job='build';jobName='package / build'};trustedFiles=@('.clc/release.json','.github/workflows/build.yml','.github/workflows/deploy.yml');requiredToolkitContractVersion=2L;
+        $script:configuration=@{contractVersion=1L;applicationId='example';repository='clcdpc/example';integrationBranch='master';sourcePolicy=@{allowUnmergedDevTags=$true;allowSnapshots=$true;allowTestTags=$true};producer=@{workflowPath='.github/workflows/build.yml';job='build';jobName='package / build'};trustedFiles=@('.clc/release.json','.github/workflows/build.yml','.github/workflows/deploy.yml');requiredToolkitContractVersion=2L;
             orchestration=@{sharedRevision=$script:shared;deploymentWorkflowPath='.github/workflows/deploy.yml'};
             targets=@(@{channel='DEV';targetId='example-dev';environment='example-dev';runnerGroup='example-dev';runnerLabels=@('self-hosted','Windows','X64','example-dev');standingAuthorizationId='example-dev';enabled=$true;runnerAdmissionReady=$true},@{channel='Production';targetId='example-production';environment='example-production';runnerGroup='example-production';runnerLabels=@('self-hosted','Windows','X64','example-production');standingAuthorizationId='example-production';enabled=$false;runnerAdmissionReady=$false})}
         $script:responses=@{}
@@ -43,6 +43,17 @@ Describe 'Reusable application workflow trust and routing' {
     It 'rejects unprotected integration policy before runner routing' {
         $script:responses['/repos/clcdpc/example/branches/master'].protected=$false
         { Get-ClcProtectedWorkflowConfiguration $script:claims 'clcdpc/example' deploy $TestDrive $script:api } | Should -Throw '*not protected*'
+    }
+    It 'preserves the explicit unmerged DEV tag opt-in in protected configuration' -ForEach @(@{Enabled=$true},@{Enabled=$false}) {
+        $script:configuration.sourcePolicy.allowUnmergedDevTags=$Enabled; Set-WorkflowConfigurationResponse
+        $result=Get-ClcProtectedWorkflowConfiguration $script:claims 'clcdpc/example' deploy $TestDrive $script:api
+        $result.configuration.sourcePolicy.allowUnmergedDevTags | Should -Be $Enabled
+    }
+    It 'rejects missing or nonboolean unmerged DEV tag policy instead of defaulting it on' -ForEach @(@{Mode='missing'},@{Mode='coerced'}) {
+        if ($Mode -ceq 'missing') {$script:configuration.sourcePolicy.Remove('allowUnmergedDevTags')}
+        else {$script:configuration.sourcePolicy.allowUnmergedDevTags='true'}
+        Set-WorkflowConfigurationResponse
+        { Get-ClcProtectedWorkflowConfiguration $script:claims 'clcdpc/example' deploy $TestDrive $script:api } | Should -Throw -ErrorId 'Clc.InvalidContract*'
     }
     It 'rejects substituted configuration and executing workflow bytes' -ForEach @(@{kind='config'},@{kind='workflow'}) {
         $path=if ($kind -ceq 'config') {'.clc/release.json'} else {'.github/workflows/deploy.yml'}

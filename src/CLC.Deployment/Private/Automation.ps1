@@ -17,7 +17,7 @@ function Assert-ClcSourceIdentity {
     Assert-ClcObject $Value @('contractVersion','kind','sourceClass','repository','sourceCommit','reference','releaseId','channel','orderingKind','sequence','tag','integrationBranch','integrationCommit')
     Assert-ClcInteger $Value.contractVersion 1 1
     Assert-ClcEnum $Value.kind @('tag','snapshot')
-    Assert-ClcEnum $Value.sourceClass @('IntegrationTag','ReviewedPr','ProtectedBranch')
+    Assert-ClcEnum $Value.sourceClass @('IntegrationTag','UnmergedDevTag','ProtectedBranch')
     Assert-ClcRepository $Value.repository
     Assert-ClcCommit $Value.sourceCommit; Assert-ClcCommit $Value.integrationCommit
     Assert-ClcText $Value.integrationBranch 100 '^[A-Za-z0-9][A-Za-z0-9_/-]*$'
@@ -32,7 +32,7 @@ function Assert-ClcSourceIdentity {
     } else {
         $tag=Get-ClcDeploymentTag $Value.tag
         if ($Value.reference -cne $Value.tag -or $Value.releaseId -cne $tag.releaseId -or $Value.sequence -ne $tag.releaseSequence -or $Value.channel -cne $tag.channel -or
-            $Value.orderingKind -cne 'SemVer' -or $Value.sourceClass -cnotin @('IntegrationTag','ReviewedPr') -or ($Value.sourceClass -ceq 'ReviewedPr' -and $Value.channel -cne 'DEV')) { Stop-ClcError Clc.InvalidContract }
+            $Value.orderingKind -cne 'SemVer' -or $Value.sourceClass -cnotin @('IntegrationTag','UnmergedDevTag') -or ($Value.sourceClass -ceq 'UnmergedDevTag' -and $Value.channel -cne 'DEV')) { Stop-ClcError Clc.InvalidContract }
     }
 }
 
@@ -40,7 +40,7 @@ function Assert-ClcStandingSource {
     param($Standing,$Source)
     Assert-ClcSourceIdentity $Source
     if ($Standing.schemaVersion -ne 2 -or $Source.repository -cne $Standing.sourceRepository -or $Source.channel -cne $Standing.channel -or $Source.integrationBranch -cne $Standing.sourcePolicy.integrationBranch -or
-        ($Source.sourceClass -ceq 'ReviewedPr' -and -not $Standing.sourcePolicy.allowPrDev) -or
+        ($Source.sourceClass -ceq 'UnmergedDevTag' -and -not $Standing.sourcePolicy.allowUnmergedDevTags) -or
         ($Source.kind -ceq 'snapshot' -and (-not $Standing.sourcePolicy.allowSnapshots -or $Source.reference -cne ('refs/heads/'+$Standing.sourcePolicy.integrationBranch))) -or
         ($Source.channel -ceq 'Test' -and -not $Standing.sourcePolicy.allowTestTags)) { Stop-ClcError Clc.StandingAuthorizationRejected }
     return @{channel=$Source.channel;releaseSequence=$Source.sequence;releaseId=$Source.releaseId}
@@ -68,9 +68,9 @@ function Assert-ClcStandingAuthorization {
     Assert-ClcCode $Value.authorization.reference
     Assert-ClcTimestamp $Value.authorization.approvedUtc
     if ($Value.schemaVersion -eq 2) {
-        Assert-ClcObject $Value.sourcePolicy @('integrationBranch','allowPrDev','allowSnapshots','allowTestTags')
+        Assert-ClcObject $Value.sourcePolicy @('integrationBranch','allowUnmergedDevTags','allowSnapshots','allowTestTags')
         Assert-ClcText $Value.sourcePolicy.integrationBranch 100 '^[A-Za-z0-9][A-Za-z0-9_/-]*$'
-        foreach ($key in @('allowPrDev','allowSnapshots','allowTestTags')) { Assert-ClcBoolean $Value.sourcePolicy[$key] }
+        foreach ($key in @('allowUnmergedDevTags','allowSnapshots','allowTestTags')) { Assert-ClcBoolean $Value.sourcePolicy[$key] }
     }
 }
 
@@ -173,9 +173,9 @@ function Assert-ClcAutomatedOrdering {
     if ($Approval.releaseSequence -ne $Previous.releaseSequence) { return }
     if ($Approval.sourceRepository -cne $Previous.sourceRepository -or $Approval.sourceCommit -cne $Previous.sourceCommit) { Stop-ClcError Clc.ReleaseIdentityConflict }
     if ($Approval.approvalId -ceq $Previous.approvalId) { return }
-    # A fresh eligibility observation may show an already built DEV PR has
-    # merged. Identical source/build/artifact bytes remain repeatable; this does
-    # not permit a different package to reuse a producer run/attempt.
+    # A fresh eligibility observation may show tagged DEV source is now in
+    # integration history. Identical source/build/artifact bytes remain repeatable;
+    # this does not permit a different package to reuse a producer run/attempt.
     if ($Approval.schemaVersion -eq 3 -and $Previous.schemaVersion -eq 3 -and $Approval.releaseId -ceq $Previous.releaseId -and $Approval.admission.tag -ceq $Previous.admission.tag -and
         $Approval.releaseZipSha256 -ceq $Previous.releaseZipSha256 -and $Approval.manifestSha256 -ceq $Previous.manifestSha256 -and
         (Test-ClcValueEqual $Approval.provenance $Previous.provenance)) { return }

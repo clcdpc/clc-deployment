@@ -17,7 +17,7 @@ Invoke-ClcIisDeployment -TargetId $targetId -StandingAuthorizationId $standingId
 | Contract | Existing supported format | New format |
 | --- | --- | --- |
 | Exact manual approval | Schema 1 | Unchanged |
-| Standing policy | Schema 1, tagged DEV/production | Schema 2 adds explicit integration branch/PR/snapshot/test source policy |
+| Standing policy | Schema 1, tagged DEV/production | Schema 2 adds explicit master branch/unmerged DEV tag/snapshot/test source policy |
 | Verified release | Schema 1, tagged identity | Schema 2 adds versioned source identity |
 | Generated exact approval | Schema 2 | Schema 3 retains exact source identity in `admission` |
 | Application package | Schema 1, file-only/healthy NoOp | Schema 2, full deployment cycle and optional separate hook assets |
@@ -52,7 +52,7 @@ The trusted workflow supplies strict UTF-8 JSON only after independent platform 
   "sourceIdentity": {
     "contractVersion": 1,
     "kind": "tag",
-    "sourceClass": "ReviewedPr",
+    "sourceClass": "UnmergedDevTag",
     "repository": "owner/application",
     "sourceCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "reference": "v1.0.0-dev.2",
@@ -67,7 +67,9 @@ The trusted workflow supplies strict UTF-8 JSON only after independent platform 
 }
 ```
 
-For integrated tagged source use `sourceClass=IntegrationTag`. For snapshots use `kind=snapshot`, `sourceClass=ProtectedBranch`, `reference=refs/heads/<branch>`, `tag=null`, `channel=DEV`, `orderingKind=Snapshot`, `sequence=provenance.runId`, and `releaseId=dev-<runId>-<first12Commit>`. `integrationCommit` is the authenticated GitHub comparison's merge-base witness; it is the source itself when that source is already in integration history. It remains stable when unrelated protected commits advance the branch. `integrationBranch` must exactly match standing policy for every source class.
+For tagged source contained in master use `sourceClass=IntegrationTag`. For an exact DEV tag outside master use `sourceClass=UnmergedDevTag`, requiring `sourcePolicy.allowUnmergedDevTags=true` in both protected consumer configuration and host standing policy. Creating and pushing the valid tag is release authorization; PR approval is unnecessary, and the PR may be closed, advanced or absent. PR branches need no protection. Master must be protected, using the actual configured `integrationBranch` name. Qualifying tag releases and deployments proceed unattended under the existing technical and infrastructure checks.
+
+For snapshots use `kind=snapshot`, `sourceClass=ProtectedBranch`, `reference=refs/heads/<branch>`, `tag=null`, `channel=DEV`, `orderingKind=Snapshot`, `sequence=provenance.runId`, and `releaseId=dev-<runId>-<first12Commit>`. `integrationCommit` is the authenticated GitHub comparison's merge-base witness; it is the source itself when that source is already in master history. It remains stable when unrelated protected commits advance the branch. `integrationBranch` must exactly match standing policy for every source class.
 
 The [verified-release schema](../schemas/verified-release.schema.json), [source identity schema](../schemas/source-identity.schema.json) and installed validators define exact shapes and semantic matching. The tag-derived release ID is required by the new source contract; legacy schema-1 evidence retains application-chosen safe IDs. Package application/release/source and producer workflow/run/attempt/job must exactly match evidence. New shared workflows additionally require package contract 2.
 

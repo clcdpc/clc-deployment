@@ -3,7 +3,7 @@
   "applicationId": "example",
   "repository": "example-org/example",
   "integrationBranch": "master",
-  "sourcePolicy": { "allowPrDev": true, "allowSnapshots": true, "allowTestTags": false },
+  "sourcePolicy": { "allowUnmergedDevTags": true, "allowSnapshots": true, "allowTestTags": false },
   "producer": { "workflowPath": ".github/workflows/build.yml", "job": "build", "jobName": "package / build" },
   "trustedFiles": [".clc/release.json", ".github/workflows/build.yml", ".github/workflows/deploy.yml"],
   "requiredToolkitContractVersion": 2,

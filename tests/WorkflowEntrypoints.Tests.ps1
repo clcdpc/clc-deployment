@@ -24,7 +24,7 @@ BeforeAll {
         $script:integration=if ($Superseded) {'e'*40} else {$script:sourceCommit}
         $script:reference=$Reference; $script:configurationBlob='d'*40
         $script:configuration=@{contractVersion=1L;applicationId='probe';repository='clcdpc/example';integrationBranch='master';
-            sourcePolicy=@{allowPrDev=$true;allowSnapshots=$true;allowTestTags=$true};producer=@{workflowPath=$ProducerWorkflowPath;job=$ProducerJob;jobName=$ProducerJobName};
+            sourcePolicy=@{allowUnmergedDevTags=$true;allowSnapshots=$true;allowTestTags=$true};producer=@{workflowPath=$ProducerWorkflowPath;job=$ProducerJob;jobName=$ProducerJobName};
             trustedFiles=@('.clc/release.json',$ProducerWorkflowPath,'.github/workflows/deploy.yml');requiredToolkitContractVersion=2L;
             orchestration=@{sharedRevision=$script:sharedCommit;deploymentWorkflowPath='.github/workflows/deploy.yml'};
             targets=@(@{channel='DEV';targetId='probe-dev';environment='probe-dev';runnerGroup='probe-dev';runnerLabels=@('self-hosted','Windows','X64','probe-dev');standingAuthorizationId='probe-dev';enabled=$true;runnerAdmissionReady=$true},
@@ -70,6 +70,14 @@ BeforeAll {
         $script:responses[$base+'/actions/artifacts/456']=@{id=456L;expired=$false;name=$name;workflow_run=@{id=123L;head_sha=$script:sourceCommit};digest=('sha256:'+(Get-FileHash -LiteralPath $transport -Algorithm SHA256).Hash.ToLowerInvariant());size_in_bytes=$script:transport.Length;created_at='2026-11-13T00:05:00Z'}
         $global:ClcWorkflowEntry.responses=$script:responses; $global:ClcWorkflowEntry.transport=$script:transport; $global:ClcWorkflowEntry.package=$script:package
     }
+    function Set-EntrypointUnmergedSource {
+        $base='/repos/clcdpc/example'; $next='e'*40
+        foreach ($path in $script:configuration.trustedFiles) {
+            $script:responses[$base+'/contents/'+$path+'?ref='+$next]=$script:responses[$base+'/contents/'+$path+'?ref='+$script:integration]
+        }
+        $script:integration=$next; $script:responses[$base+'/branches/master'].commit.sha=$next
+        $script:responses[$base+'/compare/'+$script:sourceCommit+'...'+$next]=@{status='diverged';merge_base_commit=@{sha=('d'*40)}}
+    }
     function Remove-EntrypointFixture {
         $env:GITHUB_OUTPUT=$script:oldOutput; $env:GITHUB_STEP_SUMMARY=$script:oldSummary
         # Package tests import the exact committed fixture module. Restore the
@@ -91,7 +99,11 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         Mock Invoke-ClcReleaseApi {
             param($Repository,$Method,$Path,$Body,[switch]$Bytes)
             $Repository | Should -BeExactly 'clcdpc/example'
-            if ($Path -ceq '/repos/clcdpc/example/actions/artifacts/456/zip') { $Bytes | Should -BeTrue; return ,$global:ClcWorkflowEntry.transport }
+            if ($Path -ceq '/repos/clcdpc/example/actions/artifacts/456/zip') {
+                $Bytes | Should -BeTrue
+                if ($global:ClcWorkflowEntry.ContainsKey('moveTagAfterDownload')) { $global:ClcWorkflowEntry.responses['/repos/clcdpc/example/git/ref/tags/v1.2.3-dev.1'].object.sha='f'*40 }
+                return ,$global:ClcWorkflowEntry.transport
+            }
             if ($Path -ceq '/repos/clcdpc/example/releases/assets/9') { $Bytes | Should -BeTrue; return ,$global:ClcWorkflowEntry.uploaded }
             if ($Path -ceq '/repos/clcdpc/example/releases/tags/v1.2.3-dev.1') { return $global:ClcWorkflowEntry.release }
             if ($Path -ceq '/repos/clcdpc/example/releases?per_page=100&page=1') { return @() }
@@ -136,6 +148,41 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         $output | Should -Match ('(?m)^configuration_blob='+$script:configurationBlob+'$')
         $output | Should -Match '(?m)^runner_labels=\["self-hosted","Windows","X64","probe-dev"\]$'
         Should -Invoke Invoke-ClcReleaseApi -Times 2 -Exactly -ParameterFilter { $Path -ceq '/repos/clcdpc/example/actions/runs/123/attempts/2' }
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+    }
+    It 'runs automatic <Action> for exact qualified unmerged DEV source without PR or review API evidence' -ForEach @(@{Action='Release'},@{Action='Admit'}) {
+        Set-EntrypointUnmergedSource
+        $script:parameters.Action=$Action
+        if ($Action -ceq 'Release') {
+            $script:claims.job_workflow_ref='clcdpc/clc-deployment/.github/workflows/application-release.yml@'+$script:sharedCommit
+            $script:parameters.ClaimsJson=$script:claims | ConvertTo-Json -Compress
+        }
+        $result=& "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters
+        $result.status | Should -BeExactly $(if ($Action -ceq 'Release') {'Published'} else {'Admitted'})
+        Should -Invoke Invoke-ClcReleaseApi -Times 0 -Exactly -ParameterFilter {$Path -match '/pulls|/collaborators/|/branches/(?!master$)'}
+        Should -Invoke Invoke-ClcReleaseApi -Times 2 -Exactly -ParameterFilter {$Path -ceq '/repos/clcdpc/example/git/ref/tags/v1.2.3-dev.1'}
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+    }
+    It 'rejects an unmerged DEV tag moved after artifact download during <Action>' -ForEach @(@{Action='Release'},@{Action='Admit'}) {
+        Set-EntrypointUnmergedSource
+        $global:ClcWorkflowEntry.moveTagAfterDownload=$true; $script:parameters.Action=$Action
+        if ($Action -ceq 'Release') {
+            $script:claims.job_workflow_ref='clcdpc/clc-deployment/.github/workflows/application-release.yml@'+$script:sharedCommit
+            $script:parameters.ClaimsJson=$script:claims | ConvertTo-Json -Compress
+        }
+        { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw '*tag moved*'
+        [IO.File]::Exists($env:GITHUB_OUTPUT) | Should -BeFalse
+        Should -Invoke Send-ClcApplicationReleaseAsset -Times 0 -Exactly
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+    }
+    It 'rejects disabled unmerged DEV tags before artifact download and host routing' {
+        Set-EntrypointUnmergedSource
+        $script:configuration.sourcePolicy.allowUnmergedDevTags=$false
+        $content=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script:configuration | ConvertTo-Json -Depth 12)))
+        foreach ($commit in @($script:caller,$script:sourceCommit,$script:integration)) {$script:responses['/repos/clcdpc/example/contents/.clc/release.json?ref='+$commit].content=$content}
+        { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw '*outside the protected integration history*'
+        [IO.File]::Exists($env:GITHUB_OUTPUT) | Should -BeFalse
+        Should -Invoke Invoke-ClcReleaseApi -Times 0 -Exactly -ParameterFilter {$Bytes}
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
     }
     It 'admits the observed <Consumer> producer workflow, job ID and exact REST display name' -ForEach @(
@@ -231,8 +278,12 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
         Should -Invoke Send-ClcApplicationReleaseAsset -Times 0 -Exactly
     }
-    It 'hands verified bytes and ValidateOnly to the installed engine through mocked infrastructure' {
-        $script:parameters.Action='Deploy'; $script:parameters.ExpectedConfigurationBlob=$script:configurationBlob; $script:parameters.Operation='ValidateOnly'
+    It 'hands verified <SourceClass> bytes and <Operation> to the installed engine through mocked infrastructure' -ForEach @(
+        @{SourceClass='IntegrationTag';Operation='ValidateOnly'},@{SourceClass='UnmergedDevTag';Operation='Deploy'}
+    ) {
+        if ($SourceClass -ceq 'UnmergedDevTag') {Set-EntrypointUnmergedSource}
+        $global:ClcWorkflowEntry.operation=$Operation; $global:ClcWorkflowEntry.sourceClass=$SourceClass
+        $script:parameters.Action='Deploy'; $script:parameters.ExpectedConfigurationBlob=$script:configurationBlob; $script:parameters.Operation=$Operation
         $script:inbox=Join-Path $script:workspace 'inbox'; $null=[IO.Directory]::CreateDirectory($script:inbox)
         $script:heldToolkit=[IO.MemoryStream]::new()
         $global:ClcWorkflowEntry.inbox=$script:inbox; $global:ClcWorkflowEntry.heldToolkit=$script:heldToolkit
@@ -244,16 +295,18 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         Mock Invoke-ClcIisDeployment {
             param($TargetId,$StandingAuthorizationId,$ReleaseTag,$ArchivePath,$VerifiedReleasePath,$Operation)
             $TargetId | Should -BeExactly probe-dev; $StandingAuthorizationId | Should -BeExactly probe-dev
-            $ReleaseTag | Should -BeExactly v1.2.3-dev.1; $Operation | Should -BeExactly ValidateOnly
+            $ReleaseTag | Should -BeExactly v1.2.3-dev.1; $Operation | Should -BeExactly $global:ClcWorkflowEntry.operation
             (Test-ClcRelease $ArchivePath).archiveSha256 | Should -BeExactly $global:ClcWorkflowEntry.package.archiveSha256
             $identity=Get-Content -LiteralPath $VerifiedReleasePath -Raw | ConvertFrom-Json -AsHashtable
             $identity.sourceCommit | Should -BeExactly $global:ClcWorkflowEntry.sourceCommit; $identity.provenance.artifactId | Should -Be 456
-            return @{status='Planned';releaseId=$identity.releaseId}
+            $identity.sourceIdentity.sourceClass | Should -BeExactly $global:ClcWorkflowEntry.sourceClass
+            return @{status=$(if ($Operation -ceq 'ValidateOnly') {'Planned'} else {'Deployed'});releaseId=$identity.releaseId}
         }
         $result=& "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters
-        $result.status | Should -BeExactly Planned
-        (Get-Content -LiteralPath (Join-Path $script:parameters.OutputDirectory 'deployment-summary.json') -Raw | ConvertFrom-Json).status | Should -BeExactly Planned
-        [IO.File]::ReadAllText($env:GITHUB_STEP_SUMMARY) | Should -Match 'Planned'
+        $expected=if ($Operation -ceq 'ValidateOnly') {'Planned'} else {'Deployed'}
+        $result.status | Should -BeExactly $expected
+        (Get-Content -LiteralPath (Join-Path $script:parameters.OutputDirectory 'deployment-summary.json') -Raw | ConvertFrom-Json).status | Should -BeExactly $expected
+        [IO.File]::ReadAllText($env:GITHUB_STEP_SUMMARY) | Should -Match $expected
         $script:heldToolkit.CanRead | Should -BeFalse
         Should -Invoke Invoke-ClcIisDeployment -Times 1 -Exactly
     }

@@ -137,7 +137,7 @@ Describe 'Version-two routine deployment and explicitly authorized lifecycle hoo
         switch ($Scope) {
             stage {$policy.record.stages=@('BeforeStop')}
             channel {$policy.record.channels=@('Production')}
-            source {$policy.record.sourceClasses=@('ReviewedPr')}
+            source {$policy.record.sourceClasses=@('UnmergedDevTag')}
             disabled {$policy.record.enabled=$false}
             interpreter {$policy.record.pwshSha256='0'*64}
         }
