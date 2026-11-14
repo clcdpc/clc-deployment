@@ -15,6 +15,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      actions: read
+      pull-requests: read
     outputs:
       artifact_id: ${{ steps.package.outputs.artifact-id }}
     steps:
@@ -33,6 +35,7 @@ jobs:
         shell: pwsh
         env:
           CLC_TOOLKIT_MANIFEST: ${{ github.workspace }}/toolkit/src/CLC.Deployment/CLC.Deployment.psd1
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference='Stop'
           Import-Module $env:CLC_TOOLKIT_MANIFEST
