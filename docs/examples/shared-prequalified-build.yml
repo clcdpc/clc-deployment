@@ -1,0 +1,45 @@
+# Consumer producer-job tail: keep its existing frontend/browser/.NET/SQL
+# qualification before these steps. It must already have checked out the exact
+# source and published qualified web files to RUNNER_TEMP/qualified-publish.
+# Use producer.job=package and omit jobName (or set its exact REST display name).
+# Application release identity must match Get-ClcVerifiedSource.identity.releaseId.
+name: Application release build
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      # Existing source checkout, pinned toolchain, builds and qualification
+      # belong here. This example deliberately supplies only the shared tail.
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          ref: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          path: machinery
+          persist-credentials: false
+      - name: Package already qualified application files
+        id: package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLC_REFERENCE: ${{ github.ref_name }}
+          CLC_SOURCE: ${{ github.sha }}
+        run: |
+          $sdkVersion = (& dotnet --version).Trim() # Same pinned SDK used by this producer's own CI.
+          if ($LASTEXITCODE -ne 0) { throw 'Producer SDK identity is unavailable.' }
+          & machinery/tools/release/New-ClcApplicationPackage.ps1 -ConfigurationPath (Join-Path $PWD '.clc/release.json') -SourceRoot $PWD.Path -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -SharedSourceCommit 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -RunId ([long]$env:GITHUB_RUN_ID) -RunAttempt ([long]$env:GITHUB_RUN_ATTEMPT) -QualifiedPublishRoot (Join-Path $env:RUNNER_TEMP 'qualified-publish') -SdkVersion $sdkVersion -ValidationEntryPoint Example.dll -OutputDirectory (Join-Path $env:RUNNER_TEMP 'shared-package')
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: ${{ steps.package.outputs.artifact_path }}/release.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

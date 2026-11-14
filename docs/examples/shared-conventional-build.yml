@@ -1,0 +1,18 @@
+# Consumer .github/workflows/build.yml. Replace the synthetic 40-character pin
+# with one reviewed immutable clc-deployment revision; use it in release.json too.
+name: Application release build
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+  pull-requests: read
+  id-token: write
+jobs:
+  package:
+    uses: clcdpc/clc-deployment/.github/workflows/application-build.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    with:
+      reference: ${{ github.ref_name }}
+      source-commit: ${{ github.sha }}

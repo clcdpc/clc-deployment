@@ -17,6 +17,7 @@ function Assert-ClcEffectAuthority {
         if ($null -ne $release) { Assert-ClcApprovedReleaseUnchanged $lock.context $release }
     }
     if ($Session.ContainsKey('recoveryApproval')) { Assert-ClcHeldRecordUnchanged $lock.context $Session.recoveryApproval 'Clc.ApprovalMismatch' }
+    if ($Session.ContainsKey('persistentStateApproval')) { Assert-ClcHeldRecordUnchanged $lock.context $Session.persistentStateApproval 'Clc.PersistentStateApprovalRequired' }
     Assert-ClcConfigurationUnchanged $Session
     Assert-ClcStableIisObservation $lock.targetFile.record $actual.iis $lock.identity.snapshot.applicationPoolName
     if ((Get-ClcIisConfigurationHash $actual.iis) -cne $Session.iisConfigurationSha256) { Stop-ClcError Clc.HostPreflightFailed }
@@ -79,7 +80,7 @@ function Invoke-ClcAttemptFailure {
             $pool=Get-ClcLivePool $lock
             # Reopen prior code only after an ordinary pre-replacement failure,
             # with verified prior files, compatible configuration and authority.
-            if (-not $Session.replacementBegun -and -not $Session.ContainsKey('recoveryAdmitted')) {
+            if (-not $Session.replacementBegun -and -not $Session.ContainsKey('recoveryAdmitted') -and -not (Test-ClcExternalMutationIntent $j)) {
                 $files=if ($null -eq $Session.previousRelease) {@($Session.baselineFiles)} else {@($Session.previousRelease.manifest.files)}
                 $null=Get-ClcTreeInventory $lock.targetFile.record.applicationRoot $files
                 $null=Assert-ClcEffectAuthority $Session
@@ -116,6 +117,7 @@ function New-ClcLifecycleError {
 }
 function Invoke-ClcDeploymentCore {
     param($Session,[string] $ReleaseApprovalId,[bool] $AllowDowngrade,[string] $Reason)
+    if (-not $Session.ContainsKey('operation')) { $Session.operation='Deploy' }
     $lock=$Session.lock; $decision=Get-ClcReconciliationDecision $lock
     if ($decision.classification -cnotin @('Clean','EmptyRecoveryNeedsVerification')) { Stop-ClcError Clc.RecoveryRequired }
     $state=$lock.state
@@ -127,11 +129,12 @@ function Invoke-ClcDeploymentCore {
         if ($Session.release.approvalFile.record.approvalId -cne $ReleaseApprovalId) { Stop-ClcError Clc.ApprovalMismatch }
         Assert-ClcApprovedReleaseUnchanged $lock.context $Session.release
     } else { $Session.release=Read-ClcApprovedRelease $lock.context $lock.targetFile.record.targetId $ReleaseApprovalId }
-    if ($AllowDowngrade -and $Session.release.approvalFile.record.schemaVersion -eq 2) { Stop-ClcError Clc.DowngradeRejected }
+    if ($AllowDowngrade -and $Session.release.approvalFile.record.schemaVersion -ge 2) { Stop-ClcError Clc.DowngradeRejected }
     $Session.previousRelease=$null; $Session.replacementBegun=$false; $Session.baselineFiles=@()
     $Session.configuration=Open-ClcConfiguration $lock
     $hostFacts=Get-ClcHostPreflight $lock.context $lock.targetFile $lock.identity $Session.release.manifest.runtime.framework
     $Session.hostDigest=$hostFacts.hostObservationSha256; $Session.iisConfigurationSha256=$hostFacts.iisConfigurationSha256
+    Initialize-ClcHookAuthorization $Session
     $previous=$null
     if ($null -ne $state.current) {
         $c=$state.current.record
@@ -139,11 +142,11 @@ function Invoke-ClcDeploymentCore {
         Assert-ClcReleaseBinding $Session.previousRelease $c.release $c.approvalSnapshot
         $null=Get-ClcTreeInventory $lock.targetFile.record.applicationRoot $Session.previousRelease.manifest.files
         $a=$Session.release.approvalFile.record
+        if ($a.schemaVersion -ge 2) { Assert-ClcAutomatedOrdering $a $Session.previousRelease.approvalFile.record }
         if (($a.lineageId -cne $c.approvalSnapshot.lineageId -or $a.releaseSequence -lt $c.approvalSnapshot.releaseSequence) -and -not $AllowDowngrade) { Stop-ClcError Clc.DowngradeRejected }
         if ($a.lineageId -ceq $c.approvalSnapshot.lineageId -and $a.releaseSequence -eq $c.approvalSnapshot.releaseSequence -and
             -not (Test-ClcValueEqual (Get-ClcReleaseIdentity $Session.release) $c.release)) {
-            if ($a.schemaVersion -ne 2) { Stop-ClcError Clc.ApprovalMismatch }
-            Assert-ClcAutomatedOrdering $a $Session.previousRelease.approvalFile.record
+            if ($a.schemaVersion -lt 2) { Stop-ClcError Clc.ApprovalMismatch }
         }
         $previous=@{generation=$c.generation;attemptId=$c.attemptId;approvalSnapshot=$c.approvalSnapshot;release=$c.release;configuration=$c.configuration}
     } elseif ($decision.classification -ceq 'EmptyRecoveryNeedsVerification') {
@@ -158,7 +161,7 @@ function Invoke-ClcDeploymentCore {
     $null=New-ClcPreparedJournal $Session $previous $hostFacts
     New-ClcOwnedDirectory $lock (Join-Path $lock.identity.controlRoot ('attempts\'+$Session.attemptId)) -CreateNew
     Save-ClcRetainedRelease $lock $Session.release
-    if ($null -ne $previous -and (Test-ClcValueEqual (Get-ClcReleaseIdentity $Session.release) $previous.release) -and
+    if ($Session.release.manifest.schemaVersion -eq 1 -and $null -ne $previous -and (Test-ClcValueEqual (Get-ClcReleaseIdentity $Session.release) $previous.release) -and
         $hostFacts.poolState -ceq 'Started' -and $state.current.record.hostObservationSha256 -ceq $Session.hostDigest) {
         # Validate the approved installed bytes before creating any staging material.
         $null=Invoke-ClcApplicationValidation $Session $Session.release $lock.targetFile.record.applicationRoot -BindConfiguration
@@ -171,6 +174,7 @@ function Invoke-ClcDeploymentCore {
         }
     }
     $stage=Expand-ClcApprovedRelease $lock $Session.release (Join-Path $lock.identity.controlRoot ('staging\'+$Session.attemptId))
+    $Session.packageRoot=[IO.Path]::GetDirectoryName($stage)
     $null=Invoke-ClcApplicationValidation $Session $Session.release $stage -BindConfiguration
     if ($null -ne $previous) {
         if ($Session.configuration.record.privateSha256 -cne $previous.configuration.privateSha256 -and $Session.configuration.record.revision -ceq $previous.configuration.revision) { Stop-ClcError Clc.ConfigurationRevisionDrift }
@@ -178,12 +182,25 @@ function Invoke-ClcDeploymentCore {
         $null=Invoke-ClcApplicationValidation $Session $Session.previousRelease $lock.targetFile.record.applicationRoot
     }
     $null=Assert-ClcEffectAuthority $Session
+    if ($Session.operation -ceq 'ValidateOnly') {
+        Invoke-ClcDeploymentHook $Session Plan
+        return @{status='Planned';state=(Complete-ClcAttempt $Session Planned (Assert-ClcEffectAuthority $Session))}
+    }
+    if ($Session.ContainsKey('hookPolicy')) {
+        # The runtime cannot write managed files. Retain exact verified approved
+        # bytes before any hook, without unnecessarily stopping a healthy site.
+        $null=New-ClcVerifiedBackup $Session -Online
+        Invoke-ClcDeploymentHook $Session Preflight
+        Invoke-ClcDeploymentHook $Session BeforeStop
+    }
     $null=Invoke-ClcIisLifecycle $Session Stop
-    $null=New-ClcVerifiedBackup $Session
+    if (-not $Session.ContainsKey('hookPolicy')) { $null=New-ClcVerifiedBackup $Session }
+    Invoke-ClcDeploymentHook $Session AfterStop
     Invoke-ClcManagedReplacement $Session $stage $Session.release.manifest.files $oldFiles
     $null=Assert-ClcEffectAuthority $Session -Stopped
     $null=Invoke-ClcIisLifecycle $Session Start
     $ready=Wait-ClcApplicationReady $Session $Session.release
+    Invoke-ClcDeploymentHook $Session AfterStart
     $final=Publish-ClcReadyCurrent $Session $Session.release $ready Deployed
     return @{status='Deployed';state=$final}
 }

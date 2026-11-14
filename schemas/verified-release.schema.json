@@ -21,7 +21,10 @@
     },
     "schemaVersion": {
       "type": "integer",
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "recordKind": {
       "const": "verified-release"
@@ -36,7 +39,16 @@
       "$ref": "#/$defs/id"
     },
     "tag": {
-      "$ref": "#/$defs/tag"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/tag"
+        },
+        {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^refs/heads/[A-Za-z0-9][A-Za-z0-9_/-]*$"
+        }
+      ]
     },
     "sourceRepository": {
       "$ref": "#/$defs/repository"
@@ -87,6 +99,9 @@
           "$ref": "#/$defs/hash"
         }
       }
+    },
+    "sourceIdentity": {
+      "$ref": "#/$defs/sourceIdentity"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -149,8 +164,125 @@
     "tag": {
       "type": "string",
       "maxLength": 64,
-      "pattern": "^v(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})(-(dev|beta|rc)\\.([1-9][0-9]{0,3}))?$"
+      "pattern": "^v(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})\\.(0|[1-9][0-9]{0,3})(-(dev|beta|rc|test)\\.([1-9][0-9]{0,3}))?$"
+    },
+    "sourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "kind",
+        "sourceClass",
+        "repository",
+        "sourceCommit",
+        "reference",
+        "releaseId",
+        "channel",
+        "orderingKind",
+        "sequence",
+        "tag",
+        "integrationCommit",
+        "integrationBranch"
+      ],
+      "properties": {
+        "contractVersion": {
+          "const": 1
+        },
+        "kind": {
+          "enum": [
+            "tag",
+            "snapshot"
+          ]
+        },
+        "sourceClass": {
+          "enum": [
+            "IntegrationTag",
+            "ReviewedPr",
+            "ProtectedBranch"
+          ]
+        },
+        "repository": {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$"
+        },
+        "sourceCommit": {
+          "pattern": "^[a-f0-9]{40}$",
+          "type": "string"
+        },
+        "reference": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1
+        },
+        "releaseId": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "type": "string"
+        },
+        "channel": {
+          "enum": [
+            "DEV",
+            "Production",
+            "ArtifactOnly",
+            "Test"
+          ]
+        },
+        "orderingKind": {
+          "enum": [
+            "SemVer",
+            "Snapshot"
+          ]
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tag": {
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "integrationCommit": {
+          "pattern": "^[a-f0-9]{40}$",
+          "type": "string"
+        },
+        "integrationBranch": {
+          "maxLength": 100,
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_/-]*$"
+        }
+      }
     }
   },
-  "title": "verified-release"
+  "title": "verified-release",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 2
+          }
+        }
+      },
+      "else": {
+        "not": {
+          "required": [
+            "sourceIdentity"
+          ]
+        },
+        "properties": {
+          "tag": {
+            "$ref": "#/$defs/tag"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "sourceIdentity"
+        ]
+      }
+    }
+  ]
 }

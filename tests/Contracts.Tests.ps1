@@ -62,7 +62,7 @@ Describe 'Strict UTF-8 versioned contract shapes' {
     }
     It 'rejects legacy blueprint and unsupported family/version/kind' -ForEach @(
         @{Field='contractFamily'; Value='clc-deployment-v1'},@{Field='contractFamily'; Value=$null},
-        @{Field='schemaVersion'; Value=2},@{Field='schemaVersion'; Value='1'},@{Field='schemaVersion'; Value=$true},
+        @{Field='schemaVersion'; Value=3},@{Field='schemaVersion'; Value='1'},@{Field='schemaVersion'; Value=$true},
         @{Field='recordKind'; Value='release-bundle'},@{Field='recordKind'; Value='artifact-receipt'},@{Field='recordKind'; Value='release-metadata-v1'}
     ) {
         $record = Get-TestMetadata; $record[$Field] = $Value

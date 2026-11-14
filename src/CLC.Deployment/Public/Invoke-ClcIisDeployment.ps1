@@ -4,13 +4,17 @@ function Invoke-ClcIisDeployment {
         [Parameter(Mandatory,Position=0)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $TargetId,
         [Parameter(Mandatory,ParameterSetName='Exact',Position=1)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $ReleaseApprovalId,
         [Parameter(Mandatory,ParameterSetName='Automated')][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $StandingAuthorizationId,
-        [Parameter(Mandatory,ParameterSetName='Automated')][ValidateNotNullOrEmpty()][string] $ReleaseTag,
+        [Parameter(Mandatory,ParameterSetName='Automated')][Alias('ReleaseReference')][ValidateNotNullOrEmpty()][string] $ReleaseTag,
         [Parameter(Mandatory,ParameterSetName='Automated')][ValidateNotNullOrEmpty()][string] $ArchivePath,
         [Parameter(Mandatory,ParameterSetName='Automated')][ValidateNotNullOrEmpty()][string] $VerifiedReleasePath,
         [Parameter(ParameterSetName='Exact')][switch] $AllowDowngrade,
-        [Parameter(ParameterSetName='Exact')][ValidatePattern('^[a-z0-9][a-z0-9-]{0,127}$')][string] $Reason
+        [Parameter(ParameterSetName='Exact')][ValidatePattern('^[a-z0-9][a-z0-9-]{0,127}$')][string] $Reason,
+        [ValidateSet('Deploy','ValidateOnly')][string] $Operation='Deploy'
     )
-    $context=$null; $lock=$null; $session=@{}
+    # PowerShell ValidateSet accepts case-insensitive input. Canonicalize before
+    # deciding whether this invocation may enter the mutating lifecycle.
+    $Operation=if ($Operation -ieq 'ValidateOnly') {'ValidateOnly'} else {'Deploy'}
+    $context=$null; $lock=$null; $session=@{operation=$Operation}
     try {
         if (($AllowDowngrade -and -not $Reason) -or ($Reason -and -not $AllowDowngrade)) { Stop-ClcError Clc.DowngradeRejected }
         $context=Open-ClcTrustedContext
@@ -22,9 +26,10 @@ function Invoke-ClcIisDeployment {
             $ReleaseApprovalId=$admission.approvalId; $session.admittedRelease=$admission.release
         }
         $outcome=Invoke-ClcDeploymentCore $session $ReleaseApprovalId ([bool]$AllowDowngrade) $Reason
-        $current=$outcome.state.current.record; $j=$outcome.state.journal.record
-        return [pscustomobject][ordered]@{status=$outcome.status;attemptId=$j.attemptId;targetId=$TargetId;releaseId=$current.release.releaseId;
-            sourceCommit=$current.release.sourceCommit;executingToolkit=[pscustomobject]$context.executingToolkit;currentGeneration=$current.generation;
+        $j=$outcome.state.journal.record
+        $generation=if ($null -eq $outcome.state.current) {0L} else {$outcome.state.current.record.generation}
+        return [pscustomobject][ordered]@{status=$outcome.status;attemptId=$j.attemptId;targetId=$TargetId;releaseId=$j.candidate.releaseId;
+            sourceCommit=$j.candidate.sourceCommit;executingToolkit=[pscustomobject]$context.executingToolkit;currentGeneration=$generation;
             observedPoolState=$j.observation.observedPoolState;workerCount=$j.observation.workerCount}
     } catch {
         $original=$_

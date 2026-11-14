@@ -26,7 +26,10 @@
     },
     "schemaVersion": {
       "type": "integer",
-      "const": 1
+      "enum": [
+        1,
+        2
+      ]
     },
     "recordKind": {
       "const": "release-manifest"
@@ -50,7 +53,10 @@
       "$ref": "#/$defs/runtime"
     },
     "changeKind": {
-      "const": "files-only"
+      "enum": [
+        "files-only",
+        "application-deployment"
+      ]
     },
     "validation": {
       "$ref": "#/$defs/validation"
@@ -64,6 +70,9 @@
     },
     "inventorySha256": {
       "$ref": "#/$defs/hash"
+    },
+    "hooks": {
+      "$ref": "#/$defs/hooks"
     }
   },
   "$defs": {
@@ -282,6 +291,137 @@
       "not": {
         "pattern": "(?:^|/)(?:\\.{1,2}|\\.[cC][lL][cC]-[^/]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*)?)(?:/|$)|\\.(?:/|$)"
       }
+    },
+    "hookPath": {
+      "type": "string",
+      "maxLength": 240,
+      "pattern": "^hooks/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$",
+      "not": {
+        "pattern": "(?:^|/)(?:\\.{1,2}|\\.[cC][lL][cC]-[^/]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*)?)(?:/|$)|\\.(?:/|$)"
+      }
+    },
+    "hookEntryPoint": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/hookPath"
+        },
+        {
+          "pattern": "\\.ps1$"
+        }
+      ]
+    },
+    "hookStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "entryPoint"
+      ],
+      "properties": {
+        "stage": {
+          "enum": [
+            "Preflight",
+            "BeforeStop",
+            "AfterStop",
+            "AfterStart"
+          ]
+        },
+        "entryPoint": {
+          "$ref": "#/$defs/hookEntryPoint"
+        }
+      }
+    },
+    "hookFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "length",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/hookPath"
+        },
+        "length": {
+          "$ref": "#/$defs/file/properties/length"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "stages",
+        "planningEntryPoint",
+        "files",
+        "inventorySha256"
+      ],
+      "properties": {
+        "contractVersion": {
+          "type": "integer",
+          "const": 1
+        },
+        "stages": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/hookStage"
+          }
+        },
+        "planningEntryPoint": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/hookEntryPoint"
+            }
+          ]
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 19999,
+          "items": {
+            "$ref": "#/$defs/hookFile"
+          }
+        },
+        "inventorySha256": {
+          "$ref": "#/$defs/hash"
+        }
+      },
+      "$comment": "Runtime requires at least one declared entry point, unique lifecycle stages, and a planning entry point distinct from lifecycle entry points. Package verification is not hook execution authorization. Runtime enforces ordinal inventory, exact hash, entry point membership, and aggregate application+hook count/size limits."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "changeKind": {
+            "const": "files-only"
+          },
+          "hooks": false
+        }
+      },
+      "else": {
+        "properties": {
+          "changeKind": {
+            "const": "application-deployment"
+          }
+        }
+      }
+    }
+  ]
 }

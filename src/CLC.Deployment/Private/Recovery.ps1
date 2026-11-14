@@ -58,6 +58,7 @@ function Invoke-ClcRecoveryCore {
         }
     }
     Assert-ClcAutomatedRecoveryAuthority $Session $selected
+    Assert-ClcHookRecoveryAuthority $Session $state $selected $Mode
     $sequence=if ($null -eq $j.recovery) {1L} else {$j.recovery.sequence+1L}
     if ($sequence -le 0) { Stop-ClcError Clc.StatePersistenceFailed }
     New-ClcOwnedDirectory $lock (Join-Path $lock.identity.controlRoot ('attempts\'+$AttemptId))
@@ -67,6 +68,9 @@ function Invoke-ClcRecoveryCore {
     $j.recovery=@{sequence=$sequence;mode=$Mode;reason=$Reason;originalJournalSha256=$state.journal.sha256;
         executingToolkit=$lock.context.executingToolkit;policyGeneration=$lock.context.policyFile.record.generation;policySha256=$lock.context.policyFile.sha256;
         baselineGeneration=$(if ($null -eq $state.current) {0L} else {$state.current.record.generation})}
+    if ($j.schemaVersion -eq 3) {
+        $j.recovery.persistentStateApproval=if ($Session.ContainsKey('persistentStateApproval')) {@{approvalId=$Session.persistentStateApproval.record.approvalId;sha256=$Session.persistentStateApproval.sha256}} else {$null}
+    }
     $null=Write-ClcStateRecord $lock journal $j $state.journal.sha256
     $Session.attemptId=$AttemptId; $Session.recoveryAdmitted=$true
     $null=Invoke-ClcApplicationValidation $Session $selected $source

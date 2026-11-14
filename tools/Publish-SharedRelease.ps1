@@ -80,12 +80,6 @@ try {
             Get-GitHubJson GET $Path -NotFoundIsNull
         }
     }
-    function Assert-ReleaseHeader($Release) {
-        if ($null -eq $Release -or $Release.tag_name -cne $Tag -or $Release.target_commitish -cne $SourceCommit -or
-            $Release.prerelease -isnot [bool] -or $Release.prerelease -ne $prerelease -or $Release.draft -isnot [bool]) {
-            throw 'An existing GitHub Release has a different tag, source commit or prerelease identity.'
-        }
-    }
     function Get-ReleaseAssetHash($Asset) {
         if ($Asset.id -isnot [long] -and $Asset.id -isnot [int]) { throw 'GitHub release asset identity is invalid.' }
         $request=[Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Get,'https://api.github.com/repos/'+$Repository+'/releases/assets/'+$Asset.id)
@@ -99,22 +93,14 @@ try {
             } finally { $response.Dispose() }
         } finally { $request.Dispose() }
     }
+    $githubIdentity=@{repository=$Repository;tag=$Tag;sourceCommit=$SourceCommit;prerelease=$prerelease}
+    $githubAssets=@(
+        @{name='release-manifest.json';path=$manifestPath;length=(Get-Item -LiteralPath $manifestPath).Length;sha256=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()},
+        @{name=$manifest.toolkit.file;path=$toolkitPath;length=(Get-Item -LiteralPath $toolkitPath).Length;sha256=$manifest.toolkit.sha256},
+        @{name=$manifest.companion.file;path=$packagePath;length=(Get-Item -LiteralPath $packagePath).Length;sha256=$manifest.companion.sha256}
+    )
     function Assert-ReleaseAssets($Release,[switch] $AllowMissing) {
-        $expected=[ordered]@{}
-        $expected['release-manifest.json']=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        $expected[$manifest.toolkit.file]=$manifest.toolkit.sha256
-        $expected[$manifest.companion.file]=$manifest.companion.sha256
-        $assets=@($Release.assets)
-        $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach ($asset in $assets) {
-            if ($asset.name -isnot [string] -or -not $seen.Add($asset.name) -or -not $expected.Contains($asset.name)) {
-                throw 'GitHub Release contains duplicate or unexpected assets.'
-            }
-            $actual=Get-ReleaseAssetHash $asset
-            if ($actual -cne $expected[$asset.name]) { throw 'An existing GitHub Release asset contains different bytes.' }
-        }
-        if (-not $AllowMissing -and $seen.Count -ne $expected.Count) { throw 'A published GitHub Release is missing expected assets.' }
-        return @($expected.Keys | Where-Object { -not $seen.Contains($_) })
+        Assert-SharedReleaseGitHubAssets $Release $githubIdentity $githubAssets {param($asset) Get-ReleaseAssetHash $asset} -AllowMissing:$AllowMissing
     }
     function Upload-ReleaseAsset($Release,[string] $Path) {
         $name=[IO.Path]::GetFileName($Path)
@@ -142,7 +128,6 @@ try {
     $release=Get-Release $Tag
     $releaseAlreadyPublished=$false
     if ($null -ne $release) {
-        Assert-ReleaseHeader $release
         $null=Assert-ReleaseAssets $release -AllowMissing
         if (-not $release.draft) {
             $null=Assert-ReleaseAssets $release
@@ -174,48 +159,11 @@ try {
         $nuGetResult=Invoke-SharedReleaseNuGetPublication -PackagePath $packagePath -PackageId $manifest.companion.packageId -Version $version -SourceCommit $SourceCommit -NuGetClient $nugetClient -PushPackage $pushPackage -ApiKey $nugetApiKey -DotnetPath $dotnetPath
     }
 
-    if ($null -eq $release) {
-        $releaseBody='Shared version '+$version+' from source '+$SourceCommit+'. NuGet submission was accepted or its existing contents verified; NuGet signing/indexing may still be processing. Package and toolkit distribution hashes are listed in release-manifest.json. Actual IIS qualification remains NOT RUN.'
-        $create=[ordered]@{tag_name=$Tag;target_commitish=$SourceCommit;name=$Tag;body=$releaseBody;draft=$true;prerelease=$prerelease}
-        try { $release=Get-GitHubJson POST ('/repos/'+$Repository+'/releases') $create }
-        catch { $release=Get-Release $Tag; if ($null -eq $release) { throw 'Could not create the protected draft GitHub Release.' } }
-    }
-    Assert-ReleaseHeader $release
-    if ($releaseAlreadyPublished) {
-        $null=Assert-ReleaseAssets $release
-        [pscustomobject]@{nuGet=$nuGetResult;githubRelease='already-published-identical';tag=$Tag;version=$version}
-        return
-    }
-    if (-not $release.draft) {
-        $null=Assert-ReleaseAssets $release
-        [pscustomobject]@{nuGet=$nuGetResult;githubRelease='already-published-identical';tag=$Tag;version=$version}
-        return
-    }
-
-    $missing=Assert-ReleaseAssets $release -AllowMissing
-    foreach ($name in $missing) {
-        $assetPath=switch -CaseSensitive ($name) {
-            'release-manifest.json' { $manifestPath }
-            $manifest.toolkit.file { $toolkitPath }
-            $manifest.companion.file { $packagePath }
-            default { throw 'Unexpected GitHub Release asset request.' }
-        }
-        Upload-ReleaseAsset $release $assetPath
-        $release=Get-SharedReleaseById -Repository $Repository -ReleaseId $release.id -GetJson {
-            param($Path)
-            Get-GitHubJson GET $Path
-        }
-        Assert-ReleaseHeader $release
-    }
-    $null=Assert-ReleaseAssets $release
-    if ($release.draft) {
-        $published=Get-GitHubJson PATCH ('/repos/'+$Repository+'/releases/'+$release.id) ([ordered]@{draft=$false;prerelease=$prerelease})
-        Assert-ReleaseHeader $published
-        if ($published.draft) { throw 'GitHub Release remains in draft state.' }
-        $release=$published
-    }
-    $null=Assert-ReleaseAssets $release
-    [pscustomobject]@{nuGet=$nuGetResult;githubRelease='published';tag=$Tag;version=$version}
+    $githubResult=Invoke-SharedReleaseGitHubPublication $githubIdentity $githubAssets `
+        {param($method,$path,$body) Get-GitHubJson $method $path $body -NotFoundIsNull:($method -ceq 'GET')} `
+        {param($asset) Get-ReleaseAssetHash $asset} `
+        {param($release,$asset) Upload-ReleaseAsset $release $asset.path}
+    [pscustomobject]@{nuGet=$nuGetResult;githubRelease=$(if ($githubResult.status -ceq 'Preserved') {'already-published-identical'} else {'published'});tag=$Tag;version=$version}
 } finally {
     $githubClient.Dispose()
     $nugetClient.Dispose()

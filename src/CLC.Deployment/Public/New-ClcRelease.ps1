@@ -3,7 +3,8 @@ function New-ClcRelease {
     param(
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $PublishRoot,
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $MetadataPath,
-        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $OutputPath
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $OutputPath,
+        [ValidateNotNullOrEmpty()][string] $HookRoot
     )
     $handles = [Collections.Generic.List[IDisposable]]::new()
     $output = $null
@@ -24,8 +25,17 @@ function New-ClcRelease {
         $metadataDigest = Read-ClcStream $metadataStream $script:ClcLimits.Json $clock -Capture
         $metadata = Read-ClcJson $metadataDigest.bytes 'release-metadata' ([int] $script:ClcLimits.Json)
         if ($metadata.builder.module -cne 'CLC.Deployment' -or $metadata.builder.version -cne (Get-ClcToolkitVersion)) { Stop-ClcError Clc.InvalidContract }
+        $hookRootFacts=$null; $hookFiles=@()
+        if ($metadata.Contains('hooks')) {
+            if (-not $PSBoundParameters.ContainsKey('HookRoot')) { Stop-ClcError Clc.InvalidContract }
+            $hookRootFacts=Get-ClcPathObservation $HookRoot $handles -Directory
+            foreach ($other in @($root,$metadataFacts,$parent)) { Assert-ClcDisjoint $hookRootFacts $other }
+            $hookFiles=Get-ClcPublishInventory $hookRootFacts $handles $clock -HookAssets
+        } elseif ($PSBoundParameters.ContainsKey('HookRoot')) { Stop-ClcError Clc.InvalidContract }
         $files = Get-ClcPublishInventory $root $handles $clock
-        $manifestBytes = ConvertTo-ClcManifestBytes $metadata $files
+        if ($files.Count+$hookFiles.Count -ge $script:ClcLimits.Entries -or
+            (@($files)+@($hookFiles) | Measure-Object length -Sum).Sum -gt $script:ClcLimits.Expanded) { Stop-ClcError Clc.UnsafeArchive }
+        $manifestBytes = ConvertTo-ClcManifestBytes $metadata $files $hookFiles
         $manifest = Read-ClcJson $manifestBytes 'release-manifest' ([int] $script:ClcLimits.Json)
         $web = @($files | Where-Object { $_.path -ceq 'application/web.config' })
         $runtimeName = 'application/' + [IO.Path]::GetFileNameWithoutExtension($metadata.validation.entryPoint) + '.runtimeconfig.json'
@@ -50,7 +60,7 @@ function New-ClcRelease {
             $entry.ExternalAttributes = 0
             $destination = $entry.Open()
             try { $destination.Write($manifestBytes,0,$manifestBytes.Length) } finally { $destination.Dispose() }
-            foreach ($file in $files) {
+            foreach ($file in @($files)+@($hookFiles)) {
                 Assert-ClcDeadline $clock
                 $entry = $zip.CreateEntry($file.path,[IO.Compression.CompressionLevel]::NoCompression)
                 $entry.LastWriteTime = [DateTimeOffset]::new(1980,1,1,0,0,0,[TimeSpan]::Zero)
@@ -64,6 +74,10 @@ function New-ClcRelease {
         # Reenumerate to reject added/removed files as well as changed held file bytes.
         $rechecked = Get-ClcPublishInventory $root $handles $clock
         if ((Get-ClcInventoryHash $rechecked) -cne $manifest.inventorySha256) { Stop-ClcError Clc.ContentDrift }
+        if ($null -ne $hookRootFacts) {
+            $recheckedHooks=Get-ClcPublishInventory $hookRootFacts $handles $clock -HookAssets
+            if ((Get-ClcInventoryHash $recheckedHooks) -cne $manifest.hooks.inventorySha256) { Stop-ClcError Clc.ContentDrift }
+        }
         $output.Flush($true)
         $output.Position = 0
         $inspection = Test-ClcArchiveStream $output $clock
@@ -76,11 +90,15 @@ function New-ClcRelease {
         }
         $finalSource = Get-ClcPublishInventory $root $handles $clock
         if ((Get-ClcInventoryHash $finalSource) -cne $manifest.inventorySha256) { Stop-ClcError Clc.ContentDrift }
+        if ($null -ne $hookRootFacts) {
+            $finalHooks=Get-ClcPublishInventory $hookRootFacts $handles $clock -HookAssets
+            if ((Get-ClcInventoryHash $finalHooks) -cne $manifest.hooks.inventorySha256) { Stop-ClcError Clc.ContentDrift }
+        }
         $temporary = $null
         $output.Dispose()
         $output = $null
         return [pscustomobject][ordered]@{
-            contractFamily='clc-file-iis-v1'; packageContractVersion=1; releaseId=$inspection.releaseId; archivePath=$OutputPath;
+            contractFamily='clc-file-iis-v1'; packageContractVersion=$inspection.packageContractVersion; releaseId=$inspection.releaseId; archivePath=$OutputPath;
             archiveSha256=$inspection.archiveSha256; manifestSha256=$inspection.manifestSha256; inventorySha256=$inspection.inventorySha256;
             fileCount=$inspection.fileCount; totalBytes=$inspection.totalBytes; builderVersion=$inspection.builderVersion
         }

@@ -135,8 +135,11 @@ function Get-ClcRawZipEntries {
             if ($entry.directory) {
                 if (-not (@($files | Where-Object { $_.StartsWith($entry.name, [StringComparison]::Ordinal) }).Count -gt 0)) { Stop-ClcError Clc.UnsafeArchive }
             } elseif ($entry.name -cne 'manifest.json') {
-                Assert-ClcArchiveName $entry.name -PayloadOnly
-                Assert-ClcPublishName $entry.name.Substring(12)
+                if ($entry.name.StartsWith('hooks/',[StringComparison]::Ordinal)) { Assert-ClcHookAssetName $entry.name }
+                else {
+                    Assert-ClcArchiveName $entry.name -PayloadOnly
+                    Assert-ClcPublishName $entry.name.Substring(12)
+                }
             }
         }
         if (-not $files.Contains('manifest.json') -or -not (@($entries | Where-Object { $_.name -ceq 'manifest.json' }).Count -eq 1)) { Stop-ClcError Clc.UnsafeArchive }
@@ -242,9 +245,11 @@ function Test-ClcArchiveStream {
             }
         }
         $manifest = Read-ClcJson $manifestBytes 'release-manifest' ([int] $script:ClcLimits.Json)
-        if ($manifest.files.Count -ne $payload.Count) { Stop-ClcError Clc.HashMismatch }
+        $expectedFiles=@($manifest.files)
+        if ($manifest.Contains('hooks')) { $expectedFiles+=@($manifest.hooks.files) }
+        if ($expectedFiles.Count -ne $payload.Count) { Stop-ClcError Clc.HashMismatch }
         $total = 0L
-        foreach ($file in $manifest.files) {
+        foreach ($file in $expectedFiles) {
             if (-not $payload.ContainsKey($file.path) -or $payload[$file.path].length -ne $file.length -or $payload[$file.path].sha256 -cne $file.sha256) { Stop-ClcError Clc.HashMismatch }
             $total += $file.length
         }
@@ -253,7 +258,7 @@ function Test-ClcArchiveStream {
         Assert-ClcWebConfig $captured['application/web.config'] $manifest.validation.entryPoint
         Assert-ClcRuntimeConfig $captured[$runtimeName] $manifest.runtime.framework
         return [pscustomobject][ordered]@{
-            contractFamily='clc-file-iis-v1'; packageContractVersion=1; integrityVerified=$true; authorizedForDeployment=$false;
+            contractFamily='clc-file-iis-v1'; packageContractVersion=$manifest.schemaVersion; integrityVerified=$true; authorizedForDeployment=$false;
             applicationId=$manifest.applicationId; releaseId=$manifest.releaseId; sourceCommit=$manifest.source.commit;
             archiveSha256=$archiveDigest.sha256; manifestSha256=(Get-ClcBytesHash $manifestBytes); inventorySha256=$manifest.inventorySha256;
             fileCount=$payload.Count; totalBytes=$total; builderVersion=$manifest.builder.version

@@ -52,20 +52,24 @@ function Read-ClcStream {
 }
 
 function Assert-ClcPublishName {
-    param([string] $RelativePath)
-    Assert-ClcArchiveName ('application/' + $RelativePath) -PayloadOnly
+    param([string] $RelativePath, [switch] $HookAssets)
+    if ($HookAssets) { Assert-ClcArchiveName ('hooks/' + $RelativePath) -HookOnly }
+    else { Assert-ClcArchiveName ('application/' + $RelativePath) -PayloadOnly }
     $parts = $RelativePath.Split('/')
     $leaf = $parts[-1]
     # Bounded shared exclusions; application content/semantic checks belong to its build.
     if ($parts -imatch '^(toolkit|deployment|deploy|keys|certificates|\.git|\.github|\.vs|obj|tests?|reports?)$' -or
         $leaf -imatch '^appsettings\.(Development|Testing|Test)\.json$' -or
         $leaf -imatch '^(launchSettings|operational-config|deployment|deployment-config|host-policy|release-approval|target)\.json$' -or
-        $leaf -imatch '\.(ps1|psm1|psd1|cmd|bat|pfx|p12|pem|key|cer|crt|snk)$') { Stop-ClcError Clc.UnsafeArchive }
+        $leaf -imatch '\.(cmd|bat|pfx|p12|pem|key|cer|crt|snk)$' -or
+        (-not $HookAssets -and $leaf -imatch '\.(ps1|psm1|psd1)$') -or
+        ($HookAssets -and $leaf -imatch '^(appsettings[^/]*|application|secrets|credentials)\.json$')) { Stop-ClcError Clc.UnsafeArchive }
 }
 
 function Get-ClcPublishInventory {
     param($Root, [Collections.Generic.List[IDisposable]] $Handles, [Diagnostics.Stopwatch] $Clock,
-        [AllowNull()][object[]] $ExpectedFiles=$null, $Context=$null, [string] $RuntimeSid, [string] $ControlRoot)
+        [AllowNull()][object[]] $ExpectedFiles=$null, $Context=$null, [string] $RuntimeSid, [string] $ControlRoot, [switch] $HookAssets)
+    $prefix=if ($HookAssets) { 'hooks/' } else { 'application/' }
     $queue = [Collections.Generic.Queue[string]]::new()
     $queue.Enqueue($Root.CanonicalPath)
     $files = [Collections.Generic.List[object]]::new()
@@ -73,7 +77,7 @@ function Get-ClcPublishInventory {
     $expectedDirectories=$null
     if ($null -ne $ExpectedFiles) {
         $expectedDirectories=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach ($file in $ExpectedFiles) { foreach ($prefix in Get-ClcNamePrefixes ($file.path.Substring(12))) { $null=$expectedDirectories.Add($prefix) } }
+        foreach ($file in $ExpectedFiles) { foreach ($directoryPrefix in Get-ClcNamePrefixes ($file.path.Substring($prefix.Length))) { $null=$expectedDirectories.Add($directoryPrefix) } }
     }
     $entries = 0
     $total = 0L
@@ -92,7 +96,7 @@ function Get-ClcPublishInventory {
             $entries++
             if ($entries -gt $script:ClcLimits.Entries) { Stop-ClcError Clc.UnsafeArchive }
             $relative = $entry.Substring($Root.CanonicalPath.Length + 1).Replace('\', '/')
-            Assert-ClcPublishName $relative
+            Assert-ClcPublishName $relative -HookAssets:$HookAssets
             if (-not $seen.Add($relative)) { Stop-ClcError Clc.UnsafePath }
             $attributes = [IO.File]::GetAttributes($entry)
             if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Stop-ClcError Clc.UnsafePath }
@@ -110,7 +114,7 @@ function Get-ClcPublishInventory {
                 $stream.Position = 0
                 $total += $digest.length
                 if ($total -gt $script:ClcLimits.Expanded) { Stop-ClcError Clc.UnsafeArchive }
-                $files.Add(@{ path = 'application/' + $relative; length = $digest.length; sha256 = $digest.sha256; stream = $stream; facts = $facts })
+                $files.Add(@{ path = $prefix + $relative; length = $digest.length; sha256 = $digest.sha256; stream = $stream; facts = $facts })
             }
         }
     }
@@ -124,8 +128,8 @@ function Get-ClcPublishInventory {
 }
 
 function ConvertTo-ClcManifestBytes {
-    param($Metadata, [object[]] $Files)
-    $manifest = [ordered]@{ contractFamily = 'clc-file-iis-v1'; schemaVersion = 1; recordKind = 'release-manifest' }
+    param($Metadata, [object[]] $Files, [object[]] $HookFiles=@())
+    $manifest = [ordered]@{ contractFamily = 'clc-file-iis-v1'; schemaVersion = $Metadata.schemaVersion; recordKind = 'release-manifest' }
     foreach ($key in @('applicationId','releaseId','source','build','builder','runtime','changeKind','validation','readinessContractVersion')) {
         $value = $Metadata[$key]
         # Normalize known nested property order, regardless of metadata input order.
@@ -145,6 +149,16 @@ function ConvertTo-ClcManifestBytes {
     }
     $manifest.files = @($Files | ForEach-Object { [ordered]@{ path = $_.path; length = $_.length; sha256 = $_.sha256 } })
     $manifest.inventorySha256 = Get-ClcInventoryHash $Files
+    if ($Metadata.Contains('hooks')) {
+        $stages=@(foreach ($stage in @('Preflight','BeforeStop','AfterStop','AfterStart')) {
+            foreach ($entry in $Metadata.hooks.stages) {
+                if ($entry.stage -ceq $stage) { [ordered]@{stage=$stage;entryPoint=$entry.entryPoint} }
+            }
+        })
+        $manifest.hooks=[ordered]@{contractVersion=1;stages=$stages;planningEntryPoint=$Metadata.hooks.planningEntryPoint;
+            files=@($HookFiles | ForEach-Object { [ordered]@{path=$_.path;length=$_.length;sha256=$_.sha256} });
+            inventorySha256=(Get-ClcInventoryHash $HookFiles)}
+    }
     return ,([Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Depth 10 -Compress) + "`n"))
 }
 

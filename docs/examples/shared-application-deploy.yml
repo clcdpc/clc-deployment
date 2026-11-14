@@ -1,0 +1,51 @@
+# Consumer .github/workflows/deploy.yml, protected independently from app tags.
+# The runner group must admit the exact reusable application-deploy.yml SHA.
+name: Application publication and deployment
+on:
+  workflow_run:
+    workflows: [Application release build]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      reference:
+        description: Existing immutable tag or refs/heads/master snapshot reference
+        type: string
+        required: true
+      source-commit:
+        description: Exact qualified source commit
+        type: string
+        required: true
+      producer-run-id:
+        description: Existing successful producer run ID
+        type: string
+        required: true
+      producer-run-attempt:
+        description: Exact successful producer attempt
+        type: string
+        required: true
+permissions:
+  contents: write
+  actions: read
+  pull-requests: read
+  id-token: write
+jobs:
+  publication:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    uses: clcdpc/clc-deployment/.github/workflows/application-release.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    with:
+      reference: ${{ github.event.workflow_run.head_branch || inputs.reference }}
+      source-commit: ${{ github.event.workflow_run.head_sha || inputs.source-commit }}
+      producer-run-id: ${{ github.event.workflow_run.id || fromJSON(inputs.producer-run-id) }}
+      producer-run-attempt: ${{ github.event.workflow_run.run_attempt || fromJSON(inputs.producer-run-attempt) }}
+  deployment:
+    needs: publication
+    uses: clcdpc/clc-deployment/.github/workflows/application-deploy.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    with:
+      reference: ${{ github.event.workflow_run.head_branch || inputs.reference }}
+      source-commit: ${{ github.event.workflow_run.head_sha || inputs.source-commit }}
+      producer-run-id: ${{ github.event.workflow_run.id || fromJSON(inputs.producer-run-id) }}
+      producer-run-attempt: ${{ github.event.workflow_run.run_attempt || fromJSON(inputs.producer-run-attempt) }}
+      automatic: ${{ github.event_name != 'workflow_dispatch' }}
+      # For separately authorized SQL planning, select ValidateOnly in a distinct
+      # reviewed caller job. Never select a mutating lifecycle hook for planning.
+      operation: Deploy

@@ -19,11 +19,15 @@ function Send-SharedReleaseHttpRequest {
         [Parameter(Mandatory)][Net.Http.HttpClient] $Client,
         [Parameter(Mandatory)][Net.Http.HttpRequestMessage] $Request,
         [string] $GitHubToken,
+        [ValidatePattern('^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$')][string] $Repository = 'clcdpc/clc-deployment',
         [switch] $GitHubAuthorization,
+        [switch] $AllowActionsStorageRedirect,
         [string[]] $AllowedRedirectHosts = @(),
         [ValidateRange(0,5)][int] $MaximumRedirects = 5
     )
 
+    if ($AllowActionsStorageRedirect -and ($Request.Method -cne [Net.Http.HttpMethod]::Get -or $Request.RequestUri.Host -cne 'api.github.com' -or
+        $Request.RequestUri.AbsolutePath -cnotmatch ('\A/repos/'+[regex]::Escape($Repository)+'/actions/artifacts/[1-9][0-9]*/zip\z'))) { throw 'Actions storage redirects require an exact artifact download endpoint.' }
     $activeRequest = $Request
     for ($redirect = 0; ; $redirect++) {
         $uri = $activeRequest.RequestUri
@@ -41,17 +45,22 @@ function Send-SharedReleaseHttpRequest {
             }
             $isGitHubApiHost = $uri.Host -ceq 'api.github.com'
             $isGitHubUploadHost = $uri.Host -ceq 'uploads.github.com'
-            if ($isGitHubApiHost -and $uri.AbsolutePath -cnotmatch '\A/repos/clcdpc/clc-deployment/') {
+            $repositoryPath='/repos/'+$Repository+'/'
+            if ($isGitHubApiHost -and -not $uri.AbsolutePath.StartsWith($repositoryPath,[StringComparison]::Ordinal)) {
                 $activeRequest.Dispose()
                 throw 'GitHub authorization is restricted to the configured repository API.'
             }
             if ($isGitHubUploadHost -and
-                ($activeRequest.Method -cne [Net.Http.HttpMethod]::Post -or $uri.AbsolutePath -cnotmatch '\A/repos/clcdpc/clc-deployment/releases/[1-9][0-9]*/assets\z')) {
+                ($activeRequest.Method -cne [Net.Http.HttpMethod]::Post -or $uri.AbsolutePath -cnotmatch ('\A'+[regex]::Escape($repositoryPath)+'releases/[1-9][0-9]*/assets\z'))) {
                 $activeRequest.Dispose()
                 throw 'GitHub authorization is restricted to the configured release upload endpoint.'
             }
             if (-not $isGitHubApiHost -and -not $isGitHubUploadHost) {
-                $redirectHostAllowed = $false
+                # GitHub documents Azure blob endpoints for artifact downloads:
+                # https://docs.github.com/en/actions/reference/runners/self-hosted-runners
+                # A signed redirect never receives the GitHub bearer token;
+                # downloaded bytes still require the authenticated API digest.
+                $redirectHostAllowed = $redirect -gt 0 -and $AllowActionsStorageRedirect -and $uri.Host -cmatch '^[a-z0-9-]+\.blob\.core\.windows\.net$'
                 if ($redirect -gt 0) {
                     foreach ($allowedHost in $AllowedRedirectHosts) {
                         if ($uri.Host.Equals($allowedHost,[StringComparison]::OrdinalIgnoreCase)) { $redirectHostAllowed = $true; break }
@@ -82,7 +91,7 @@ function Send-SharedReleaseHttpRequest {
 
             $location = $response.Headers.Location
             $nextUri = if ($location.IsAbsoluteUri) { $location } else { [Uri]::new($uri,$location) }
-            $allowed = $false
+            $allowed = $AllowActionsStorageRedirect -and $nextUri.Host -cmatch '^[a-z0-9-]+\.blob\.core\.windows\.net$'
             foreach ($allowedHost in $AllowedRedirectHosts) {
                 if ($nextUri.Host.Equals($allowedHost,[StringComparison]::OrdinalIgnoreCase)) { $allowed = $true; break }
             }
@@ -292,4 +301,59 @@ function Get-SharedReleaseById {
     param([string] $Repository,[long] $ReleaseId,[scriptblock] $GetJson)
     if ($ReleaseId -le 0) { throw 'GitHub release ID is invalid.' }
     return & $GetJson ('/repos/'+$Repository+'/releases/'+$ReleaseId)
+}
+
+function Assert-SharedReleaseGitHubAssets {
+    param($Release,$Identity,$Assets,[scriptblock] $AssetHash,[switch] $AllowMissing)
+    $prerelease=$Identity.prerelease
+    if ($null -eq $Release -or $Release.tag_name -cne $Identity.tag -or $Release.target_commitish -cne $Identity.sourceCommit -or $Release.prerelease -isnot [bool] -or $Release.prerelease -ne $prerelease -or $Release.draft -isnot [bool]) { throw 'Existing release source or classification conflicts.' }
+    $expected=@{}; foreach ($asset in $Assets) { if ($expected.ContainsKey($asset.name)) { throw 'Duplicate expected asset.' }; $expected[$asset.name]=$asset }
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($asset in $Release.assets) {
+        if (-not $seen.Add($asset.name) -or -not $expected.ContainsKey($asset.name) -or $asset.size -ne $expected[$asset.name].length -or (& $AssetHash $asset) -cne $expected[$asset.name].sha256) { throw 'Existing release assets conflict with verified bytes.' }
+    }
+    if (-not $AllowMissing -and $seen.Count -ne $expected.Count) { throw 'Completed release is missing expected assets.' }
+    return @($Assets | Where-Object {-not $seen.Contains($_.name)})
+}
+
+function Invoke-SharedReleaseGitHubPublication {
+    param($Identity,$Assets,[scriptblock] $Api,[scriptblock] $AssetHash,[scriptblock] $Upload)
+    $repo=$Identity.repository
+    if ($repo -cnotmatch '^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$' -or $Identity.sourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $Identity.prerelease -isnot [bool]) { throw 'Publication identity is invalid.' }
+    if ($Assets.Count -lt 1 -or $Assets.Count -gt 8) { throw 'Publication requires a bounded asset set.' }
+    $names=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($asset in $Assets) {
+        if ($asset.name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$' -or $asset.sha256 -cnotmatch '^[a-f0-9]{64}$' -or -not $names.Add($asset.name)) { throw 'Publication asset identity is invalid.' }
+        $file=Get-Item -LiteralPath $asset.path
+        if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Name -cne $asset.name -or $file.Length -ne $asset.length -or $file.Length -gt 1073741824 -or (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $asset.sha256) { throw 'Publication input bytes changed.' }
+    }
+    $get={param($path) & $Api GET $path $null}
+    $release=Get-SharedReleaseByTag $repo $Identity.tag $get
+    if ($null -eq $release) {
+        $body=@{tag_name=$Identity.tag;target_commitish=$Identity.sourceCommit;name=$Identity.tag;draft=$true;prerelease=($Identity.prerelease);body='Verified application release. Publication does not authorize deployment.'}
+        try { $release=& $Api POST ('/repos/'+$repo+'/releases') $body }
+        catch { $release=Get-SharedReleaseByTag $repo $Identity.tag $get; if ($null -eq $release) { throw 'Release creation failed; retry after inspecting retained evidence.' } }
+    }
+    $missing=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -AllowMissing:$release.draft
+    if (-not $release.draft) { return @{status='Preserved';releaseId=$release.id} }
+    foreach ($asset in $missing) {
+        if (-not $release.draft) { return @{status='Preserved';releaseId=$release.id} }
+        try { & $Upload $release $asset }
+        catch {
+            $release=Get-SharedReleaseById $repo $release.id $get
+            # A racing upload is accepted only after fetching and hashing the
+            # winning asset; a duplicate HTTP response never proves identity.
+            $remaining=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -AllowMissing:$release.draft
+            if (@($remaining | Where-Object name -CEQ $asset.name).Count -gt 0) { throw 'Asset upload failed; compatible draft retained.' }
+        }
+        $release=Get-SharedReleaseById $repo $release.id $get
+        $null=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -AllowMissing:$release.draft
+    }
+    $null=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash
+    if ($release.draft) {
+        $release=& $Api PATCH ('/repos/'+$repo+'/releases/'+$release.id) @{draft=$false;prerelease=($Identity.prerelease)}
+        $null=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash
+        if ($release.draft) { throw 'Release publication remains incomplete.' }
+    }
+    return @{status='Published';releaseId=$release.id}
 }
