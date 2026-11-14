@@ -5,7 +5,7 @@ if ($env:GITHUB_REPOSITORY -cne 'clcdpc/clc-deployment' -or $env:GITHUB_REF_NAME
     throw 'Only the reserved, nonpublishing receipt qualification tag is supported'
 }
 . ./tests/Support.ps1
-$inputs=New-TestPublish $env:CLC_RELEASE_DIRECTORY
+$inputs=New-TestPublish (Join-Path (Split-Path $env:CLC_RELEASE_DIRECTORY) 'clc-synthetic-input')
 $metadata=Get-TestMetadata
 $metadata.releaseId=$env:CLC_RELEASE_ID
 $metadata.source.repository=$env:GITHUB_REPOSITORY
