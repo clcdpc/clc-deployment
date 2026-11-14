@@ -117,7 +117,7 @@ function Get-ClcVerifiedSource {
         $tag=$identity.tag; $releaseId=$identity.releaseId; $channel=$identity.channel; $sequence=$identity.sequence
         if ($channel -ceq 'Test' -and -not $c.sourcePolicy.allowTestTags) { throw 'Test release tags are disabled.' }
         $ref=& $Api GET ($base+'/git/ref/tags/'+[Uri]::EscapeDataString($Reference)) $null
-        for ($depth=0;$ref.object.type -ceq 'tag' -and $depth -lt 5;$depth++) { $ref=@{object=(& $Api GET ($base+'/git/tags/'+$ref.object.sha) $null)} }
+        for ($depth=0;$ref.object.type -ceq 'tag' -and $depth -lt 5;$depth++) { $ref=& $Api GET ($base+'/git/tags/'+$ref.object.sha) $null }
         if ($ref.object.type -cne 'commit' -or $ref.object.sha -cne $SourceCommit) { throw 'The tag moved or names another source commit.' }
     }
     $comparison=& $Api GET ($base+'/compare/'+$SourceCommit+'...'+$integration) $null

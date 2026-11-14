@@ -36,6 +36,15 @@ Describe 'Shared application source eligibility' {
         $script:responses['/repos/clcdpc/ssrs-web/git/ref/tags/v1.2.3-dev.1'].object.sha='c'*40
         { Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api } | Should -Throw '*tag moved*'
     }
+    It 'peels bounded annotated tag objects to their exact commit' {
+        $base='/repos/clcdpc/ssrs-web'
+        $script:responses[$base+'/git/ref/tags/v1.2.3-dev.1']=@{object=@{type='tag';sha=('c'*40)}}
+        $script:responses[$base+'/git/tags/'+('c'*40)]=@{sha=('c'*40);tag='v1.2.3-dev.1';object=@{type='tag';sha=('d'*40)}}
+        $script:responses[$base+'/git/tags/'+('d'*40)]=@{sha=('d'*40);tag='inner';object=@{type='commit';sha=$script:sourceCommit}}
+        (Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api).identity.sourceCommit | Should -BeExactly $script:sourceCommit
+        $script:responses[$base+'/git/tags/'+('d'*40)].object.sha='e'*40
+        { Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api } | Should -Throw '*tag moved*'
+    }
     It 'rejects an external PR head even with a write-authority review' {
         Set-ReviewedPrFixture
         $script:responses['/repos/clcdpc/ssrs-web/commits/'+$script:sourceCommit+'/pulls?per_page=100&page=1'][0].head.repo.full_name='external/ssrs-web'
