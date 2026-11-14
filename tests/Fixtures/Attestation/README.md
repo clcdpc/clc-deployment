@@ -1,0 +1,16 @@
+# Real custom receipt evidence
+
+[GitHub-hosted run 43535764143, attempt 1](https://github.com/clcdpc/clc-deployment/actions/runs/43535764143) built synthetic data at source `93fb166ee654ada84401b51cd0b42207a67eb269`, called the reusable producer at exact commit `c61588a40c357d478f240d534f1a09c9eb8c0a9e`, signed the CLC custom predicate with `actions/attest` v4.1.0 at `59d89421af93a897026c735860bf21b6eb4f7b26`, and passed offline verification with exact-hash-pinned Windows GitHub CLI 2.97.0 and the retained trusted root. The reserved source tag is `v9999.9999.9999-dev.9997`; it is excluded from toolkit publication. No toolkit release was published.
+
+- `release.zip`: synthetic nonexecutable package, never deployment authority.
+- `receipt.sigstore.json`: original `application/vnd.dev.sigstore.bundle.v0.3+json` Sigstore bundle, including certificate/transparency proof and signed custom in-toto statement.
+- `predicate.json`: producer's audit copy; never trusted independently.
+- `verified.json`: **actual** CLI stdout with the toolkit's exact `--jq` projection of `verificationResult.statement.predicate` and `verificationResult.signature.certificate`; no certificate object was fabricated.
+- `trusted-root.jsonl`: independently acquired/pinned public verification material, with SHA-256 in `tools/receipt-qualification.lock.json`; production infrastructure must approve its own trust material.
+- `qualification.json`: package/manifest/bundle/verifier/root hashes and real negative results for wrong predicate, signer digest, source digest/ref and modified package.
+
+The successful runtime arguments bind GitHub.com repository and numeric owner/repository IDs, push-tag source commit/ref, hosted runner, exact reusable signer workflow/commit, caller workflow, run/attempt and custom predicate. The signed predicate additionally binds application/target, package/manifest and immutable artifact ID/service transport digest. All corresponding observed JSON fields matched the original implementation. No verifier-format correction or authorization schema change was needed; the argument builder and output parser were factored into shared private functions so qualification exercises the same code as admission.
+
+`AttestationContract.Tests.ps1` checks the captured real output/schema/bytes and run/attempt rejection offline. Its positive certificate is the unmodified verifier output. These regression assertions do not themselves repeat cryptographic verification. `tools/Test-SignedReceipt.ps1` and `.github/workflows/receipt-qualification.yml` run the real cleared-environment, bounded verifier and retain evidence. The hosted evidence artifact is retained for 90 days; these nonsecret fixture bytes are committed for durable review and replay. The first synthetic run failed before signing because the fixture's input/output directories overlapped; it is not successful qualification evidence.
+
+Cryptographic integration is qualified for these public-repository GitHub.com tools and identities. Actual IIS/Server 2022, infrastructure protected-path and independent-identity enforcement, private/Enterprise signing, privileged runner admission, ssrs-web adaptation and consumer deployment/recovery acceptance remain separately unqualified. No host, application or visibility was changed.

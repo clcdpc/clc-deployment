@@ -1,0 +1,21 @@
+{
+  "cryptographicIntegrationVerified": true,
+  "realHostQualified": false,
+  "sourceCommit": "93fb166ee654ada84401b51cd0b42207a67eb269",
+  "producerCommit": "c61588a40c357d478f240d534f1a09c9eb8c0a9e",
+  "runId": 43535764143,
+  "runAttempt": 1,
+  "verifierVersion": "2.97.0",
+  "verifierSha256": "e2efa10a5d2ce93cac9bc4b676932b62947c0967c01c8f2c3a9cb4437ad358d3",
+  "trustedRootSha256": "db07310827da2ae2798ec7eefc5daf8432506ce458d5bc30cd2feba03708d239",
+  "packageSha256": "31581cd9abcaa9f95d823ea3c46cdeb2396c5cec0f06a063b58a70eedbfb8446",
+  "manifestSha256": "dcd48676e6eb87decf0778077cf4b88ede6ebf5c21772d7983ab48c95435bad0",
+  "bundleSha256": "d75fbbea43475a69b6b2ffcf5cf4a869ac084441253149b49b2814163cb0f4d3",
+  "negativeChecks": {
+    "--predicate-type": "rejected",
+    "--signer-digest": "rejected",
+    "--source-digest": "rejected",
+    "--source-ref": "rejected",
+    "package-sha256": "rejected"
+  }
+}

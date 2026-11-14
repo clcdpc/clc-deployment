@@ -26,7 +26,7 @@ Tags are case sensitive, have no leading numeric zeroes or build metadata, and b
 
 ## Infrastructure setup and revocation
 
-Confirm that the consumer can generate GitHub artifact attestations before selecting this integration. GitHub supports them for public repositories on current plans; private/internal repositories require GitHub Enterprise Cloud. The intended ssrs-web integration uses the user-confirmed public-repository plan; confirm actual visibility before activating its producer. If that prerequisite is unavailable for another consumer, leave standing deployment disabled and retain the exact-release path; an unsigned receipt is not a substitute. See [GitHub's availability requirements](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).
+Confirm that the consumer can generate GitHub artifact attestations before selecting this integration. As checked November 13, 2026, current GitHub Free, Pro and Team plans support attestations only for public repositories; private/internal repositories require eligible GitHub Enterprise Cloud access. Legacy Bronze/Silver/Gold plans do not support them. The API reports **ssrs-web public** and **polaris-oidc private**. polaris-oidc therefore needs public visibility, eligible Enterprise Cloud access, or a separately approved alternative before using this path. This task changes no visibility, plan or signing system. Until that prerequisite is satisfied, leave standing deployment disabled and retain independent exact approvals; unsigned receipts grant no authority. See [GitHub's availability requirements](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).
 
 First separately install/activate a compatible reviewed toolkit, enroll the target, complete any first cutover and deploy an independently approved baseline successfully. Standing authorization cannot initialize an empty or unresolved target. Preserve all existing state and approvals.
 
@@ -52,7 +52,47 @@ Disable the standing record (`enabled=false`), remove it while retaining infrast
 
 ## Trusted producer and signed receipt
 
-Use a reviewed **reusable** GitHub Actions producer pinned to the policy's commit, running on GitHub-hosted build infrastructure without deployment credentials. Its signing job must control checkout, build, all required validation gates, packaging and receipt construction; sign only after those gates pass. It must not sign a caller-supplied predicate, artifact path/digest, source identity or arbitrary commands. Application code and build outputs are untrusted until admitted; do not execute them on the privileged runner while checking provenance.
+Use the implemented [reusable producer](../.github/workflows/clc-receipt-producer.yml), pinned to a reviewed full commit in both the caller and protected policy. It runs on GitHub-hosted Windows runners without deployment credentials and accepts **no workflow inputs or secrets**. The workflow controls checkout of the authenticated tag commit, a fixed application-owned build entry point, successful build dependency, immutable upload selection, packaging inspection and receipt construction. The build job has contents-read permission without OIDC/attestation permission. A fresh signing job runs no application code, constructs the predicate itself and signs only after build success. It cannot sign caller-supplied predicates, artifact paths/digests, source identities or arbitrary command inputs. Application code and build outputs must never execute on the privileged runner during admission.
+
+### Fixed application build boundary
+
+The exact tagged source supplies `.clc/build.ps1` and `.clc/receipt.json`. The script is the application's release build and required validation gates, under the same protected-source/tag review policy as its existing build system. It must throw/exit nonzero on any failed gate. Do not merely copy an artifact from an earlier caller job. The producer invokes this fixed file after checkout; there is no configurable script path, callback input or build framework. It provides:
+
+| Environment | Required use |
+| --- | --- |
+| `CLC_TOOLKIT_MANIFEST` | Exact producer-pinned packaging/tag module; application dependency/toolchain provisioning remains application-owned |
+| `CLC_RELEASE_ID` | CLC-classified tag releaseId; embed this in the application and package |
+| `CLC_RELEASE_WORKFLOW`, `CLC_RELEASE_JOB` | Authenticated caller workflow path and fixed `build` job for manifest.build |
+| `GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT` | Actual source/build facts, never dispatch parameters |
+| `CLC_RELEASE_DIRECTORY` | Produce exactly `release.zip` here using New-ClcRelease; keep publish/metadata inputs in disjoint directories |
+
+The map contains exactly `applicationId` and `targets`, with safe target IDs for `DEV`, `Production`, `ArtifactOnly`. Example: `{"applicationId":"ssrs-web","targets":{"DEV":"ssrs-web-dev","Production":"ssrs-web-production","ArtifactOnly":"ssrs-web-artifact-only"}}`. Artifact-only signatures do not make beta/RC tags deployable; the toolkit still refuses admission. The signing job reads this fixed file as data at the authenticated source SHA, inspects the complete package, rejects mismatched application/release/source/workflow/job/run/attempt, obtains the numeric artifact ID and service transport SHA-256 from GitHub for this exact run/attempt, and constructs the strict predicate. No application-generated provenance file is accepted.
+
+Source review remains essential: a trusted producer authenticates the exact build source and cannot prove that application code or its declared gates are safe. Infrastructure must protect version tags and approve the consumer's source eligibility, `.clc` files and build gates. Changing the producer or its packaging pin requires independent review and a new exact policy pin. The repository's own `.clc` files are explicitly restricted to synthetic qualification tags and cannot build a consumer or toolkit release.
+
+### ssrs-web integration example
+
+The following caller replaces the hosted job boundary only after the compatible toolkit and consumer changes are separately approved. Pin the same exact producer revision in standing policy; do not use a branch or version alias:
+
+```yaml
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  release:
+    uses: clcdpc/clc-deployment/.github/workflows/clc-receipt-producer.yml@c61588a40c357d478f240d534f1a09c9eb8c0a9e
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+```
+
+Practical inspection of [ssrs-web PR #1 at cdba54d0a0dff2f8d0bef4c0c7adb81055cd4ac7](https://github.com/clcdpc/ssrs-web/tree/cdba54d0a0dff2f8d0bef4c0c7adb81055cd4ac7) found a compatible separation between hosted release production and protected-master deployment admission. Its existing locked builds, source-eligibility checks, packaging tests and application tests can be invoked by `.clc/build.ps1`; retain those gates. This is **not drop-in compatibility**: its Build-PortalRelease context currently requires job `release`, derives run-based release IDs and uses the published beta.3 pin. The consumer task must adopt `build` manifest identity and tag-derived compiled/package releaseId, update its independently verified toolkit pin, retain source eligibility/tag-movement checks, acquire the separate receipt, and replace the existing fail-closed `Invoke-SsrsToolkitAutomaticDeployment` adapter with the documented Invoke call. Retain separately administered setup tooling outside the package. No ssrs-web files were modified or tests claimed here.
+
+The immutable outputs are `clc-package-<runId>-<attempt>` containing `release.zip`, and `clc-receipt-<runId>-<attempt>` containing `<releaseId>.sigstore.json` plus the non-authorizing audit copy `predicate.json`. Verify acquisition/service digests on the trusted consumer, rename the inner ZIP to `<releaseId>.zip`, and place only that ZIP and bundle in the existing target inbox. There is no consumer approval writer or additional authorization mechanism. The protected policy's buildWorkflowPath is `.github/workflows/release.yml` and buildJob is `build` for this example.
 
 The producer:
 
