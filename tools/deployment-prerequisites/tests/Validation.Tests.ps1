@@ -628,12 +628,56 @@ Describe 'Reusable workflow trust boundary and syntax' {
         $root=Join-Path $PSScriptRoot '../../..'
         $workflowPath=Join-Path $root '.github/workflows/validate-deployment.yml'
         $workflowText=Get-Content -LiteralPath $workflowPath -Raw
+        Add-Type -LiteralPath $env:CLC_PREREQUISITES_YAML
+        function Read-TestWorkflowSyntax([string] $Text) {
+            # Syntax validation permits GitHub's anchors without interpreting
+            # them as deployment-admission evidence. Bound the event stream
+            # before loading data-only representation nodes; no object serializer.
+            if ([Text.Encoding]::UTF8.GetByteCount($Text) -gt 262144) { throw 'Workflow syntax size bound' }
+            $reader=[IO.StringReader]::new($Text)
+            try {
+                $parser=[YamlDotNet.Core.Parser]::new($reader)
+                $events=0; $depth=0
+                while ($parser.MoveNext()) {
+                    if (++$events -gt 40000) { throw 'Workflow syntax event bound' }
+                    $kind=$parser.Current.GetType().Name
+                    if ($kind -cin @('MappingStart','SequenceStart') -and ++$depth -gt 32) { throw 'Workflow syntax depth bound' }
+                    if ($kind -cin @('MappingEnd','SequenceEnd')) { $depth-- }
+                }
+            } finally { $reader.Dispose() }
+            $stream=[YamlDotNet.RepresentationModel.YamlStream]::new()
+            $reader=[IO.StringReader]::new($Text)
+            try { $stream.Load($reader) } finally { $reader.Dispose() }
+            if ($stream.Documents.Count -ne 1) { throw 'One workflow document required' }
+            return ,$stream.Documents[0].RootNode
+        }
     }
-    It 'parses all workflow YAML using the bounded data-only parser' {
+    It 'validates all repository workflow syntax using bounded representation nodes' {
+        foreach ($path in Get-ChildItem -LiteralPath (Join-Path $root '.github/workflows') -File) {
+            $yaml=Read-TestWorkflowSyntax (Get-Content -LiteralPath $path.FullName -Raw)
+            $yaml.NodeType.ToString() | Should -BeExactly Mapping
+            $yaml.Children.ContainsKey([YamlDotNet.RepresentationModel.YamlScalarNode]::new('on')) | Should -BeTrue
+            $jobs=$yaml.Children[[YamlDotNet.RepresentationModel.YamlScalarNode]::new('jobs')]
+            $jobs.NodeType.ToString() | Should -BeExactly Mapping
+            $jobs.Children.Count | Should -BeGreaterThan 0
+        }
+    }
+    It 'accepts anchored workflow syntax without expanding it into diagnostic policy objects' {
+        $yaml=Read-TestWorkflowSyntax "on: workflow_call`njobs: {one: &job {runs-on: windows-2022}, two: *job}"
+        $yaml.NodeType.ToString() | Should -BeExactly Mapping
+    }
+    It 'rejects malformed or excessive syntax input: <Kind>' -ForEach @(
+        @{Kind='malformed';Text='jobs: [unterminated'},
+        @{Kind='size';Text=('x'*262145)},
+        @{Kind='depth';Text=(('['*40)+'x'+(']'*40))}
+    ) {
+        { Read-TestWorkflowSyntax $Text } | Should -Throw
+    }
+    It 'parses owned diagnostic YAML using the stricter bounded observation parser' {
         InModuleScope Validation -Parameters @{ Root=$root; Assembly=$env:CLC_PREREQUISITES_YAML } {
             Add-Type -LiteralPath $Assembly
-            foreach ($path in Get-ChildItem -LiteralPath (Join-Path $Root '.github/workflows') -File) {
-                $yaml=ConvertFrom-DpYaml (Get-Content -LiteralPath $path.FullName -Raw)
+            foreach ($relative in @('.github/workflows/validate-deployment.yml','.github/workflows/test-deployment-prerequisites.yml','docs/examples/deployment-readiness.yml')) {
+                $yaml=ConvertFrom-DpYaml (Get-Content -LiteralPath (Join-Path $Root $relative) -Raw)
                 $yaml['jobs'].Count | Should -BeGreaterThan 0
                 $yaml.Contains('on') | Should -BeTrue
             }
