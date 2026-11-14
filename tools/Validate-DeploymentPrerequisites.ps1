@@ -15,6 +15,7 @@ param(
     [string] $ApplicationId='',
     [string] $TargetId='',
     [string] $DiagnosticWorkflow='',
+    [string] $SharedRevision='',
     [string] $ReportPath='',
     [switch] $Strict
 )
@@ -26,7 +27,7 @@ $config=@{
     ReleaseWorkflow=$ReleaseWorkflow; DeploymentWorkflow=$DeploymentWorkflow; RunnerGroup=$RunnerGroup;
     RunnerLabels=$RunnerLabels; ActivationVariable=$ActivationVariable; DeploymentChannel=$DeploymentChannel;
     EnvironmentProtection=$EnvironmentProtection; ActivationState=$(if ($env:CLC_ACTIVATION_STATE) { $env:CLC_ACTIVATION_STATE } else { 'unavailable' }); Strict=[bool]$Strict;
-    ApplicationId=$ApplicationId;TargetId=$TargetId;DiagnosticWorkflow=$DiagnosticWorkflow
+    ApplicationId=$ApplicationId;TargetId=$TargetId;DiagnosticWorkflow=$DiagnosticWorkflow;SharedRevision=$SharedRevision
 }
 $report=Invoke-DpValidation -Config $config -YamlAssemblyPath $YamlAssemblyPath -AuthenticationMode $AuthenticationMode
 Publish-DpReport $report

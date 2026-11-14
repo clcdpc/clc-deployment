@@ -425,11 +425,11 @@ Describe 'Read-only deployment prerequisites diagnostics' {
             ($report.results | Where-Object name -EQ 'Release workflow structure').status | Should -Be UNVERIFIED
         }
 
-        It 'rejects routine deployment dispatch but permits fresh-build release dispatch' {
+        It 'leaves manual dispatch authority unverified and permits fresh-build release dispatch' {
             $key='/repos/example/app/contents/.github/workflows/deploy-release.yml?ref='+('b'*40)
             $fixture[$key]=New-WorkflowFile "on: [workflow_dispatch]`njobs: {deploy: {runs-on: ubuntu-latest}}"
             $report=Invoke-DpValidation $config $assembly
-            ($report.results | Where-Object name -EQ 'Routine deployment has no manual dispatch').status | Should -Be FAIL
+            ($report.results | Where-Object name -EQ 'Protected manual deployment dispatch').status | Should -Be UNVERIFIED
             ($report.results | Where-Object name -EQ 'Version-tag release trigger').status | Should -Be PASS
         }
 

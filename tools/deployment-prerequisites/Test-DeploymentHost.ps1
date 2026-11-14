@@ -22,17 +22,22 @@ try {
     if (-not $IsWindows) { throw 'Host inspection requires Windows.' }
     if (-not [IO.Path]::IsPathFullyQualified($ToolkitManifestPath) -or [IO.Path]::GetFileName($ToolkitManifestPath) -cne 'CLC.Deployment.psd1') { throw 'Invalid trusted installed manifest selector.' }
     $null=Get-Item -LiteralPath $ToolkitManifestPath -ErrorAction Stop
-    # Infrastructure must authenticate this installed module BEFORE first import.
-    # Open-ClcTrustedContext subsequently rejects inactive or drifted installations.
-    $module=Import-Module -Name $ToolkitManifestPath -Force -PassThru
-    $rows=& $module {
-        param($Implementation,$Configuration)
-        . $Implementation
-        Invoke-DhQualification $Configuration
-    } (Join-Path $PSScriptRoot 'Host.ps1') $config
+    . (Join-Path $PSScriptRoot 'Import-TrustedToolkit.ps1')
+    $null=Import-DhTrustedToolkit $ToolkitManifestPath {
+        param($Module)
+        $observations=& $Module {
+            param($Implementation,$Configuration)
+            . $Implementation
+            Invoke-DhQualification $Configuration
+        } (Join-Path $PSScriptRoot 'Host.ps1') $config
+        # Preserve observed failures/actions even if the outer held toolkit
+        # context's final stability check subsequently becomes unavailable.
+        foreach ($observation in $observations) { $rows.Add($observation) }
+    }
 } catch {
-    $status=if ($_.CategoryInfo.Category -eq [Management.Automation.ErrorCategory]::ObjectNotFound) {'FAIL'} else {'UNVERIFIED'}
-    Add-DpResult $rows 'Host qualification' 'Compatible toolkit installation' $status 'Actual host inspection was unavailable or the independently trusted installed toolkit could not be found/loaded; private exception details were suppressed.' 'Infrastructure: authenticate and verify the installed toolkit and diagnostic source, local host access and execution identity, then rerun.'
+    $status=if ($_.CategoryInfo.Category -eq [Management.Automation.ErrorCategory]::ObjectNotFound -or $_.Exception.Message -ceq 'Dp.BootstrapMismatch') {'FAIL'} else {'UNVERIFIED'}
+    $check=if ($rows.Count) {'Independent toolkit stability'} else {'Compatible toolkit installation'}
+    Add-DpResult $rows 'Host qualification' $check $status 'Actual host inspection or final independent toolkit stability could not be established; private exception details were suppressed.' 'Infrastructure: authenticate and verify the installed toolkit and diagnostic source, local host access and execution identity, then rerun.'
 }
 # Return only sanitized observations. The caller may publish this report as an artifact.
 # This script itself writes no host files or GitHub command files.

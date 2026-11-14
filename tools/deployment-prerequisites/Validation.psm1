@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/Reporting.ps1"
+. "$PSScriptRoot/../Distribution.Common.ps1"
 
 function Add-DpResult {
     param($Results, [string] $Section, [string] $Name, [ValidateSet('PASS','FAIL','UNVERIFIED')][string] $Status, [string] $Detail, [string] $Action = '', [string] $Category = '')
@@ -143,6 +144,7 @@ function Test-DpInputs {
         if ($path -cnotmatch '^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,100}\.ya?ml$' -or $path.Contains('..')) { throw 'Invalid workflow path.' }
     }
     if ($Config.ContainsKey('DiagnosticWorkflow') -and $Config.DiagnosticWorkflow -and ($Config.DiagnosticWorkflow -cnotmatch '^\.github/workflows/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,100}\.ya?ml$' -or $Config.DiagnosticWorkflow.Contains('..'))) { throw 'Invalid diagnostic workflow path.' }
+    if ($Config.ContainsKey('SharedRevision') -and $Config.SharedRevision -and $Config.SharedRevision -cnotmatch '^[a-f0-9]{40}$') { throw 'Invalid reviewed shared revision.' }
     foreach ($name in @($Config.EnvironmentName,$Config.RunnerGroup)) {
         if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_. -]{0,99}$') { throw 'Environment name and runner group are required safe names.' }
     }
@@ -261,7 +263,7 @@ function Get-DpWorkflow {
 
 function Get-DpWorkflowResults {
     param($Config, $Results, $Release, $Deployment)
-    $action='Review the release and deployment workflows: v* tag builds, successful qualification, automatic trusted-branch deployment, no routine manual deployment dispatch.'
+    $action='Review the release and deployment workflows: v* tag builds, successful qualification, automatic trusted-branch deployment, separately authorized protected dispatch and immutable shared callers.'
     if ($null -ne $Release) {
         $events=$Release['on']
         if ($events -is [Collections.IDictionary] -and $events['push'] -is [Collections.IDictionary]) {
@@ -274,14 +276,84 @@ function Get-DpWorkflowResults {
     if ($null -ne $Deployment) {
         $events=$Deployment['on']
         $dispatch=($events -is [Collections.IDictionary] -and $events.Contains('workflow_dispatch')) -or ($events -is [array] -and $events -ccontains 'workflow_dispatch') -or ($events -is [string] -and $events -ceq 'workflow_dispatch')
-        if ($dispatch) { Add-DpResult $Results 'Repository configuration' 'Routine deployment has no manual dispatch' FAIL 'The deployment workflow exposes workflow_dispatch.' $action }
-        else { Add-DpResult $Results 'Repository configuration' 'Routine deployment has no manual dispatch' PASS 'The expected deployment workflow has no workflow_dispatch trigger.' }
+        if ($dispatch) { Add-DpResult $Results 'Repository configuration' 'Protected manual deployment dispatch' UNVERIFIED 'Dispatch is supported but is never authority. Protected caller/ref, actor authority, exact producer/source/artifact and independent host authorization require verified shared admission.' $action }
+        else { Add-DpResult $Results 'Repository configuration' 'Protected manual deployment dispatch' PASS 'The inspected caller has no manual dispatch entry point.' }
         $completion=if ($events -is [Collections.IDictionary]) { $events['workflow_run'] } else { $null }
         if ($null -ne $Release -and $completion -is [Collections.IDictionary] -and @($completion['types']) -ccontains 'completed' -and @($completion['workflows']) -ccontains $Release['name']) {
             Add-DpResult $Results 'Repository configuration' 'Automatic release-completion trigger' PASS 'workflow_run names the release workflow and completed activity; success guards are assessed separately.'
         } else { Add-DpResult $Results 'Repository configuration' 'Automatic release-completion trigger' UNVERIFIED 'The small structural check cannot establish this automatic qualification handoff (including same-workflow/reusable alternatives).' $action }
     }
     Add-DpResult $Results 'Repository configuration' 'Successful qualification and trusted execution' UNVERIFIED 'YAML structure alone cannot prove expression logic, immutable checkout, helper code or artifact/source qualification.' 'Review success/repository/event/ref/source guards and every privileged checkout/helper; reject consumer PR/tag code on the host.'
+}
+
+function Get-DpSharedResults {
+    param($Config, $Results, $Deployment, [string] $Commit)
+    $action='Review the protected caller, .clc/release.json and the exact reviewed shared revision; dispatch/input assertions never establish authority.'
+    $jobs=if ($null -ne $Deployment) { @($Deployment['jobs'].Values) } else { @() }
+    $calls=@($jobs | Where-Object { $_ -is [Collections.IDictionary] -and $_['uses'] -is [string] -and $_['uses'] -cmatch '/\.github/workflows/application-deploy\.yml@' })
+    $expected=if ($Config.ContainsKey('SharedRevision')) { [string]$Config.SharedRevision } else { '' }
+    if (-not $expected -and -not $calls.Count) { return '' } # Legacy direct job remains supported.
+    if (-not $expected) {
+        Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' UNVERIFIED 'A shared deployment caller exists but no independently reviewed immutable shared revision was selected.' $action
+        return '?'
+    }
+    $identity="clcdpc/clc-deployment/.github/workflows/application-deploy.yml@$expected"
+    if ($null -eq $Deployment) { Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' UNVERIFIED 'The protected consumer caller could not be inspected.' $action; return '' }
+    $allUses=@($jobs | Where-Object { $_ -is [Collections.IDictionary] -and $_['uses'] } | ForEach-Object { [string]$_['uses'] })
+    $deployCalls=@($jobs | Where-Object { $_ -is [Collections.IDictionary] -and $_['uses'] -ceq $identity })
+    if ($deployCalls.Count -ne 1 -or $calls.Count -ne 1 -or
+        @($allUses | Where-Object { $_ -cmatch '/\.github/workflows/application-release\.yml@' -and $_ -cne "clcdpc/clc-deployment/.github/workflows/application-release.yml@$expected" }).Count -gt 0) {
+        Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' FAIL 'The caller does not select exactly the reviewed shared deployment/publication identities; missing, different or duplicate shared calls were observed.' $action
+        return ''
+    }
+    $directPrivileged=@($jobs | Where-Object { $_ -is [Collections.IDictionary] -and $_['runs-on'] -is [Collections.IDictionary] -and $_['runs-on']['group'] -ceq $Config.RunnerGroup })
+    if ($directPrivileged.Count) {
+        Add-DpResult $Results 'Repository configuration' 'Additional privileged caller jobs' FAIL 'The shared caller also directly selects the privileged runner group; only the selected shared defining workflow and separate diagnostic may use it.' $action
+    }
+    if (@($allUses | Where-Object { $_ -cne $identity -and $_ -cne "clcdpc/clc-deployment/.github/workflows/application-release.yml@$expected" }).Count) {
+        Add-DpResult $Results 'Repository configuration' 'Other reusable caller jobs' UNVERIFIED 'Additional reusable jobs need independent routing/source review. The exact runner-group allowlist remains separately required.' $action
+    }
+    $file=Get-DpFile $Config.Repository '.clc/release.json' $Commit
+    if (-not $file.ok) { Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' UNVERIFIED $file.reason $action; return '' }
+    try {
+        # Existing strict distribution JSON reader rejects duplicate/case-ambiguous keys.
+        $record=Read-DistJson ([Text.Encoding]::UTF8.GetBytes($file.text))
+        if ($record -isnot [Collections.IDictionary] -or ($record['contractVersion'] -isnot [int] -and $record['contractVersion'] -isnot [long]) -or $record['contractVersion'] -ne 1 -or $record['orchestration'] -isnot [Collections.IDictionary] -or
+            $record['producer'] -isnot [Collections.IDictionary] -or $record['targets'] -isnot [array]) { throw 'Unsupported shared configuration' }
+        if ($record['repository'] -cne $Config.Repository -or $record['integrationBranch'] -cne $Config.IntegrationBranch -or
+            $record['orchestration']['sharedRevision'] -cne $expected -or $record['orchestration']['deploymentWorkflowPath'] -cne $Config.DeploymentWorkflow -or
+            $record['producer']['workflowPath'] -cne $Config.ReleaseWorkflow -or
+            ($Config.ContainsKey('ApplicationId') -and $Config.ApplicationId -and $record['applicationId'] -cne $Config.ApplicationId)) {
+            Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' FAIL 'Protected consumer configuration disagrees with the selected repository, producer, caller, integration source or reviewed shared revision.' $action
+            return ''
+        }
+        Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' PASS "The observed integration caller and orchestration.sharedRevision reference exactly $identity. This establishes immutable references only, not executable admission semantics."
+        $targets=@($record['targets'] | Where-Object { $_ -is [Collections.IDictionary] -and $_['channel'] -ceq $Config.DeploymentChannel })
+        if ($targets.Count -ne 1 -or $targets[0]['environment'] -cne $Config.EnvironmentName -or $targets[0]['runnerGroup'] -cne $Config.RunnerGroup -or
+            ($Config.ContainsKey('TargetId') -and $Config.TargetId -and $targets[0]['targetId'] -cne $Config.TargetId) -or
+            $targets[0]['runnerLabels'] -isnot [array] -or (@($targets[0]['runnerLabels']) -join ',') -cne $Config.RunnerLabels) {
+            Add-DpResult $Results 'Deployment configuration' 'Protected shared deployment routing' FAIL 'The exact channel/target/environment/runner group/labels disagree with the protected configuration.' $action
+        } else {
+            Add-DpResult $Results 'Deployment configuration' 'Protected shared deployment routing' PASS 'The protected channel route matches the exact selected target, environment, runner group and labels; dynamic shared code enforcement remains a separate unverified requirement.'
+            $route=$targets[0]
+            $state=if ($route['enabled'] -isnot [bool] -or $route['runnerAdmissionReady'] -isnot [bool]) {'UNVERIFIED'} elseif ($route['enabled'] -and $route['runnerAdmissionReady']) {'PASS'} else {'FAIL'}
+            Add-DpResult $Results 'Deployment configuration' 'Activation indicator' $state 'Observed protected shared target enabled and runnerAdmissionReady switches. These are indicators, never host authorization.' $(if ($state -cne 'PASS') {$action})
+        }
+        $events=$Deployment['on']
+        $dispatch=($events -is [Collections.IDictionary] -and $events.Contains('workflow_dispatch')) -or ($events -is [array] -and $events -ccontains 'workflow_dispatch') -or $events -ceq 'workflow_dispatch'
+        if ($dispatch -and $deployCalls[0]['with'] -is [Collections.IDictionary] -and $deployCalls[0]['with']['automatic'] -ceq 'true') {
+            Add-DpResult $Results 'Repository configuration' 'Manual shared operation selection' FAIL 'The dispatch-capable caller always selects automatic admission, bypassing the explicit manual operation route. It must preserve shared actor-authority verification.' $action
+        } elseif ($dispatch) {
+            Add-DpResult $Results 'Repository configuration' 'Manual shared operation selection' UNVERIFIED 'Verify that dispatch selects automatic=false and that the immutable shared code checks protected workflow identity and current repository write authority. Dispatch itself grants no authority.' $action
+        }
+        $shared=Get-DpFile 'clcdpc/clc-deployment' '.github/workflows/application-deploy.yml' $expected
+        if (-not $shared.ok) { Add-DpResult $Results 'Repository configuration' 'Shared deployment implementation inspection' UNVERIFIED $shared.reason $action }
+        else { Add-DpResult $Results 'Repository configuration' 'Shared deployment implementation inspection' UNVERIFIED 'The immutable shared definition is accessible. Its OIDC/caller/actor/source/producer/artifact checks and dynamic route require review of that complete revision; YAML tokens cannot prove effective enforcement.' $action }
+        return $identity
+    } catch {
+        Add-DpResult $Results 'Repository configuration' 'Shared privileged workflow identity' UNVERIFIED 'Protected shared configuration is malformed or unsupported; its authority and routing were not established.' $action
+        return ''
+    }
 }
 
 function Get-DpEnvironmentResults {
@@ -323,7 +395,7 @@ function Get-DpEnvironmentResults {
 }
 
 function Get-DpRunnerResults {
-    param($Config, $Results, [string] $RepositoryVisibility)
+    param($Config, $Results, [string] $RepositoryVisibility, [string] $PrivilegedWorkflow = '')
     $section='Deployment runner'
     $owner=$Config.Repository.Split('/')[0]
     $path="/orgs/$owner/actions/runner-groups"
@@ -332,7 +404,7 @@ function Get-DpRunnerResults {
         'public' { 'enable public repositories for this public caller' }
         default { 'verify caller visibility through the repository API before choosing public repository access' }
     }
-    $action="Organization Settings > Actions > Runner groups > $($Config.RunnerGroup): select only this repository, $publicAccess, restrict to the exact deployment workflow@refs/heads/$($Config.IntegrationBranch), and inspect group runner labels. Organization Self-hosted runners: read may be unavailable to GITHUB_TOKEN; no administrator credential is required by this validator."
+    $action="Organization Settings > Actions > Runner groups > $($Config.RunnerGroup): select only this repository, $publicAccess, restrict to the exact job-defining deployment workflow (shared immutable SHA or legacy protected branch), and inspect group runner labels. Organization Self-hosted runners: read may be unavailable to GITHUB_TOKEN; no administrator credential is required by this validator."
     if ($RepositoryVisibility) {
         Add-DpResult $Results $section 'Calling repository visibility' PASS "The identity-verified repository API reports a $RepositoryVisibility caller."
     } else {
@@ -365,13 +437,31 @@ function Get-DpRunnerResults {
         elseif (@($repos.data).Count -eq 1 -and $repos.data[0]['full_name'] -ieq $Config.Repository) { Add-DpResult $Results $section 'Runner repository access' PASS "Selected repository access is limited to the verified $RepositoryVisibility caller; public access matches its visibility. Workflow admission and independent administrative review remain separate requirements." }
         else { Add-DpResult $Results $section 'Runner repository access' FAIL 'Selected repositories are not limited to the caller.' $action }
     }
-    $allowed=@("$($Config.Repository)/$($Config.DeploymentWorkflow)@refs/heads/$($Config.IntegrationBranch)")
+    $sharedExpected=($Config.ContainsKey('SharedRevision') -and $Config.SharedRevision) -or $PrivilegedWorkflow -eq '?'
+    if ($PrivilegedWorkflow -eq '?') { $PrivilegedWorkflow='' }
+    $allowed=@(if ($PrivilegedWorkflow) { $PrivilegedWorkflow }
+        elseif ($Config.ContainsKey('SharedRevision') -and $Config.SharedRevision) { "clcdpc/clc-deployment/.github/workflows/application-deploy.yml@$($Config.SharedRevision)" }
+        elseif (-not $sharedExpected) { "$($Config.Repository)/$($Config.DeploymentWorkflow)@refs/heads/$($Config.IntegrationBranch)" })
+    $expectedIdentityKnown=$allowed.Count -gt 0
     if ($Config.ContainsKey('DiagnosticWorkflow') -and $Config.DiagnosticWorkflow) { $allowed+= "$($Config.Repository)/$($Config.DiagnosticWorkflow)@refs/heads/$($Config.IntegrationBranch)" }
     $selected=@($group['selected_workflows'])
-    if ($group['restricted_to_workflows'] -eq $true -and $selected.Count -eq $allowed.Count -and @($allowed | Where-Object { $selected -cnotcontains $_ }).Count -eq 0) {
-        Add-DpResult $Results $section 'Runner selected-workflow access' PASS 'Only the exact expected protected-branch deployment and optional diagnostic workflow definitions are selected.'
-    } elseif ($group.Contains('restricted_to_workflows') -and $group.Contains('selected_workflows')) { Add-DpResult $Results $section 'Runner selected-workflow access' FAIL 'Repository access alone is insufficient; expected workflow restriction is missing, broader or inconsistent.' $action }
-    else { Add-DpResult $Results $section 'Runner selected-workflow access' UNVERIFIED 'Workflow admission fields were not exposed.' $action }
+    if ($group['restricted_to_workflows'] -is [bool] -and -not $group['restricted_to_workflows']) {
+        Add-DpResult $Results $section 'Runner selected-workflow access' FAIL 'The runner group does not enforce selected-workflow restrictions.' $action
+    } elseif ($group['restricted_to_workflows'] -isnot [bool] -or $group['selected_workflows'] -isnot [array] -or @($selected | Where-Object { $_ -isnot [string] }).Count) {
+        Add-DpResult $Results $section 'Runner selected-workflow access' UNVERIFIED 'Workflow admission fields were missing or malformed.' $action
+    } elseif ($expectedIdentityKnown -and ($selected.Count -ne $allowed.Count -or @($allowed | Where-Object { $selected -cnotcontains $_ }).Count -gt 0)) {
+        # Reviewed expected identities can reject excess/wrong access even when
+        # protected caller/config evidence is unavailable. They cannot grant PASS.
+        Add-DpResult $Results $section 'Runner selected-workflow access' FAIL 'Repository access alone is insufficient; expected workflow restriction is broader or inconsistent.' $action
+    } elseif ($sharedExpected -and $owner -ine 'clcdpc' -and $group['inherited'] -is [bool] -and -not $group['inherited']) {
+        Add-DpResult $Results $section 'Runner selected-workflow access' FAIL 'The observed non-inherited organization-owned group cannot admit the shared workflow from another organization.' $action
+    } elseif ($sharedExpected -and $owner -ine 'clcdpc') {
+        Add-DpResult $Results $section 'Runner selected-workflow access' UNVERIFIED 'Cross-organization shared workflow access may use an enterprise-owned group, but inherited or unavailable ownership evidence does not establish its effective enterprise admission.' $action
+    } elseif ($sharedExpected -and -not $PrivilegedWorkflow) {
+        Add-DpResult $Results $section 'Runner selected-workflow access' UNVERIFIED 'The defining reusable workflow identity was not independently established; caller-only admission is insufficient.' $action
+    } else {
+        Add-DpResult $Results $section 'Runner selected-workflow access' PASS 'Only the exact expected job-defining deployment workflow and optional protected-branch diagnostic definition are selected; reusable caller selection does not admit callee jobs.'
+    }
     $runners=Get-DpCollection "$path/$id/runners" 'runners'
     if (-not $runners.ok) { Add-DpResult $Results $section 'Expected runner labels' UNVERIFIED $runners.reason $action; return }
     $expected=$Config.RunnerLabels.Split(',')
@@ -391,21 +481,26 @@ function Get-DpDeploymentResults {
     param($Config, $Results, $Deployment)
     $section='Deployment configuration'
     $action="Inspect repository/organization Actions variable $($Config.ActivationVariable) and the protected workflow. Leave disabled until independent infrastructure authorization."
-    $status='UNVERIFIED'; $detail='The calling Actions configuration-variable observation is unavailable.'
-    switch -CaseSensitive ($Config.ActivationState) {
-        enabled { $status='PASS'; $detail='Configured and enabled in repository/organization Actions context. This is an indicator, never authorization.' }
-        disabled { $status='FAIL'; $detail='Configured but intentionally disabled; activation requires independent authorization.' }
-        missing-or-empty { $status='FAIL'; $detail='The activation variable is missing or empty in the calling Actions context.' }
-        invalid { $status='FAIL'; $detail='The activation variable must compare as true or false in the Actions context; its value is not disclosed.' }
-    }
-    Add-DpResult $Results $section 'Activation indicator' $status $detail $(if ($status -cne 'PASS') { $action })
-    $encoded=[uri]::EscapeDataString($Config.EnvironmentName)
-    $variables=Get-DpCollection "/repos/$($Config.Repository)/environments/$encoded/variables" 'variables' -PageSize 30
-    if (-not $variables.ok) { Add-DpResult $Results $section 'Environment activation override' UNVERIFIED $variables.reason 'Inspect environment Actions variables for conflicting activation values; pre-job admission must use repository/organization variables.' }
-    else {
-        $override=@($variables.data | Where-Object { $_['name'] -ceq $Config.ActivationVariable })
-        if ($override.Count) { Add-DpResult $Results $section 'Environment activation override' FAIL 'An environment-scoped activation value conflicts with the repository/organization-only admission contract.' 'Remove the conflicting scope through independently reviewed configuration; use repository/organization activation for pre-job admission.' }
-        else { Add-DpResult $Results $section 'Environment activation override' PASS 'No environment-scoped override of the selected activation variable was observed.' }
+    $shared=($Config.ContainsKey('SharedRevision') -and $Config.SharedRevision) -or ($null -ne $Deployment -and @($Deployment['jobs'].Values | Where-Object { $_ -is [Collections.IDictionary] -and $_['uses'] -cmatch '/\.github/workflows/application-deploy\.yml@' }).Count -gt 0)
+    if ($shared) {
+        Add-DpResult $Results $section 'Shared activation configuration' UNVERIFIED 'Shared target enabled/runnerAdmissionReady controls are inspected from protected .clc/release.json when available; legacy Actions activation variables do not establish this route.' 'Verify protected shared routing and independent host authorization; the diagnostic never enables either.'
+    } else {
+        $status='UNVERIFIED'; $detail='The calling Actions configuration-variable observation is unavailable.'
+        switch -CaseSensitive ($Config.ActivationState) {
+            enabled { $status='PASS'; $detail='Configured and enabled in repository/organization Actions context. This is an indicator, never authorization.' }
+            disabled { $status='FAIL'; $detail='Configured but intentionally disabled; activation requires independent authorization.' }
+            missing-or-empty { $status='FAIL'; $detail='The activation variable is missing or empty in the calling Actions context.' }
+            invalid { $status='FAIL'; $detail='The activation variable must compare as true or false in the Actions context; its value is not disclosed.' }
+        }
+        Add-DpResult $Results $section 'Activation indicator' $status $detail $(if ($status -cne 'PASS') { $action })
+        $encoded=[uri]::EscapeDataString($Config.EnvironmentName)
+        $variables=Get-DpCollection "/repos/$($Config.Repository)/environments/$encoded/variables" 'variables' -PageSize 30
+        if (-not $variables.ok) { Add-DpResult $Results $section 'Environment activation override' UNVERIFIED $variables.reason 'Inspect environment Actions variables for conflicting activation values; pre-job admission must use repository/organization variables.' }
+        else {
+            $override=@($variables.data | Where-Object { $_['name'] -ceq $Config.ActivationVariable })
+            if ($override.Count) { Add-DpResult $Results $section 'Environment activation override' FAIL 'An environment-scoped activation value conflicts with the repository/organization-only admission contract.' 'Remove the conflicting scope through independently reviewed configuration; use repository/organization activation for pre-job admission.' }
+            else { Add-DpResult $Results $section 'Environment activation override' PASS 'No environment-scoped override of the selected activation variable was observed.' }
+        }
     }
     if ($null -ne $Deployment) {
         $jobs=@($Deployment['jobs'].Values)
@@ -513,7 +608,7 @@ function Invoke-DpValidation {
             }
         }
         $branch=Get-DpApi "/repos/$($Config.Repository)/branches/$([uri]::EscapeDataString($Config.IntegrationBranch))"
-        $release=$null; $deployment=$null
+        $release=$null; $deployment=$null; $sharedObservation=@{identity=''}
         if ($repo.ok -and $branch.ok -and $repo.data -is [Collections.IDictionary] -and $repo.data['full_name'] -ieq $Config.Repository -and $branch.data -is [Collections.IDictionary] -and $branch.data['commit'] -is [Collections.IDictionary] -and $branch.data['commit']['sha'] -cmatch '^[0-9a-f]{40}$') {
             $commit=$branch.data['commit']['sha']
             Invoke-DpSection $results 'Repository configuration' { Get-DpBranchResults $Config $results $branch.data }
@@ -521,9 +616,10 @@ function Invoke-DpValidation {
             $release=Get-DpWorkflow $Config $results $Config.ReleaseWorkflow $commit 'Release'
             $deployment=Get-DpWorkflow $Config $results $Config.DeploymentWorkflow $commit 'Deployment'
             Invoke-DpSection $results 'Repository configuration' { Get-DpWorkflowResults $Config $results $release $deployment }
+            Invoke-DpSection $results 'Repository configuration' { $sharedObservation.identity=Get-DpSharedResults $Config $results $deployment $commit }
         } else { Add-DpResult $results 'Repository configuration' 'Integration source inspection' UNVERIFIED 'Repository or integration branch identity could not be read reliably.' 'Verify contents: read and actions: read permissions, expected branch, repository access and API availability; retry.' }
         Invoke-DpSection $results 'GitHub Environment' { Get-DpEnvironmentResults $Config $results }
-        Invoke-DpSection $results 'Deployment runner' { Get-DpRunnerResults $Config $results $repositoryVisibility }
+        Invoke-DpSection $results 'Deployment runner' { Get-DpRunnerResults $Config $results $repositoryVisibility $sharedObservation.identity }
         Invoke-DpSection $results 'Deployment configuration' { Get-DpDeploymentResults $Config $results $deployment }
         Invoke-DpSection $results 'Host and toolkit' { Get-DpToolkitResults $Config $results $release $deployment }
         return Complete-DpReport $Config $results $commit

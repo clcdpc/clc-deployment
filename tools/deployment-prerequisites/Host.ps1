@@ -217,7 +217,7 @@ function Invoke-DhQualification {
             }
             $value=Read-ClcApprovedManifest $lock $current.approvalSnapshot.approvalId
             Assert-ClcReleaseBinding $value $current.release $current.approvalSnapshot
-            if ($value.approvalFile.record.schemaVersion -eq 2) { $null=Read-ClcActiveStandingForApproval $context $target $value.approvalFile }
+            if ($value.approvalFile.record.schemaVersion -ge 2) { $null=Read-ClcActiveStandingForApproval $context $target $value.approvalFile }
             $value
         } 'Current enabled exact approval, retained manifest, source/build/release identity and lineage match; generated approvals also recheck standing revocation and retained admission/tag evidence. Historical ZIP retention is not required by this contract.'
         $null=Invoke-DhCheck $rows 'Current installed release bytes' {

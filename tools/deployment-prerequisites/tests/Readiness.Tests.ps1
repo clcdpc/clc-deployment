@@ -309,11 +309,27 @@ Describe 'Read-only actual host qualification with isolated native boundaries' {
             $r=Invoke-DhQualification $config
             ($r | Where-Object name -EQ 'Standing lineage compatibility').status | Should -Be FAIL
         }
-        It 'rechecks revocation on a current generated approval' {
-            Mock Read-ClcApprovedManifest { @{approvalFile=@{record=@{schemaVersion=2}};manifest=@{files=@()}} }
+        It 'rechecks revocation on a current generated schema <_> approval' -ForEach @(2,3) {
+            $script:generatedSchema=$_
+            Mock Read-ClcApprovedManifest { @{approvalFile=@{record=@{schemaVersion=$script:generatedSchema}};manifest=@{files=@()}} }
             Mock Read-ClcActiveStandingForApproval { throw 'Dp.HostRequirementFailed' }
             $r=Invoke-DhQualification $config
             ($r | Where-Object name -EQ 'Current release and retained approval').status | Should -Be FAIL
+        }
+        It 'preserves schema <_> approval handling through the installed reader' -ForEach @(1,2,3) {
+            $script:selectedSchema=$_
+            Mock Read-ClcApprovedManifest { @{approvalFile=@{record=@{schemaVersion=$script:selectedSchema}};manifest=@{files=@()}} }
+            $r=Invoke-DhQualification $config
+            ($r | Where-Object name -EQ 'Current release and retained approval').status | Should -Be PASS
+            $expected=if ($_ -ge 2) {1} else {0}
+            Should -Invoke Read-ClcActiveStandingForApproval -Times $expected -Exactly
+        }
+        It 'never passes unavailable, changed or mismatched schema-3 standing evidence' {
+            Mock Read-ClcApprovedManifest { @{approvalFile=@{record=@{schemaVersion=3}};manifest=@{files=@()}} }
+            Mock Read-ClcActiveStandingForApproval { Stop-ClcError Clc.StandingAuthorizationRejected }
+            $r=Invoke-DhQualification $config
+            ($r | Where-Object name -EQ 'Current release and retained approval').status | Should -Be UNVERIFIED
+            Should -Invoke Get-ClcTreeInventory -Times 0 -Exactly
         }
         It 'fails missing current approval and manifest records before reading their contents' {
             $fixtureCurrent.approvalSnapshot.approvalId='missing'
@@ -454,5 +470,47 @@ Describe 'Protected workflow boundaries and host entry point' {
         $r.host_status | Should -BeExactly FAIL
         $r.ready | Should -BeFalse
         $r.results.Count | Should -Be 1
+    }
+    It 'preserves observed host <_> and prevents READY after a late bootstrap failure' -ForEach @('FAIL','PASS') {
+        $case=$_
+        # Execute the unchanged entry point in an isolated fixture checkout.
+        # Only the trusted bootstrap/host observation boundaries are stubs; no
+        # candidate module, native host reader or actual host is invoked.
+        $fixtureRoot=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $diagnostic=Join-Path $fixtureRoot 'tools/deployment-prerequisites'
+        $null=New-Item -ItemType Directory -Path $diagnostic
+        foreach ($name in @('Test-DeploymentHost.ps1','Validation.psm1','Reporting.ps1')) {
+            Copy-Item -LiteralPath (Join-Path $root ('tools/deployment-prerequisites/'+$name)) -Destination $diagnostic
+        }
+        Copy-Item -LiteralPath (Join-Path $root 'tools/Distribution.Common.ps1') -Destination (Join-Path $fixtureRoot 'tools')
+        Set-Content -LiteralPath (Join-Path $diagnostic 'Import-TrustedToolkit.ps1') @'
+function Import-DhTrustedToolkit {
+    param($ManifestPath,$Inspect)
+    $module=New-Module -ScriptBlock {}
+    & $Inspect $module
+    throw 'SENSITIVE_BOUNDARY_DETAIL final trust observation unavailable'
+}
+'@
+        $hostStub=@'
+function Invoke-DhQualification {
+    param($Config)
+    [pscustomobject]@{category='host';section='Host qualification';name='Standing authorization';status='STATUS';detail='Observed protected policy';action='Retain concrete infrastructure action'}
+}
+'@
+        Set-Content -LiteralPath (Join-Path $diagnostic 'Host.ps1') ($hostStub.Replace('STATUS',$case))
+        $manifest=Join-Path $fixtureRoot 'CLC.Deployment.psd1'
+        Set-Content -LiteralPath $manifest '@{}'
+        try {
+            $r=& (Join-Path $diagnostic 'Test-DeploymentHost.ps1') -ApplicationId app -TargetId app-dev -EnvironmentName app-dev -DeploymentChannel DEV -Repository example/app -ReleaseWorkflow .github/workflows/release.yml -BuildJob package -StandingAuthorizationId routine-dev -ToolkitManifestPath $manifest
+            ($r.results | Where-Object name -EQ 'Standing authorization').status | Should -BeExactly $case
+            ($r.results | Where-Object name -EQ 'Standing authorization').action | Should -BeExactly 'Retain concrete infrastructure action'
+            ($r.results | Where-Object name -EQ 'Independent toolkit stability').status | Should -BeExactly UNVERIFIED
+            $r.host_status | Should -BeExactly $(if ($case -ceq 'FAIL') {'FAIL'} else {'UNVERIFIED'})
+            $r.ready | Should -BeFalse
+            ($r | ConvertTo-Json -Depth 12) | Should -Not -Match SENSITIVE_BOUNDARY_DETAIL
+        } finally {
+            Get-Module Validation -All | Where-Object Path -EQ (Join-Path $diagnostic 'Validation.psm1') | Remove-Module -Force
+            Import-Module (Join-Path $root 'tools/deployment-prerequisites/Validation.psm1') -Force
+        }
     }
 }
