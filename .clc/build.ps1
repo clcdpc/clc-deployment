@@ -1,7 +1,7 @@
 # Synthetic data only. This is not an application, toolkit release or deployment.
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-if ($env:GITHUB_REPOSITORY -cne 'clcdpc/clc-deployment' -or $env:GITHUB_REF_NAME -cne 'v9999.9999.9999-dev.9998') {
+if ($env:GITHUB_REPOSITORY -cne 'clcdpc/clc-deployment' -or $env:GITHUB_REF_NAME -cnotmatch '^v9999\.9999\.9999-dev\.[1-9][0-9]{0,3}$') {
     throw 'Only the reserved, nonpublishing receipt qualification tag is supported'
 }
 . ./tests/Support.ps1
