@@ -38,7 +38,7 @@ jobs:
       producer-run-id: ${{ github.event.workflow_run.id || fromJSON(inputs.producer-run-id) }}
       producer-run-attempt: ${{ github.event.workflow_run.run_attempt || fromJSON(inputs.producer-run-attempt) }}
   deployment:
-    needs: publication
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     uses: clcdpc/clc-deployment/.github/workflows/application-deploy.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     with:
       reference: ${{ github.event.workflow_run.head_branch || inputs.reference }}

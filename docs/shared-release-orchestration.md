@@ -20,6 +20,8 @@ Explicitly enabled protected-branch snapshots use `refs/heads/<integrationBranch
 
 Tagged rebuilds retain the exact immutable tag/source binding. A newer successful producer run/attempt can have its own package bytes; changed bytes for the same producer identity refuse. GitHub Release publication preserves a completed release's exact canonical asset set: a conflicting rebuilt asset refuses publication and leaves the existing release untouched. Snapshots retain Actions artifacts and create no GitHub Release. Publication never authorizes deployment.
 
+The example publication and deployment jobs are independent. A separately authorized rebuild/redeployment can consume its verified Actions artifact even when publishing different bytes under an already completed tag refuses. Inspect each job's result; a publication conflict does not replace canonical assets or grant deployment authority.
+
 ## Immutable workflow execution
 
 Consumers pin each reusable workflow to one reviewed full commit SHA. The workflow's first inline step requests its job identity directly from GitHub's platform endpoint and checks `job_workflow_ref`/`job_workflow_sha` for that immutable shared workflow before checking out machinery. It retains only a safe identity projection; the token is not logged or accepted from an artifact. GitHub documents that the ordinary reusable-workflow `github` context identifies the caller, while the [OIDC job claims identify the called workflow](https://docs.github.com/en/actions/reference/security/oidc). See also [reusable workflow context](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations).
