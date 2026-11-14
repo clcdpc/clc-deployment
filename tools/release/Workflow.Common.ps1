@@ -155,6 +155,6 @@ function Get-ClcQualifiedPublishInputs {
     Assert-ClcText $ValidationEntryPoint 240 '^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.dll$'
     $directory=if ($Configuration.Contains('project')) {[IO.Path]::GetDirectoryName((Join-Path $SourceRoot $Configuration.project))} else {$SourceRoot}
     $lock=Join-Path $directory 'packages.lock.json'
-    if (-not [IO.File]::Exists($lock)) { throw 'Application dependency lock is required.' }
+    if (-not [IO.File]::Exists($lock)) { $lock=$null }
     return @{publishRoot=$PublishRoot;entryPoint=$ValidationEntryPoint;sdkVersion=$SdkVersion;dependencyLockPath=$lock}
 }

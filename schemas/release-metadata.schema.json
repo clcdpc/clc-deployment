@@ -134,7 +134,11 @@
           "$ref": "#/$defs/version"
         },
         "dependencyLockSha256": {
-          "$ref": "#/$defs/hash"
+          "anyOf": [
+            { "$ref": "#/$defs/hash" },
+            { "type": "null" }
+          ],
+          "$comment": "V2: actual NuGet lock digest when present, explicit null when independently qualified without lock evidence. V1 requires a digest."
         }
       }
     },
@@ -330,6 +334,11 @@
         "properties": {
           "changeKind": {
             "const": "files-only"
+          },
+          "build": {
+            "properties": {
+              "dependencyLockSha256": { "$ref": "#/$defs/hash" }
+            }
           },
           "hooks": false
         }

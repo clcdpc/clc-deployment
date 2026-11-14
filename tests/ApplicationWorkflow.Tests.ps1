@@ -134,10 +134,13 @@ Describe 'Prequalified CI artifacts use shared package inputs without a build pi
         { Get-ClcQualifiedPublishInputs @{} $workspace $inputs.PublishRoot '10.0.403' $EntryPoint } | Should -Throw
         [IO.File]::Exists($inputs.OutputPath) | Should -BeFalse
     }
-    It 'requires explicit build facts instead of inferring a compiler or dependency lock' {
+    It 'records no lock evidence for independently qualified files without a NuGet lock' {
+        [IO.File]::Delete((Join-Path $workspace 'packages.lock.json'))
+        $qualified=Get-ClcQualifiedPublishInputs @{} $workspace $inputs.PublishRoot '10.0.403' 'Probe.dll'
+        $qualified.dependencyLockPath | Should -BeNullOrEmpty
+    }
+    It 'requires explicit build facts instead of inferring a compiler or validation identity' {
         { Get-ClcQualifiedPublishInputs @{} $workspace $inputs.PublishRoot '10.0.403' '' } | Should -Throw '*fixed validation DLL*'
         { Get-ClcQualifiedPublishInputs @{} $workspace $inputs.PublishRoot 'latest' 'Probe.dll' } | Should -Throw
-        [IO.File]::Delete((Join-Path $workspace 'packages.lock.json'))
-        { Get-ClcQualifiedPublishInputs @{} $workspace $inputs.PublishRoot '10.0.403' 'Probe.dll' } | Should -Throw '*dependency lock*'
     }
 }

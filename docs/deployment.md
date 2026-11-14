@@ -33,6 +33,8 @@ V2 hook packages retain a verified online backup of exact prior managed bytes be
 
 Comprehensive host/access checks are lifecycle gates, not operations repeated for every file. The independently trusted toolkit/Windows/.NET installation and restricted runtime access are the operational trust assumptions; approved validation executes elevated without a sandbox.
 
+The toolkit verifies `web.config` integrity and bounded XML structure; applications validate its IIS semantics in CI. An authorized release may change application-level IIS settings, managed through source/release review and independent infrastructure host configuration and authorization. The retained approved `web.config` in RestoreEmpty is recovery material, not an activation barrier; that outcome requires Stopped/zero workers and must remain stopped pending separately authorized deployment.
+
 Freeze competing trusted configuration, filesystem and IIS changes throughout deployment and recovery. A held default-stream handle does not prevent another trusted writer from adding a named stream; fresh checks do not make stream absence atomic. These checks do not contain a compromised administrator or trusted application process.
 
 ## Failure behavior

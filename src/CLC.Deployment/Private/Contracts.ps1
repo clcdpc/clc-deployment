@@ -180,7 +180,9 @@ function Assert-ClcPackage {
     Assert-ClcInteger $Value.build.runAttempt 1
     Assert-ClcCode $Value.build.job
     Assert-ClcVersion $Value.build.sdkVersion
-    Assert-ClcHash $Value.build.dependencyLockSha256
+    # V1 retains its required lock digest. In V2, explicit null records an
+    # independently qualified build without NuGet lock evidence.
+    if ($Value.schemaVersion -ne 2 -or $null -ne $Value.build.dependencyLockSha256) { Assert-ClcHash $Value.build.dependencyLockSha256 }
     Assert-ClcObject $Value.builder @('module','version','sourceCommit','distributionSha256')
     Assert-ClcEnum $Value.builder.module @('CLC.Deployment')
     Assert-ClcVersion $Value.builder.version

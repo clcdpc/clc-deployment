@@ -26,6 +26,7 @@ if ($PSCmdlet.ParameterSetName -ceq 'Prequalified') {
     $qualified=Get-ClcQualifiedPublishInputs $c $SourceRoot $QualifiedPublishRoot $SdkVersion $ValidationEntryPoint
     $publish=$qualified.publishRoot; $sdk=@{sdkVersion=$qualified.sdkVersion}
     $assembly=[IO.Path]::GetFileNameWithoutExtension($qualified.entryPoint)
+    $lockPath=$qualified.dependencyLockPath
 } else {
 $env:DOTNET_GENERATE_ASPNET_CERTIFICATE='false'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; $env:DOTNET_NOLOGO='1'
 $sdk=& (Join-Path $PSScriptRoot '../Initialize-ProbeSdk.ps1') -DestinationRoot (Join-Path $OutputDirectory 'sdk')
@@ -51,15 +52,16 @@ try {
     $assembly=(& $dotnet msbuild $project -nologo -getProperty:AssemblyName).Trim()
     if ($LASTEXITCODE -ne 0 -or $assembly -cnotmatch '^[A-Za-z0-9_-][A-Za-z0-9_.-]*$') { throw 'Application assembly identity is invalid.' }
 } finally { Pop-Location }
-}
 $lockDirectory=if ($c.Contains('project')) {[IO.Path]::GetDirectoryName((Join-Path $SourceRoot $c.project))} else {$SourceRoot}
 $lockPath=Join-Path $lockDirectory 'packages.lock.json'
 if (-not [IO.File]::Exists($lockPath)) { throw 'Application dependency lock is required.' }
+}
+$lockHash=if ($null -ne $lockPath) { (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
 $sharedRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $distribution=& (Join-Path $sharedRoot 'tools/New-ToolkitDistribution.ps1') -RepositoryRoot $sharedRoot -SourceCommit $SharedSourceCommit -OutputPath (Join-Path $OutputDirectory 'toolkit.zip')
 Import-Module (Join-Path $sharedRoot 'src/CLC.Deployment/CLC.Deployment.psd1') -Force
 $metadata=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=2L;recordKind='release-metadata';applicationId=$c.applicationId;releaseId=$source.identity.releaseId;
-    source=@{repository=$c.repository;commit=$SourceCommit};build=@{workflowPath=$c.producer.workflowPath;runId=$RunId;runAttempt=$RunAttempt;job=$c.producer.job;sdkVersion=$sdk.sdkVersion;dependencyLockSha256=(Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant()};
+    source=@{repository=$c.repository;commit=$SourceCommit};build=@{workflowPath=$c.producer.workflowPath;runId=$RunId;runAttempt=$RunAttempt;job=$c.producer.job;sdkVersion=$sdk.sdkVersion;dependencyLockSha256=$lockHash};
     builder=@{module='CLC.Deployment';version=$distribution.moduleVersion;sourceCommit=$SharedSourceCommit;distributionSha256=$distribution.distributionSha256};
     runtime=@{framework='net10.0';rid='win-x64';architecture='x64';hostingModel='inprocess';workerLimit=1L};changeKind='application-deployment';validation=@{contractVersion=1L;entryPoint=$assembly+'.dll'};readinessContractVersion=1L}
 $parameters=@{PublishRoot=$publish;MetadataPath=(Join-Path $OutputDirectory 'metadata.json')}

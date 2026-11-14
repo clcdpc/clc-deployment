@@ -3,6 +3,10 @@
 # source and published qualified web files to RUNNER_TEMP/qualified-publish.
 # Use producer.job=package and omit jobName (or set its exact REST display name).
 # Application release identity must match Get-ClcVerifiedSource.identity.releaseId.
+# packages.lock.json is optional here: record its actual digest when present,
+# otherwise V2 metadata/manifest record dependencyLockSha256: null. Existing CI
+# owns qualification and its restore convention; the shared conventional builder
+# separately retains its required locked restore.
 name: Application release build
 on:
   push:

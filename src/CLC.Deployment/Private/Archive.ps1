@@ -255,7 +255,7 @@ function Test-ClcArchiveStream {
         }
         $runtimeName = 'application/' + [IO.Path]::GetFileNameWithoutExtension($manifest.validation.entryPoint) + '.runtimeconfig.json'
         if (-not $captured.ContainsKey('application/web.config') -or -not $captured.ContainsKey($runtimeName)) { Stop-ClcError Clc.UnsafeArchive }
-        Assert-ClcWebConfig $captured['application/web.config'] $manifest.validation.entryPoint
+        Assert-ClcWebConfig $captured['application/web.config']
         Assert-ClcRuntimeConfig $captured[$runtimeName] $manifest.runtime.framework
         return [pscustomobject][ordered]@{
             contractFamily='clc-file-iis-v1'; packageContractVersion=$manifest.schemaVersion; integrityVerified=$true; authorizedForDeployment=$false;

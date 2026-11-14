@@ -163,55 +163,25 @@ function ConvertTo-ClcManifestBytes {
 }
 
 function Assert-ClcWebConfig {
-    param([byte[]] $Bytes, [string] $EntryPoint)
+    param([byte[]] $Bytes)
+    if ($Bytes.Length -gt $script:ClcLimits.Json) { Stop-ClcError Clc.UnsafeArchive }
     $reader = $null
     $memory = [IO.MemoryStream]::new($Bytes, $false)
     try {
         $settings = [Xml.XmlReaderSettings]::new()
         $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
         $settings.XmlResolver = $null
-        $settings.MaxCharactersInDocument = 4194304
+        $settings.MaxCharactersInDocument = $script:ClcLimits.Json
         $reader = [Xml.XmlReader]::Create($memory, $settings)
         $xml = [Xml.XmlDocument]::new()
         $xml.XmlResolver = $null
         $xml.Load($reader)
-        # Whitelist the standard framework-dependent ANCM tree and exact attributes.
-        $configuration = $xml.get_DocumentElement()
-        Assert-ClcXmlElement $configuration 'configuration' @{}
-        $location = Get-ClcOnlyXmlChild $configuration 'location'
-        Assert-ClcXmlElement $location 'location' @{ path = '.'; inheritInChildApplications = 'false' }
-        $server = Get-ClcOnlyXmlChild $location 'system.webServer'
-        Assert-ClcXmlElement $server 'system.webServer' @{}
-        $children = @($server.get_ChildNodes() | Where-Object { $_ -is [Xml.XmlElement] })
-        if ($children.Count -ne 2 -or $children[0].get_Name() -cne 'handlers' -or $children[1].get_Name() -cne 'aspNetCore') { Stop-ClcError Clc.UnsafeArchive }
-        Assert-ClcXmlElement $children[0] 'handlers' @{}
-        $handler = Get-ClcOnlyXmlChild $children[0] 'add'
-        Assert-ClcXmlElement $handler 'add' @{ name = 'aspNetCore'; path = '*'; verb = '*'; modules = 'AspNetCoreModuleV2'; resourceType = 'Unspecified' }
-        $launchAttributes = @{ processPath = 'dotnet'; arguments = '.\' + $EntryPoint; stdoutLogEnabled = 'false'; hostingModel = 'inprocess' }
-        if ($children[1].HasAttribute('stdoutLogFile')) { $launchAttributes.stdoutLogFile = '.\logs\stdout' }
-        Assert-ClcXmlElement $children[1] 'aspNetCore' $launchAttributes
-        foreach ($leaf in @($handler, $children[1])) {
-            if (@($leaf.get_ChildNodes() | Where-Object { $_ -is [Xml.XmlElement] }).Count -ne 0) { Stop-ClcError Clc.UnsafeArchive }
-        }
+        # Applications validate IIS semantics in their own CI. Shared checks only
+        # bound and parse the exact inventoried bytes without DTD/entity resolution.
     } catch {
         if ($_.FullyQualifiedErrorId -like 'Clc.*') { throw }
         Stop-ClcError Clc.UnsafeArchive
     } finally { if ($null -ne $reader) { $reader.Dispose() }; $memory.Dispose() }
-}
-
-function Assert-ClcXmlElement {
-    param([Xml.XmlElement] $Element, [string] $Name, [hashtable] $Attributes)
-    if ($null -eq $Element -or $Element.get_Name() -cne $Name -or $Element.get_NamespaceURI() -or $Element.get_Attributes().Count -ne $Attributes.Count) { Stop-ClcError Clc.UnsafeArchive }
-    foreach ($key in $Attributes.Keys) { if ($Element.GetAttribute($key) -cne $Attributes[$key]) { Stop-ClcError Clc.UnsafeArchive } }
-    foreach ($child in $Element.get_ChildNodes()) {
-        if ($child -isnot [Xml.XmlElement] -and $child -isnot [Xml.XmlWhitespace] -and $child -isnot [Xml.XmlComment]) { Stop-ClcError Clc.UnsafeArchive }
-    }
-}
-function Get-ClcOnlyXmlChild {
-    param([Xml.XmlElement] $Element, [string] $Name)
-    $children = @($Element.get_ChildNodes() | Where-Object { $_ -is [Xml.XmlElement] })
-    if ($children.Count -ne 1 -or $children[0].get_Name() -cne $Name) { Stop-ClcError Clc.UnsafeArchive }
-    return $children[0]
 }
 
 function Assert-ClcRuntimeConfig {

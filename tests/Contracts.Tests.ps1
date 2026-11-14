@@ -2,6 +2,43 @@ BeforeDiscovery {
     $recordCases = @('release-metadata','release-manifest','host-policy','target','release-approval','standing-authorization','verified-release','release-tag-binding','journal','current','backup-index','application-validation','readiness') | ForEach-Object { @{ Kind=$_ } }
 }
 BeforeAll { . "$PSScriptRoot/Support.ps1" }
+Describe 'Versioned NuGet lock evidence' {
+    It 'accepts actual lock digests in V1/V2 and explicit absent evidence only in V2: <Kind>' -ForEach @(
+        @{Kind='release-metadata'},@{Kind='release-manifest'}
+    ) {
+        $record=Get-Content -LiteralPath (Join-Path $script:FixtureRoot ($Kind+'.json')) -Raw | ConvertFrom-Json -AsHashtable
+        foreach ($version in @(1L,2L)) {
+            $record.schemaVersion=$version
+            $record.changeKind=if ($version -eq 1) {'files-only'} else {'application-deployment'}
+            foreach ($digest in @(('a'*64),$null)) {
+                $record.build.dependencyLockSha256=$digest
+                $json=$record | ConvertTo-Json -Depth 16 -Compress
+                if ($version -eq 1 -and $null -eq $digest) {
+                    Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes($json)) $Kind }
+                    Test-Json -Json $json -SchemaFile (Join-Path $script:RepositoryRoot ('schemas/'+$Kind+'.schema.json')) -ErrorAction SilentlyContinue | Should -BeFalse
+                } else {
+                    $parsed=Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes($json)) $Kind
+                    $parsed.build.dependencyLockSha256 | Should -Be $digest
+                    Test-Json -Json $json -SchemaFile (Join-Path $script:RepositoryRoot ('schemas/'+$Kind+'.schema.json')) -ErrorAction Stop | Should -BeTrue
+                }
+            }
+        }
+    }
+    It 'rejects omitted, placeholder, coerced and malformed lock evidence in V2: <Kind>' -ForEach @(
+        @{Kind='release-metadata'},@{Kind='release-manifest'}
+    ) {
+        $record=Get-Content -LiteralPath (Join-Path $script:FixtureRoot ($Kind+'.json')) -Raw | ConvertFrom-Json -AsHashtable
+        $record.schemaVersion=2L; $record.changeKind='application-deployment'
+        foreach ($digest in @('not-applicable','',0,$false,('A'*64),('a'*63))) {
+            $record.build.dependencyLockSha256=$digest
+            $json=$record | ConvertTo-Json -Depth 16 -Compress
+            Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes($json)) $Kind }
+            Test-Json -Json $json -SchemaFile (Join-Path $script:RepositoryRoot ('schemas/'+$Kind+'.schema.json')) -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+        $record.build.Remove('dependencyLockSha256')
+        Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json -Depth 16))) $Kind }
+    }
+}
 Describe 'Strict UTF-8 versioned contract shapes' {
     It 'rejects the former version-one journal and removed per-file ownership records' {
         $j=Get-Content -LiteralPath (Join-Path $script:FixtureRoot 'journal.json') -Raw | ConvertFrom-Json -AsHashtable

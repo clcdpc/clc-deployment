@@ -43,7 +43,7 @@ function New-ClcRelease {
         if ($web.Count -ne 1 -or $runtime.Count -ne 1) { Stop-ClcError Clc.UnsafeArchive }
         $webDigest = Read-ClcStream $web[0].stream $script:ClcLimits.Json $clock -Capture
         $web[0].stream.Position = 0
-        Assert-ClcWebConfig $webDigest.bytes $metadata.validation.entryPoint
+        Assert-ClcWebConfig $webDigest.bytes
         $runtimeDigest = Read-ClcStream $runtime[0].stream $script:ClcLimits.Json $clock -Capture
         $runtime[0].stream.Position = 0
         Assert-ClcRuntimeConfig $runtimeDigest.bytes $metadata.runtime.framework
