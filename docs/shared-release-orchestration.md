@@ -89,6 +89,6 @@ ASAP's historical `-test.N` convention is unsupported by this shared contract; i
 
 These are compatibility requirements represented by compact offline fixtures, not completed consumer integrations. SSRS PR #1 must replace its duplicated release/admission adapter with reviewed immutable shared workflow/toolkit pins, emit package 2, map producer display names/configuration and retain its application acceptance checks. No consumer repository was changed.
 
-The [read-only prerequisite checker](deployment-prerequisites.md) uses existing installed readers, including standing-revocation checks for generated schemas 2 and 3. It can inspect fresh enrollment before initial deployment, never executes validators/hooks/planning, and adds no deployment admission gate.
+The optional [GitHub setup checker](github-setup-check.md) reads GitHub settings independently of shared or application-owned deployment workflows. It analyzes no workflow implementation, inspects no host and adds no deployment admission gate. Host preparation and deployment preflight remain separate.
 
 Offline PowerShell/native-file/harmless-process tests and workflow lint establish only the implemented boundaries. Protected runner admission, actual consumer CI/publication, service identities, database/application compatibility, live IIS/recovery and disruptive failures still require separately authorized evidence under [IIS verification](iis-verification.md).

@@ -1,0 +1,24 @@
+name: Check GitHub deployment setup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check:
+    # Replace 000... with one reviewed full clc-deployment commit containing this workflow.
+    uses: clcdpc/clc-deployment/.github/workflows/check-github-setup.yml@0000000000000000000000000000000000000000
+    with:
+      integration_branch: master
+      environment_name: example-app-dev
+      runner_group: example-app-dev
+      runner_labels: self-hosted,Windows,X64,example-app-dev
+      runner_group_variable: DEPLOY_RUNNER_GROUP
+      runner_labels_variable: DEPLOY_RUNNER_LABELS
+      additional_variable_names: DEPLOYMENT_ENABLED
+    # Optional read-only GitHub App installation token; no deployment secrets required.
+    # secrets:
+    #   inspection_token: ${{ secrets.GITHUB_SETUP_INSPECTION_TOKEN }}

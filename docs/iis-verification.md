@@ -1,12 +1,12 @@
 # IIS verification
 
-The [read-only prerequisites diagnostic](deployment-prerequisites.md) can inspect the enrolled machine, protected authority and retained state under separately authorized host inspection. Its PASS results do not complete this deployment/recovery procedure or independent-identity acceptance.
+The optional [GitHub setup check](github-setup-check.md) reads GitHub settings only. Host observations remain separately scoped under enrollment, deployment preflight and this deployment/recovery procedure.
 
 **Actual Windows Server 2022/IIS qualification remains NOT RUN.** This procedure covers ordinary deployment and recovery. Offline NTFS/process/loopback/DPAPI tests and synthetic IIS/identity observations do not establish live-host acceptance. Reboot, power/storage loss and other disruptive checks need separate scope and evidence.
 
 The retained harness and original NoOp check use V1 packages. For a separately authorized V2 consumer pilot, replace that expectation with a complete repeat deployment: all selected hooks rerun, stop/start occurs, readiness succeeds and current generation advances. Separately authorize application database/hook work and persistent-state reconciliation exercises using [the hook contract](application-hooks.md). No V2 live-host, database or independent-identity acceptance has been run by this implementation task.
 
-The read-only [prerequisite checker](deployment-prerequisites.md) can establish commissioning readiness before the first deployment; it does not require the deployment/recovery acceptance below to have already succeeded. Correct blocking setup findings, then proceed under separate deployment authority. Routine deployments do not require checker execution.
+GitHub configuration results do not complete deployment/recovery acceptance or independent-identity qualification. Routine deployments do not require the optional checker.
 
 ## Rollout order
 

@@ -20,7 +20,7 @@ The repository, PowerShell toolkit and ASP.NET Core companion source are license
 
 ## Consumers and operators
 
-Start with the [Deployment Setup Guide](docs/setup-guide.md) for a new application/target: configure GitHub and Windows/IIS, install and enroll the toolkit, then verify prerequisites before separately authorized deployment and acceptance.
+Start with the [Deployment Setup Guide](docs/setup-guide.md) for a new application/target: configure GitHub, optionally check those settings, prepare Windows/IIS, install and enroll the toolkit, then perform separately authorized deployment and acceptance.
 
 | Guide | Purpose |
 | --- | --- |
@@ -41,4 +41,4 @@ Start with the [Deployment Setup Guide](docs/setup-guide.md) for a new applicati
 | [Testing](docs/testing.md) | Pinned verification tools and coverage limits |
 | [Releasing](docs/releasing.md) | Shared versions, verified artifacts and protected tag publication |
 
-The read-only commissioning [deployment prerequisite checker](docs/deployment-prerequisites.md) separately reports GitHub configuration and explicitly authorized read-only host observations. Its [consumer workflow template](docs/examples/deployment-readiness.yml) keeps privileged inspection outside ordinary PR CI; diagnostic results never authorize deployment. A verified empty target can be READY before its first deployment; routine deployments do not require this checker.
+The optional [GitHub setup checker](docs/github-setup-check.md) reports seven GitHub configuration areas as CONFIGURED, NEEDS CONFIGURATION or CHECK MANUALLY. Its [small manual workflow example](docs/examples/check-github-setup.yml) runs on GitHub-hosted infrastructure. API visibility limits are explicit; it does not inspect hosts, analyze deployment workflows, require activation or authorize deployment.

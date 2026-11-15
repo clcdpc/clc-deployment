@@ -1,0 +1,88 @@
+name: Check GitHub deployment setup
+
+on:
+  workflow_call:
+    inputs:
+      integration_branch:
+        type: string
+        default: master
+      environment_name:
+        type: string
+        required: true
+      runner_group:
+        type: string
+        required: true
+      runner_labels:
+        description: Comma-separated expected labels on one online group runner
+        type: string
+        required: true
+      release_tag_pattern:
+        type: string
+        default: v*
+      runner_group_variable:
+        type: string
+        default: ''
+      runner_labels_variable:
+        type: string
+        default: ''
+      additional_variable_names:
+        type: string
+        default: ''
+      check_release_immutability:
+        type: boolean
+        default: true
+    secrets:
+      inspection_token:
+        description: Optional read-only inspection token for settings unavailable to GITHUB_TOKEN
+        required: false
+    outputs:
+      status:
+        value: ${{ jobs.check.outputs.status }}
+      configured_count:
+        value: ${{ jobs.check.outputs.configured_count }}
+      needs_configuration_count:
+        value: ${{ jobs.check.outputs.needs_configuration_count }}
+      manual_count:
+        value: ${{ jobs.check.outputs.manual_count }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    outputs:
+      status: ${{ steps.check.outputs.status }}
+      configured_count: ${{ steps.check.outputs.configured_count }}
+      needs_configuration_count: ${{ steps.check.outputs.needs_configuration_count }}
+      manual_count: ${{ steps.check.outputs.manual_count }}
+    steps:
+      - name: Read reviewed checker implementation
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          # Fixed source, independent of caller inputs and workflow context.
+          ref: d317c3c8a598021166b824011c3fed441c010c18
+          path: github-setup-check
+          persist-credentials: false
+      - name: Inspect GitHub settings
+        id: check
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLC_INSPECTION_TOKEN: ${{ secrets.inspection_token }}
+          CLC_REPOSITORY: ${{ github.repository }}
+          CLC_BRANCH: ${{ inputs.integration_branch }}
+          CLC_ENVIRONMENT: ${{ inputs.environment_name }}
+          CLC_RUNNER_GROUP: ${{ inputs.runner_group }}
+          CLC_RUNNER_LABELS: ${{ inputs.runner_labels }}
+          CLC_TAG_PATTERN: ${{ inputs.release_tag_pattern }}
+          CLC_GROUP_VARIABLE: ${{ inputs.runner_group_variable }}
+          CLC_LABELS_VARIABLE: ${{ inputs.runner_labels_variable }}
+          CLC_VARIABLE_NAMES: ${{ inputs.additional_variable_names }}
+          CLC_IMMUTABILITY: ${{ inputs.check_release_immutability }}
+        run: |
+          $env:GITHUB_REPOSITORY = $env:CLC_REPOSITORY
+          & ./github-setup-check/tools/github-setup-check/Check-GitHubSetup.ps1 -IntegrationBranch $env:CLC_BRANCH -EnvironmentName $env:CLC_ENVIRONMENT -RunnerGroup $env:CLC_RUNNER_GROUP -RunnerLabels $env:CLC_RUNNER_LABELS -ReleaseTagPattern $env:CLC_TAG_PATTERN -RunnerGroupVariable $env:CLC_GROUP_VARIABLE -RunnerLabelsVariable $env:CLC_LABELS_VARIABLE -AdditionalVariableNames $env:CLC_VARIABLE_NAMES -CheckReleaseImmutability ([bool]::Parse($env:CLC_IMMUTABILITY))
