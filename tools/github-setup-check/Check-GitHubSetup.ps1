@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $EnvironmentName,
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $RunnerGroup,
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $RunnerLabels,
+    [string] $ExpectedWorkflows = '',
     [ValidateNotNullOrEmpty()][string] $ReleaseTagPattern = 'v*',
     [string] $RunnerGroupVariable = '',
     [string] $RunnerLabelsVariable = '',
@@ -26,6 +27,23 @@ function Split-Names([string] $Value) {
     $names | Sort-Object -Unique
 }
 $expectedLabels = @(Split-Names $RunnerLabels)
+function Workflow-Key($Value) {
+    if ($Value -isnot [string] -or $Value.Length -gt 512 -or $Value -inotmatch '^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml)@([a-f0-9]{40}|refs/(?:heads|tags)/[^\x00-\x20\x7f~^:?*\[\\]+)$') { return $null }
+    $path = $Matches[1]; $revision = $Matches[2]
+    if ($revision -match '\.\.|//|/\.|[./]$|\.lock(?:/|$)|@\{') { return $null }
+    $path.ToLowerInvariant() + '@' + $revision
+}
+$expectedWorkflowSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+if ($ExpectedWorkflows) {
+    if ($ExpectedWorkflows.Length -gt 15360) { throw 'Expected workflows exceed the input bound.' }
+    $entries = $ExpectedWorkflows.Split(',')
+    if ($entries.Count -gt 30) { throw 'Too many expected workflows.' }
+    foreach ($entry in $entries) {
+        $key = Workflow-Key $entry.Trim()
+        if (-not $key) { throw 'Expected workflows must be comma-separated exact workflow paths at full commits or explicit refs.' }
+        [void]$expectedWorkflowSet.Add($key)
+    }
+}
 $RunnerGroupVariable = $RunnerGroupVariable.Trim()
 $RunnerLabelsVariable = $RunnerLabelsVariable.Trim()
 $variableNames = @(Split-Names (($RunnerGroupVariable,$RunnerLabelsVariable,$AdditionalVariableNames | Where-Object { $_ }) -join ','))
@@ -117,7 +135,22 @@ function Add-Category([string] $Name, [string] $Anchor, [string] $Url, [string] 
     try { $result = & $Inspect } catch [IO.InvalidDataException] { $result = Observation -Manual $_.Exception.Message }
     $rows.Add(@{ Name=$Name; Status=$result.Status; Details=$result.Details; Guide="$guideUrl#$Anchor"; Url=$Url; Navigation=$Navigation; Expected=$Expected })
 }
-function Same-Labels([string[]] $Left, [string[]] $Right) { (@($Left | Sort-Object -Unique) -join ',').ToLowerInvariant() -ceq (@($Right | Sort-Object -Unique) -join ',').ToLowerInvariant() }
+function Same-Labels([string[]] $Left, [string[]] $Right) { [Collections.Generic.HashSet[string]]::new($Left,[StringComparer]::OrdinalIgnoreCase).SetEquals($Right) }
+function Read-RunnerLabels([string] $Value) {
+    $labels = @(); $document = $null
+    if ($Value.TrimStart().StartsWith('[')) {
+        try {
+            $document = [Text.Json.JsonDocument]::Parse($Value)
+            foreach ($element in $document.RootElement.EnumerateArray()) {
+                if ($element.ValueKind -ne [Text.Json.JsonValueKind]::String) { return ,@() }
+                $labels += $element.GetString()
+            }
+        } catch { return ,@() } finally { if ($null -ne $document) { $document.Dispose() } }
+    } else { $labels = @($Value.Split(',') | ForEach-Object { $_.Trim() }) }
+    $unique = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($label in $labels) { if ([string]::IsNullOrWhiteSpace($label) -or -not $unique.Add($label)) { return ,@() } }
+    return ,$labels
+}
 
 # Each independently enforcing, visible no-bypass ruleset can establish a control.
 # Hidden or selected-actor bypass needs UI review; broad role bypass cannot establish it.
@@ -203,15 +236,17 @@ Add-Category 'Branch protection' '2-configure-the-repository' "$repoUrl/settings
 
 Add-Category 'Tag protection' '3-protect-release-tags' "$repoUrl/settings/rules" 'Repository Settings > Rules > Rulesets > release-tag rules' "Active creation, update and deletion restrictions covering $ReleaseTagPattern, with controlled bypass." {
     if ($ReleaseTagPattern -cnotmatch '^[A-Za-z0-9._-]+\*$') { Uncertain 'Complex expected tag pattern; inspect full coverage and exclusions manually.' }
-    $sets = Read-List "$repoPath/rulesets?includes_parents=true"
+    $sets = Read-List "$repoPath/rulesets?includes_parents=true&targets=tag"
     $present = @(); $enforced = @(); $complete = $true; $bypassed = @(); $unknownBypass = @()
     foreach ($set in $sets) {
-        Require-Fields $set @('id'); Require-Strings $set @('target','enforcement')
-        if ($set.target -ne 'tag' -or $set.enforcement -in @('disabled','evaluate')) { continue }
-        if ($set.enforcement -cne 'active' -or [string]$set.id -notmatch '^[1-9][0-9]*$') { Uncertain 'Unrecognized ruleset settings.' }
+        Require-Fields $set @('id')
+        if ([string]$set.id -notmatch '^[1-9][0-9]*$') { Uncertain 'Unrecognized ruleset identity.' }
         $detail = (Read-GitHub "$repoPath/rulesets/$($set.id)").Data
-        Require-Fields $detail @('id','target','enforcement','conditions','rules')
-        if ($detail.id -ne $set.id -or $detail.target -cne 'tag' -or $detail.enforcement -cne 'active') { Uncertain 'Contradictory tag ruleset.' }
+        Require-Fields $detail @('id'); Require-Strings $detail @('target','enforcement')
+        if ($detail.id -ne $set.id -or $detail.target -cne 'tag') { Uncertain 'Contradictory tag ruleset.' }
+        if ($detail.enforcement -cin @('disabled','evaluate')) { continue }
+        if ($detail.enforcement -cne 'active') { Uncertain 'Unrecognized ruleset enforcement.' }
+        Require-Fields $detail @('conditions','rules')
         Require-Fields $detail.conditions @('ref_name'); Require-Fields $detail.conditions.ref_name @('include','exclude')
         $conditions = $detail.conditions.ref_name
         if ($conditions.include -isnot [array] -or $conditions.exclude -isnot [array] -or $detail.rules -isnot [array]) { Uncertain 'Malformed tag ruleset conditions.' }
@@ -282,8 +317,7 @@ Add-Category 'Runner group' '6-configure-self-hosted-runners' $groupUrl "Organiz
     if (-not $found.Count) { return Observation -Missing "Runner group $RunnerGroup does not exist; its settings cannot yet be inspected." }
     if ($found.Count -ne 1 -or [string]$found[0].id -notmatch '^[1-9][0-9]*$') { Uncertain 'Ambiguous runner-group identity.' }
     $script:group = $found[0]
-    Require-Strings $group @('visibility'); Require-Fields $group @('selected_workflows'); Require-Bools $group @('allows_public_repositories','restricted_to_workflows')
-    if ($group.selected_workflows -isnot [array]) { Uncertain 'Runner workflow allowlist unavailable.' }
+    Require-Strings $group @('visibility'); Require-Bools $group @('allows_public_repositories','restricted_to_workflows')
     $missing = @(); $manual = @()
     if ($group.visibility -cne 'selected') { $missing += 'Runner group must use Selected repositories.' }
     else {
@@ -294,16 +328,26 @@ Add-Category 'Runner group' '6-configure-self-hosted-runners' $groupUrl "Organiz
     $metadata = (Read-GitHub $repoPath).Data
     Require-Bools $metadata @('private')
     if ($group.allows_public_repositories -eq $metadata.private) { $missing += 'Public-repository eligibility does not match caller visibility.' }
-    if (-not $group.restricted_to_workflows -or -not $group.selected_workflows.Count) { $missing += 'Selected workflows must be enforced with a nonempty allowlist.' }
+    if (-not $group.restricted_to_workflows) { $missing += 'Selected workflows must be enabled.' }
+    if (-not $expectedWorkflowSet.Count) { $manual += 'Exact workflow allowlist is unverified: supply expected_workflows or compare it in Workflow access.' }
+    if (-not $group.Contains('selected_workflows') -or $group.selected_workflows -isnot [array]) { $manual += 'Runner workflow allowlist unavailable.' }
     else {
+        if (-not $group.selected_workflows.Count) { $missing += 'Selected workflows must have a nonempty allowlist.' }
+        $observed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $wellFormed = $true
         foreach ($entry in $group.selected_workflows) {
-            if ($entry -isnot [string]) { Uncertain 'Malformed selected workflow entry.' }
-            if ($entry -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml@(.+)$') { $missing += 'Workflow access contains a wildcard or nonexplicit workflow definition.'; break }
-            $ref = $Matches[1]
-            if ($ref -cnotmatch '^[a-f0-9]{40}$' -and $ref -cne "refs/heads/$IntegrationBranch") { $manual += 'Confirm workflow allowlist refs are independently protected and intended.'; break }
+            if ($entry -isnot [string]) { $manual += 'Malformed selected workflow entry.'; $wellFormed = $false; continue }
+            $key = Workflow-Key $entry
+            if (-not $key) { $missing += 'Workflow access contains a wildcard or nonexplicit workflow definition.'; continue }
+            [void]$observed.Add($key)
+        }
+        if ($expectedWorkflowSet.Count -and $wellFormed) {
+            foreach ($entry in $expectedWorkflowSet) { if (-not $observed.Contains($entry)) { $missing += "Missing expected workflow: $entry." } }
+            $extra = @($observed | Where-Object { -not $expectedWorkflowSet.Contains($_) }).Count
+            if ($extra) { $missing += "Workflow allowlist contains $extra unexpected entries (values withheld)." }
         }
     }
-    Observation -Missing $missing -Manual $manual -Confirmed 'Selected repository and explicit workflow restrictions observed; operator owns the exact approved allowlist.'
+    Observation -Missing $missing -Manual $manual -Confirmed 'Selected repository and Selected workflows restrictions match the exact expected allowlist.'
 }
 
 Add-Category 'Runners' 'register-runners-and-configure-labels' $groupUrl "Organization Settings > Actions > Runner groups > $RunnerGroup > Runners" "One online runner in this exact group with all labels: $($expectedLabels -join ', ')." {
@@ -337,7 +381,7 @@ Add-Category 'Actions variables' '7-configure-deployment-routing-and-activation'
             if ($name -ieq $RunnerGroupVariable -and $found[0].value -cne $RunnerGroup) { $missing += "Runner-group variable $name differs from expected group." }
             if ($name -ieq $RunnerLabelsVariable) {
                 # Malformed observed values are discrepancies, not input validation errors.
-                $labels = @($found[0].value.Split(',') | ForEach-Object { $_.Trim() })
+                $labels = Read-RunnerLabels $found[0].value
                 if (-not (Same-Labels $labels $expectedLabels)) { $missing += "Runner-label variable $name differs from expected labels." }
             }
         }

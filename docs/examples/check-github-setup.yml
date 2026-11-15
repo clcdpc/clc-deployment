@@ -16,6 +16,7 @@ jobs:
       environment_name: example-app-dev
       runner_group: example-app-dev
       runner_labels: self-hosted,Windows,X64,example-app-dev
+      expected_workflows: example-org/example-app/.github/workflows/deploy-release.yml@refs/heads/master
       runner_group_variable: DEPLOY_RUNNER_GROUP
       runner_labels_variable: DEPLOY_RUNNER_LABELS
       additional_variable_names: DEPLOYMENT_ENABLED
