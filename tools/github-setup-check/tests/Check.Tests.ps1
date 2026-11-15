@@ -172,6 +172,7 @@ Describe 'GitHub setup inspection' {
         $row=Row (Invoke-Check) 'Actions variables'
         $row | Should -Match 'NEEDS CONFIGURATION.*DEPLOYMENT&#95;ENABLED does not exist.*differs.*differs'
         $row | Should -Not -Match 'PRIVATE-WRONG-GROUP'
+        Row (Invoke-Check @{RunnerGroupVariable=' GROUP ';RunnerLabelsVariable=' LABELS '}) 'Actions variables' | Should -Match 'Runner-group variable GROUP differs.*Runner-label variable LABELS differs'
     }
     It 'handles permission denial and ambiguous 404 as manual with exact UI instructions: <Code>' -ForEach @(@{Code=403},@{Code=404},@{Code=500}) {
         $httpStatus['/orgs/example-org/actions/runner-groups?per_page=100&page=1']=$Code

@@ -26,6 +26,8 @@ function Split-Names([string] $Value) {
     $names | Sort-Object -Unique
 }
 $expectedLabels = @(Split-Names $RunnerLabels)
+$RunnerGroupVariable = $RunnerGroupVariable.Trim()
+$RunnerLabelsVariable = $RunnerLabelsVariable.Trim()
 $variableNames = @(Split-Names (($RunnerGroupVariable,$RunnerLabelsVariable,$AdditionalVariableNames | Where-Object { $_ }) -join ','))
 foreach ($name in $variableNames) { if ($name -cnotmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw 'Invalid variable name.' } }
 if ($RunnerGroupVariable.Contains(',') -or $RunnerLabelsVariable.Contains(',')) { throw 'Runner variable inputs accept one name each.' }
