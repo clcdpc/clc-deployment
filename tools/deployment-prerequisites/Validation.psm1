@@ -157,7 +157,13 @@ function Test-ClcDeploymentPrerequisiteInputs {
 
 function Get-ClcDeploymentPrerequisiteBypassStatus {
     param($Rule, [ValidateSet('branch','tag')][string] $Target)
-    if ($Rule -isnot [Collections.IDictionary] -or $Rule['bypass_actors'] -isnot [array]) {return 'UNVERIFIED'}
+    if ($Rule -isnot [Collections.IDictionary]) {return 'UNVERIFIED'}
+    # GitHub withholds this property without ruleset write access. Omission is
+    # neither a verified safe list nor a confirmed bypass; callers report it
+    # separately from malformed evidence and preserve observable restrictions.
+    # https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset
+    if (-not $Rule.Contains('bypass_actors')) {return 'OMITTED'}
+    if ($Rule['bypass_actors'] -isnot [array]) {return 'UNVERIFIED'}
     $unknown=$false; $broad=$false
     foreach ($actor in $Rule['bypass_actors']) {
         if ($actor -isnot [Collections.IDictionary]) {$unknown=$true;continue}
@@ -198,7 +204,7 @@ function Get-ClcDeploymentPrerequisiteBranchChecks {
         @($rules | Where-Object {$_ -isnot [Collections.IDictionary] -or $_['type'] -isnot [string]}).Count -eq 0
     $status=if ($Branch['protected'] -isnot [bool]) {'UNVERIFIED'} elseif ($Branch['protected']) {'PASS'} else {'FAIL'}
     New-ClcDeploymentPrerequisiteCheck 'github.branch.protection' $status 'The integration branch protected flag was inspected at the selected branch.' $action -Name 'Integration branch protection'
-    $bypass=@{}; $bypassUnknown=$false; $broad=$false
+    $bypass=@{}; $bypassUnknown=$false; $broad=$false; $visibilityKnown=$effectiveKnown
     foreach ($item in @(@('force-push','allow_force_pushes','non_fast_forward'),@('deletion','allow_deletions','deletion'),@('required-checks','required_status_checks','required_status_checks'))) {
         $value=$p[$item[1]]; $known=$classicKnown; $classicPresent=$false
         if ($null -ne $value) {
@@ -229,30 +235,47 @@ function Get-ClcDeploymentPrerequisiteBranchChecks {
         New-ClcDeploymentPrerequisiteCheck "github.branch.$($item[0])" $status 'Observed classic protection and active applicable rules were checked for this restriction.' $action -Name "Branch $($item[0]) restriction"
 
         $safe=$false; $controlBroad=$false; $unknown=-not $known -or -not $ruleKnown
+        $omitted=$false; $invalidBypass=$false
         if ($classicPresent) {
             $admins=$p['enforce_admins']
-            if ($admins -isnot [Collections.IDictionary] -or $admins['enabled'] -isnot [bool]) {$unknown=$true}
+            if ($admins -isnot [Collections.IDictionary] -or $admins['enabled'] -isnot [bool]) {$invalidBypass=$true}
             elseif ($admins['enabled']) {$safe=$true}
             else {$controlBroad=$true}
         }
         foreach ($rule in $presentRules) {
             $id=$rule['ruleset_id']
-            if (($id -isnot [long] -and $id -isnot [int]) -or $id -le 0) {$unknown=$true;continue}
+            if (($id -isnot [long] -and $id -isnot [int]) -or $id -le 0) {$invalidBypass=$true;$visibilityKnown=$false;continue}
             if (-not $bypass.ContainsKey($id)) {
                 $detail=Get-ClcDeploymentPrerequisiteApi $Context "$path/rulesets/$($id)?includes_parents=true"
-                $bypass[$id]=if ($detail.ok -and $detail.data -is [Collections.IDictionary] -and $detail.data['target'] -ceq 'branch' -and $detail.data['enforcement'] -ceq 'active') {
+                $bypass[$id]=if ($detail.ok -and $detail.data -is [Collections.IDictionary] -and $detail.data['target'] -ceq 'branch' -and $detail.data['enforcement'] -ceq 'active' -and
+                    (-not $detail.data.Contains('id') -or (($detail.data['id'] -is [int] -or $detail.data['id'] -is [long]) -and $detail.data['id'] -eq $id))) {
                     Get-ClcDeploymentPrerequisiteBypassStatus $detail.data branch
                 } else {'UNVERIFIED'}
             }
-            switch -CaseSensitive ($bypass[$id]) {PASS {$safe=$true}; FAIL {$controlBroad=$true}; default {$unknown=$true}}
+            switch -CaseSensitive ($bypass[$id]) {
+                PASS {$safe=$true}
+                FAIL {$controlBroad=$true}
+                OMITTED {$omitted=$true;$visibilityKnown=$false}
+                default {$invalidBypass=$true;$visibilityKnown=$false}
+            }
         }
         # Protections layer: broad classic/ruleset bypass is harmless to this
         # control only when another observed source independently enforces it.
         # https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets#about-rule-layering
-        if (-not $safe) {$broad=$broad -or $controlBroad; $bypassUnknown=$bypassUnknown -or $unknown}
+        # An omitted list can support an observable no-confirmed-defeat result,
+        # but cannot independently neutralize a confirmed broad bypass or bad
+        # actor/detail evidence. Only a fully observed safe layer does that.
+        if (-not $safe) {
+            $broad=$broad -or $controlBroad
+            $bypassUnknown=$bypassUnknown -or $invalidBypass -or ($unknown -and -not $omitted)
+        }
     }
     $status=if ($broad) {'FAIL'} elseif ($bypassUnknown) {'UNVERIFIED'} else {'PASS'}
-    New-ClcDeploymentPrerequisiteCheck 'github.branch.bypass' $status 'Classic administrator enforcement and applicable ruleset actor identities/modes were checked for each required restriction, including independently enforcing layered protections.' $action -Name 'Branch bypass restrictions'
+    New-ClcDeploymentPrerequisiteCheck 'github.branch.bypass' $status 'Observable classic administrator enforcement and applicable ruleset bypass evidence were assessed for each required restriction, including independently enforcing layers. PASS establishes no confirmed bypass defeat of those controls; it does not verify hidden actors.' $action -Name 'Branch bypass restrictions'
+    $visibilityDetail=if ($visibilityKnown) {'Relevant branch ruleset bypass actor information was fully observable; no hidden actor list was inferred.'}
+        elseif ($bypass.Values -ccontains 'OMITTED') {'GitHub omitted bypass_actors from relevant active branch ruleset responses, as documented for read-only access. Hidden actors were not verified. Required checks separately assess observable restrictions and confirmed bypass defeats.'}
+        else {'Relevant branch ruleset bypass actor information could not be fully inspected because ruleset evidence was unavailable or malformed. Required checks retain uncertainty wherever independent protection was not established.'}
+    New-ClcDeploymentPrerequisiteCheck 'github.branch.bypass-visibility' $(if ($visibilityKnown) {'PASS'} else {'UNVERIFIED'}) $visibilityDetail 'Retain independent infrastructure control of bypass identities; review available ruleset settings through the existing read-only inspection path. Write-capable credentials are not required by this checker.' -Name 'Branch bypass visibility'
     $pr=$p['required_pull_request_reviews']
     New-ClcDeploymentPrerequisiteCheck 'github.branch.reviews' PASS $(if ($null -ne $pr) {'Optional PR review controls are configured. No universal reviewer count or CODEOWNERS approval is required by commissioning.'} else {'No mandatory PR review or CODEOWNERS control is required by this checker.'}) -Name 'Optional branch reviews'
 }
@@ -263,7 +286,7 @@ function Get-ClcDeploymentPrerequisiteTagPatternScope {
     # Unknown overlaps remain inconclusive, even when another policy is broad.
     if ($Pattern -isnot [string] -or -not $Pattern) {return 'Unknown'}
     if ($Pattern -cin @('~ALL','refs/tags/*','refs/tags/v*','refs/tags/v*.*.*')) {return 'Full'}
-    foreach ($suffix in @('dev','beta','rc')) {
+    foreach ($suffix in @('dev','beta','rc','test')) {
         if ($Pattern -cin @("refs/tags/v*-$suffix.*","refs/tags/v*.*.*-$suffix.*")) {
             $selected=($Channel -ceq 'DEV' -and $suffix -ceq 'dev')
             if ($selected) {return 'Full'} else {return 'Disjoint'}
@@ -292,28 +315,33 @@ function Get-ClcDeploymentPrerequisiteTagChecks {
     $list=Get-ClcDeploymentPrerequisiteCollection $Context "$($path)?includes_parents=true"
     $action="Configure active tag creation/update/deletion restrictions for the selected $($Config.DeploymentChannel) version tags, with only independently controlled release bypass actors."
     $found=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $unknown=-not $list.ok; $bypassKnown=$list.ok; $broad=$false; $actors=$false
+    $unknown=-not $list.ok; $bypassKnown=$list.ok; $broad=$false; $actors=$false; $visibilityKnown=$list.ok; $visibilityOmitted=$false
     if ($list.ok) { foreach ($entry in $list.data) {
-        if ($entry -isnot [Collections.IDictionary]) {$unknown=$true;continue}
+        if ($entry -isnot [Collections.IDictionary]) {$unknown=$true;$visibilityKnown=$false;continue}
         if ($entry['target'] -cin @('branch','push') -or $entry['enforcement'] -cin @('disabled','evaluate')) {continue}
-        if (($entry['id'] -isnot [long] -and $entry['id'] -isnot [int]) -or $entry['id'] -le 0) {$unknown=$true;continue}
+        if (($entry['id'] -isnot [long] -and $entry['id'] -isnot [int]) -or $entry['id'] -le 0) {$unknown=$true;$visibilityKnown=$false;continue}
         $response=Get-ClcDeploymentPrerequisiteApi $Context "$path/$($entry['id'])?includes_parents=true"
-        if (-not $response.ok) {$unknown=$true;$bypassKnown=$false;continue}
+        if (-not $response.ok) {$unknown=$true;$bypassKnown=$false;$visibilityKnown=$false;continue}
         $rule=$response.data
-        if ($rule -isnot [Collections.IDictionary]) {$unknown=$true;continue}
+        if ($rule -isnot [Collections.IDictionary]) {$unknown=$true;$visibilityKnown=$false;continue}
+        if ($rule.Contains('id') -and (($rule['id'] -isnot [int] -and $rule['id'] -isnot [long]) -or $rule['id'] -ne $entry['id'])) {$unknown=$true;$visibilityKnown=$false;continue}
+        if (($entry.Contains('target') -and $entry['target'] -cne $rule['target']) -or
+            ($entry.Contains('enforcement') -and $entry['enforcement'] -cne $rule['enforcement'])) {$unknown=$true;$visibilityKnown=$false;continue}
         if ($rule['target'] -cin @('branch','push') -or $rule['enforcement'] -cin @('disabled','evaluate')) {continue}
-        if ($rule['target'] -cne 'tag' -or $rule['enforcement'] -cne 'active' -or $rule['conditions'] -isnot [Collections.IDictionary]) {$unknown=$true;continue}
+        if ($rule['target'] -cne 'tag' -or $rule['enforcement'] -cne 'active' -or $rule['conditions'] -isnot [Collections.IDictionary]) {$unknown=$true;$visibilityKnown=$false;continue}
         $refs=$rule['conditions']['ref_name']
-        if ($refs -isnot [Collections.IDictionary] -or $refs['include'] -isnot [array]) {$unknown=$true;continue}
+        if ($refs -isnot [Collections.IDictionary] -or $refs['include'] -isnot [array]) {$unknown=$true;$visibilityKnown=$false;continue}
         $scopes=@($refs['include'] | ForEach-Object {Get-ClcDeploymentPrerequisiteTagPatternScope $_ $Config.DeploymentChannel})
         # Decide relevance before exclusions/unsupported data can contaminate
         # selected-channel results. Empty includes select no tags.
         if (-not @($scopes | Where-Object {$_ -cne 'Disjoint'}).Count) {continue}
         if ($scopes -ccontains 'Unknown') {$unknown=$true}
-        if ($refs['exclude'] -isnot [array] -or $refs['exclude'].Count) {$unknown=$true;continue}
         $bypassStatus=Get-ClcDeploymentPrerequisiteBypassStatus $rule tag
         if ($bypassStatus -ceq 'FAIL') {$broad=$true} elseif ($bypassStatus -ceq 'UNVERIFIED') {$bypassKnown=$false}
+        if ($bypassStatus -cin @('OMITTED','UNVERIFIED')) {$visibilityKnown=$false}
+        if ($bypassStatus -ceq 'OMITTED') {$visibilityOmitted=$true}
         if ($rule['bypass_actors'] -is [array]) {$actors=$actors -or $rule['bypass_actors'].Count -gt 0}
+        if ($refs['exclude'] -isnot [array] -or $refs['exclude'].Count) {$unknown=$true;continue}
         if ($rule['rules'] -isnot [array]) {$unknown=$true;continue}
         foreach ($item in $rule['rules']) {
             if ($item -isnot [Collections.IDictionary] -or $item['type'] -isnot [string]) {$unknown=$true;continue}
@@ -326,7 +354,11 @@ function Get-ClcDeploymentPrerequisiteTagChecks {
         New-ClcDeploymentPrerequisiteCheck "github.tags.$type" $status "Active rules were inspected for $type of selected-channel version tags; evaluate-only rules do not enforce protection." $action -Name "Release tag $type restriction"
     }
     $status=if ($broad) {'FAIL'} elseif (-not $bypassKnown -or $unknown) {'UNVERIFIED'} else {'PASS'}
-    New-ClcDeploymentPrerequisiteCheck 'github.tags.bypass' $status 'Observable selected-channel tag bypass actor identities and modes were inspected; broad administrator or role bypass broadens release admission.' $action -Name 'Tag bypass restrictions'
+    New-ClcDeploymentPrerequisiteCheck 'github.tags.bypass' $status 'Observable selected-channel tag bypass evidence was assessed; broad administrator or role bypass broadens release admission. PASS establishes no confirmed bypass defeat of the observed controls; it does not verify hidden actors.' $action -Name 'Tag bypass restrictions'
+    $visibilityDetail=if ($visibilityKnown) {'Relevant selected-channel tag ruleset bypass actor information was fully observable; no hidden actor list was inferred.'}
+        elseif ($visibilityOmitted) {'GitHub omitted bypass_actors from relevant active tag ruleset responses, as documented for read-only access. Hidden actors were not verified. Required checks separately assess observable restrictions and confirmed bypass defeats.'}
+        else {'Relevant selected-channel tag ruleset bypass actor information could not be fully inspected because ruleset evidence was unavailable or malformed. Required checks retain uncertainty wherever protection was not established.'}
+    New-ClcDeploymentPrerequisiteCheck 'github.tags.bypass-visibility' $(if ($visibilityKnown) {'PASS'} else {'UNVERIFIED'}) $visibilityDetail 'Retain independent infrastructure control of release bypass identities; review available ruleset settings through the existing read-only inspection path. Write-capable credentials are not required by this checker.' -Name 'Tag bypass visibility'
     New-ClcDeploymentPrerequisiteCheck 'github.tags.authority' UNVERIFIED $(if ($actors) {'Configured release bypass actors still require infrastructure ownership; API settings do not prove their future behavior.'} else {'API observations do not prove future release-producer or administrator behavior.'}) 'Retain independent control of release producers and authorized bypass identities.' -Name 'Release authority limitation'
 }
 
@@ -624,7 +656,7 @@ function Invoke-ClcDeploymentPrerequisiteGitHubInspection {
     $context.client.DefaultRequestHeaders.UserAgent.ParseAdd('CLC-Deployment-Prerequisites/3')
     $context.client.DefaultRequestHeaders.Accept.ParseAdd('application/vnd.github+json')
     $context.client.DefaultRequestHeaders.Add('X-GitHub-Api-Version','2022-11-28')
-    $rows=[Collections.Generic.List[object]]::new();$commit=''
+    $rows=[Collections.Generic.List[object]]::new();$commit='';$protectionStarted=@{branch=$false;tags=$false}
     try {
         Set-ClcDeploymentPrerequisiteAuthentication $context.client $AuthenticationMode
         $repo=Get-ClcDeploymentPrerequisiteApi $context "/repos/$($Config.Repository)"
@@ -641,6 +673,7 @@ function Invoke-ClcDeploymentPrerequisiteGitHubInspection {
         $branch=Get-ClcDeploymentPrerequisiteApi $context "/repos/$($Config.Repository)/branches/$([uri]::EscapeDataString($Config.IntegrationBranch))"
         if ($source -and $branch.ok -and $branch.data['commit'] -is [Collections.IDictionary] -and $branch.data['commit']['sha'] -cmatch '^[a-f0-9]{40}$') {
             $commit=$branch.data['commit']['sha']
+            $protectionStarted.branch=$true
             foreach ($row in @(Get-ClcDeploymentPrerequisiteBranchChecks $context $Config $branch.data)) {$rows.Add($row)}
             $release=Get-ClcDeploymentPrerequisiteWorkflowObservation $context $Config $Config.ReleaseWorkflow $commit 'github.workflow.producer'
             $deployment=Get-ClcDeploymentPrerequisiteWorkflowObservation $context $Config $Config.DeploymentWorkflow $commit 'github.workflow.caller'
@@ -648,6 +681,7 @@ function Invoke-ClcDeploymentPrerequisiteGitHubInspection {
             foreach ($row in @(Get-ClcDeploymentPrerequisiteWorkflowChecks $Config $release.workflow $deployment.workflow)) {$rows.Add($row)}
             $shared=Get-ClcDeploymentPrerequisiteSharedWorkflowAssessment $context $Config $deployment.workflow $commit
             foreach ($row in $shared.checks) {$rows.Add($row)}
+            $protectionStarted.tags=$true
             foreach ($row in @(Get-ClcDeploymentPrerequisiteTagChecks $context $Config $shared.configuration)) {$rows.Add($row)}
             foreach ($row in @(Get-ClcDeploymentPrerequisiteRoutingChecks $Config $deployment.workflow $shared)) {$rows.Add($row)}
             foreach ($row in @(Get-ClcDeploymentPrerequisiteRunnerChecks $context $Config $visibility $shared)) {$rows.Add($row)}
@@ -660,6 +694,12 @@ function Invoke-ClcDeploymentPrerequisiteGitHubInspection {
         # Keep completed observations, including confirmed failures; suppress private error text.
         $rows.Add((New-ClcDeploymentPrerequisiteCheck 'github.inspection' UNVERIFIED 'Unexpected or incomplete API/configuration data interrupted inspection; private details were suppressed.' 'Retry inspection; if reproducible, correct the unsupported observation or checker implementation.' -Reason 'inspection-error' -Name 'GitHub inspection completion'))
     } finally {$context.client.Dispose();$handler.Dispose();$context.timer.Stop()}
+    foreach ($area in @('branch','tags')) {
+        $id="github.$area.bypass-visibility"
+        if ($rows.id -cnotcontains $id) {
+            $rows.Add((New-ClcDeploymentPrerequisiteCheck $id $(if ($protectionStarted[$area]) {'UNVERIFIED'} else {'SKIPPED'}) 'The corresponding ruleset inspection did not complete with bypass visibility evidence.' 'Correct the source/access or incomplete inspection finding and rerun the existing read-only inspection.' -Reason 'inspection-incomplete' -Name "$area bypass visibility"))
+        }
+    }
     New-ClcDeploymentPrerequisiteReport $Config $rows.ToArray() $commit
 }
 

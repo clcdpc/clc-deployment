@@ -11,9 +11,9 @@ function Get-ClcDeploymentPrerequisiteDefinitions {
     @{
         'github.repository.identity'=$true; 'github.branch.protection'=$true
         'github.branch.force-push'=$true; 'github.branch.deletion'=$true; 'github.branch.required-checks'=$true
-        'github.branch.bypass'=$true; 'github.branch.reviews'=$false
+        'github.branch.bypass'=$true; 'github.branch.bypass-visibility'=$false; 'github.branch.reviews'=$false
         'github.tags.creation'=$true; 'github.tags.update'=$true; 'github.tags.deletion'=$true
-        'github.tags.bypass'=$true; 'github.tags.authority'=$false
+        'github.tags.bypass'=$true; 'github.tags.bypass-visibility'=$false; 'github.tags.authority'=$false
         'github.workflow.producer'=$true; 'github.workflow.caller'=$true
         'github.workflow.release-trigger'=$true; 'github.workflow.completion-trigger'=$true
         'github.workflow.manual-dispatch'=$false; 'github.workflow.runtime-semantics'=$false
