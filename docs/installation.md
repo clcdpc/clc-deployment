@@ -1,5 +1,7 @@
 # Toolkit distribution, independent verification and activation
 
+The [Deployment Setup Guide](setup-guide.md) places installation in the complete target setup sequence. The procedures here remain authoritative for distribution verification and the first-import trust boundary.
+
 The shared release version comes from `v<version>` tags; root [`VERSION`](../VERSION) is the untagged development fallback. Stable and prerelease versions are supported; see [shared release rules](releasing.md). Publication does not approve installation or execution. Source commit, archive SHA-256 and module inventory distinguish immutable distributions; the version label alone never selects code. There is no automatic latest resolution or application-bundled engine. **Actual Server 2022/IIS qualification remains NOT RUN**; follow the [practical procedure](iis-verification.md) under separate authorization.
 
 ## Trust before first import
