@@ -1,8 +1,8 @@
 # Deployment Setup Guide
 
-Follow this guide to configure a new application and deployment target, then verify the completed setup. It is useful without the prerequisite checker. GitHub settings route trusted work; independently protected host approvals authorize execution. Setup, first deployment and application acceptance are separate activities.
+Follow this guide to configure a new application and deployment target. GitHub UI configuration → optional GitHub setup check → separate host preparation and deployment preflight → authorized deployment → application acceptance. GitHub settings route trusted work; independently protected host approvals authorize execution.
 
-These instructions describe the implementation at [a9343d3](https://github.com/clcdpc/clc-deployment/tree/a9343d3059f2aac3ac23457a0b45fcbc3c951117). Specialized documents linked below define the exact contracts. **Actual Windows Server 2022/IIS and independent-identity qualification remain NOT RUN.** Examples use synthetic values and grant no operational authority.
+The deployment/toolkit procedures describe the implementation at [c09a841](https://github.com/clcdpc/clc-deployment/tree/c09a841871a1552ec131c12cdd8b4c50f930f5f9); the optional [GitHub checker](github-setup-check.md) is documented separately. Specialized documents linked below define the exact contracts. **Actual Windows Server 2022/IIS and independent-identity qualification remain NOT RUN.** Examples use synthetic values and grant no operational authority.
 
 ## 1. Before you begin
 
@@ -55,9 +55,9 @@ These instructions describe the implementation at [a9343d3](https://github.com/c
 
 ### Choose tag patterns and channel coverage
 
-1. In **Repository Settings > Rules > Rulesets**, use tag rulesets covering every release tag for the intended channel. A simple `v*` target covers the supported version family. The checker recognizes full coverage such as `refs/tags/v*` or `refs/tags/v*.*.*`, and DEV-specific `refs/tags/v*-dev.*` or `refs/tags/v*.*.*-dev.*`; the settings UI may display these without `refs/tags/`.
+1. In **Repository Settings > Rules > Rulesets**, use tag rulesets covering every release tag for the intended channel. A simple `v*` target covers the supported version family. The optional checker supports this straightforward prefix convention; the API represents it as `refs/tags/v*`.
 2. Preserve the release contract: `vMAJOR.MINOR.PATCH-dev.N` is **DEV**; `vMAJOR.MINOR.PATCH` is **Production**; beta/RC tags are artifact-only; `-test.N` is unsupported. Environment/host names do not define a release channel. Production coverage must include stable tags.
-3. Avoid ambiguous exclusions when establishing coverage. The checker supports a bounded subset of patterns; complex overlap/exclusion evidence may remain UNVERIFIED. See [release source rules](shared-release-orchestration.md#source-and-ordering).
+3. Avoid ambiguous exclusions when establishing coverage. Complex overlap or exclusions require manual inspection. See [release source rules](shared-release-orchestration.md#source-and-ordering).
 
 ### Configure release-tag creation restrictions
 
@@ -77,7 +77,7 @@ These instructions describe the implementation at [a9343d3](https://github.com/c
 ### Restrict tag bypass access
 
 1. Inspect bypass actors/modes on every applicable tag ruleset. Keep creation authority narrowly controlled; do not grant broad administrator or role bypass merely to simplify releases.
-2. Ensure permitted creation actors do not silently defeat update/deletion restrictions. Separate layered rules can enforce those controls independently. Review observable actors and record hidden-list limitations as described in [the diagnostic's protection model](deployment-prerequisites.md#what-is-inspected).
+2. Ensure permitted creation actors do not silently defeat update/deletion restrictions. Separate layered rules can enforce those controls independently. Review observable actors and record hidden-list limitations described in [the checker's capabilities](github-setup-check.md#api-inventory-and-capabilities).
 
 ### Verify effective tag enforcement
 
@@ -106,9 +106,11 @@ These instructions describe the implementation at [a9343d3](https://github.com/c
 
 ### Review intentional workflow differences
 
-The current static checker recognizes the producer tag-push filter above and a `workflow_run` completion relationship. No producer tag filter yields FAIL; unsupported filters or a different completion arrangement may remain UNVERIFIED. Direct callers have limited static routing support and no verified shared channel-policy record. Static inspection does not evaluate arbitrary expressions or prove execution behavior.
+Review application-owned workflow behavior under the application's own policy. The GitHub setup checker does not read workflow contents or require a shared workflow, `.clc/release.json`, `workflow_run` handoff or automatic trigger. Shared/direct deployment and automatic/manual redeployment receive the same GitHub settings checks. Consumer migration, including SSRS Web, remains a separate task.
 
-SSRS Web's manual-only `workflow_dispatch` arrangement, observed in its [release producer](https://github.com/clcdpc/ssrs-web/blob/c9fee1f1c2f2e0d1c1f613e601858286b0d50647/.github/workflows/release.yml) and [deployment caller](https://github.com/clcdpc/ssrs-web/blob/c9fee1f1c2f2e0d1c1f613e601858286b0d50647/.github/workflows/deploy-dev.yml), is an intentional compatibility case, not automatically an invalid architecture. If yours differs, retain the findings, compare its independently reviewed source/artifact/manual-actor/runner/host boundaries with [shared integration](shared-release-orchestration.md), and obtain an architecture decision about adoption or checker support. Do not add automatic triggers, weaken controls or redesign consumer workflows just to satisfy this diagnostic. This guide changes no workflow-inspection policy; the manual-only compatibility gap remains open.
+### Configure release immutability
+
+In **Repository Settings > General > Releases > Release immutability**, enable **Enable release immutability**, or verify owner-enforced immutability. The optional checker uses the supported read-only setting API when permitted; an ambiguous 404 requires this UI inspection. Do not create a test release to infer the setting.
 
 ## 5. Configure GitHub environments
 
@@ -132,15 +134,15 @@ SSRS Web's manual-only `workflow_dispatch` arrangement, observed in its [release
 
 ### Restrict runner repository access
 
-1. Set **Repository access > Selected repositories** to the exact authorized consumer repository. The diagnostic expects the selected list to contain only that caller.
+1. Set **Repository access > Selected repositories** to the independently authorized consumer repositories and ensure the intended caller is admitted. The diagnostic verifies this caller's membership; infrastructure reviews the complete intended list.
 2. Keep public-repository eligibility disabled for a private caller. A public caller requires that eligibility enabled **within the dedicated selected-repository and selected-workflow boundary**; this is not permission for unrestricted public self-hosted execution. Retain infrastructure review of public PR/fork exposure without inventing extra application approval gates.
 3. Inspect inherited enterprise restrictions and ensure there is no alternate registration/group exposing the same host more broadly. See [GitHub runner-group controls](https://docs.github.com/en/enterprise-cloud@latest/actions/how-tos/manage-runners/self-hosted-runners/manage-access) and [the CLC GitHub checklist](github-setup.md#restrict-the-privileged-runner-externally).
 
 ### Restrict runner workflow access
 
 1. Enforce **Selected workflows** for the exact job-defining workflow. For shared deployment, select `clcdpc/clc-deployment/.github/workflows/application-deploy.yml@<reviewed-full-SHA>`, replacing the placeholder with the approved revision. Allowlisting only its consumer caller does not admit the callee's jobs.
-2. A legacy direct workflow uses its exact consumer path at `@refs/heads/<integrationBranch>`. If separately authorizing the diagnostic's host job, additionally select its directly job-defining protected consumer workflow. Admit no other workflow definitions.
-3. For shared code from another organization, inspect inherited enterprise group ownership: an ordinary non-inherited organization group does not establish that cross-organization admission. Preserve incomplete visibility as UNVERIFIED. If exact effective restrictions cannot be established, leave deployment disabled and resolve the external boundary with infrastructure.
+2. An application-owned direct workflow uses its exact consumer path at `@refs/heads/<integrationBranch>`. Admit only independently approved workflow definitions. The GitHub setup check runs on hosted infrastructure and needs no runner-group admission.
+3. For shared code from another organization, inspect inherited enterprise group ownership and effective cross-organization admission. If exact effective restrictions cannot be established, leave deployment disabled and resolve the external boundary with infrastructure. The checker reports inaccessible settings as CHECK MANUALLY.
 
 ### Register runners and configure labels
 
@@ -232,45 +234,34 @@ Have infrastructure verify the following against [host enrollment](host-enrollme
 
 ## 11. Verify the completed setup
 
-### Run prerequisite verification
+### Run the optional GitHub setup check
 
-1. After configuring the target, run the read-only [consumer diagnostic](deployment-prerequisites.md#run-and-interpret) using the reviewed [workflow template](examples/deployment-readiness.yml), exact subject and immutable diagnostic/shared pins. It does not provision resources. The hosted GitHub stage may also run independently to troubleshoot partial setup.
-2. Review confirmed FAIL findings first; use each linked setup instruction. Investigate UNVERIFIED evidence without treating API denial/concealed 404 as proof of absence. Resolve SKIPPED dependencies before rerunning. Advisory findings remain visible without independently blocking readiness.
-3. Separately authorize actual-host inspection on the enrolled machine with the exact independently installed toolkit and admitted elevated identity. Hosted observations alone cannot establish overall READY. Retain matching repository/integration/application/target/environment/channel selections for both reports.
-4. Rerun after corrections, with no concurrent deployment/configuration changes. Preserve full original JSON evidence and inspect collapsed technical details when needed.
-
-   | Result | Meaning |
-   | --- | --- |
-   | READY | Both categories PASS with sufficient evidence for every required applicable prerequisite; advisories can remain |
-   | NOT READY | A required prerequisite failed or remains unverified/skipped, including an incomplete category |
-   | FAIL | Confirmed missing, incorrect, disabled or incompatible prerequisite |
-   | UNVERIFIED | Inspection attempted but evidence was inconclusive |
-   | SKIPPED | Inspection did not execute; resolve its stated dependency/stage |
-   | PASS | Executed with sufficient evidence |
-   | NOT_APPLICABLE | A source-defined applicability condition was established, such as a verified empty target |
+1. After GitHub UI configuration, add the [small manual caller](examples/check-github-setup.yml) at an immutable reviewed revision and run **Check GitHub deployment setup**. Pass the expected integration branch, environment, group and comma-separated labels explicitly. Run separately for DEV and Production. No host access, toolkit or deployment secret is needed.
+2. Read the seven category rows and linked UI settings. `CONFIGURED` means observed settings match expectations; `NEEDS CONFIGURATION` means a confirmed discrepancy; `CHECK MANUALLY` means API evidence is insufficient and includes the exact UI path and expected setting. Follow [API capabilities and invocation details](github-setup-check.md) for the optional read-only inspection token. Default-token coverage is limited.
+3. Correct confirmed discrepancies and inspect unresolved settings manually. Disabled deployment activation can remain false. The check is optional and never gates ordinary deployment.
+4. Separately complete host preparation, enrollment observations and application-owned prerequisites. Actual deployment preflight remains part of the authorized toolkit operation; a GitHub configuration report supplies no host evidence.
 
 ### Authorize first deployment and acceptance
 
-1. A diagnostic report does not authorize deployment. A valid empty target can be READY without an installed application; do not fabricate a baseline or activate automation for the report. Routine deployment does not require running the checker.
-2. Obtain independent exact first-release authority and separately scoped host/application deployment approval, then follow [deployment](deployment.md#prerequisites-and-commands) and [IIS rollout/acceptance](iis-verification.md#rollout-order). Complete application-specific configuration, keys, startup/readiness, database and deployment/recovery acceptance. Passing prerequisite checks do not replace those observations.
+1. A GitHub configuration report does not authorize deployment. Do not fabricate a baseline or activate automation for a configured result. Routine deployment does not require running the checker.
+2. Obtain independent exact first-release authority and separately scoped host/application deployment approval, then follow [deployment](deployment.md#prerequisites-and-commands) and [IIS rollout/acceptance](iis-verification.md#rollout-order). Complete application-specific configuration, keys, startup/readiness, database and deployment/recovery acceptance. GitHub setup checks do not replace those observations.
 3. Only then consider independently authorized standing automation and route activation. Record actual unrun gates honestly; this setup guide establishes no real-host qualification.
 
 ## 12. Troubleshooting and safe remediation
 
 ### Troubleshoot incomplete inspection
 
-1. For inaccessible GitHub API or incomplete organization runner-group evidence, confirm repository identity and use authorized read-only visibility. Ordinary `GITHUB_TOKEN` may lack organization settings access; the diagnostic's explicit administrative mode uses a short-lived read-only installation token confined to hosted inspection. Never send that token to the privileged host or broaden permissions merely for PASS. Hidden bypass actors alone are an advisory visibility limit; other unavailable required evidence can block readiness.
-2. For missing/unreadable workflow source, verify exact path and observed integration commit. A confirmed missing file at readable identity-verified source differs from an inaccessible API. Inspect invalid/unsupported bounded YAML using trusted source. Review [intentional workflow differences](#review-intentional-workflow-differences) before changing triggers.
-3. For conflicting protected configuration, compare the consumer's trusted files/shared SHA/routing with independently protected host selectors. Infrastructure must reconcile the intended selection; the checker does not rewrite either side.
-4. For unexpected diagnostic errors, retain completed findings and safe JSON, retry the same read-only selection, and report reproducible unsupported observation/checker defects. Do not publish private exceptions/configuration or convert incomplete inspection into PASS.
+1. `GITHUB_TOKEN` cannot read several administrative settings. Use the row's exact UI navigation and expected setting, or supply the optional read-only App inspection token on hosted infrastructure. Hidden ruleset bypass may still require manual inspection; do not grant write access for diagnostics.
+2. A denied request, ambiguous 404, incomplete pagination or malformed response is CHECK MANUALLY. Confirm missing resources only from complete authoritative lists or direct UI inspection.
+3. For unexpected execution failures, retain the safe job log and retry the same selection after resolving the error. Do not publish credentials, unrelated settings or raw private responses. Workflow behavior and host configuration are reviewed separately.
 
 ### Troubleshoot host trust and enrollment
 
-1. If host inspection was not executed, obtain its separate scope and exact admitted workflow/manifest selection; SKIPPED is not a host observation.
+1. Obtain separate authorization for real host observations and use the independently authenticated enrollment Get/Plan procedures; the GitHub checker supplies no host observations.
 2. For toolkit authentication failure, do not import candidate code. For instability detected after authenticated import, stop further work. Independently verify protected policy/physical ancestry, exact installed bytes/inventory/source/distribution and compatible readers using [installation procedures](installation.md#trust-before-first-import). Freeze competing writers; replacement/activation requires separate infrastructure authority.
 3. For machine/enrollment identity mismatch, confirm actual SMBIOS UUID and intended site/pool/root/runtime SID against protected records. Follow [enrollment states](host-enrollment.md#inspection-planning-and-apply); never create a second installation namespace or overwrite records to match labels.
 4. For state drift or unresolved activity, preserve all material and use [authorized recovery/maintenance](deployment.md#operator-procedure). Uncertainty about helper exit, mixed files or external persistent state requires operator intervention.
 
-### Rerun matching inspections
+### Rerun after configuration changes
 
-Compare GitHub and host report subjects: repository, integration branch, application, target, environment, channel and any observed integration commit must agree. Rerun both stages for the same protected selection if they differ. Do not edit reports or suppress subject-binding findings; see [report aggregation](deployment-prerequisites.md#authentication-limits-and-reports).
+Rerun the optional GitHub check with the intended environment, runner group and labels after changing GitHub settings. Keep independently scoped host observations and application acceptance evidence under their existing procedures; there is no combined diagnostic report.
