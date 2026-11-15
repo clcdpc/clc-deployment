@@ -22,7 +22,7 @@ on:
       runner_group:
         description: Expected dedicated organization runner group
         type: string
-        required: true
+        default: ''
       runner_labels:
         description: Comma-separated expected labels on one group runner (no whitespace)
         type: string

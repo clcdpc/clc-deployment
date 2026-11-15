@@ -158,4 +158,29 @@ Describe 'Reusable workflow trust boundary and syntax' {
         $workflowText | Should -Not -Match 'pull_request_target|id-token: write|contents: write|actions: write|secrets: inherit|runs-on: self-hosted'
         $workflowText | Should -Not -Match '(?m)^\s+environment: \$\{\{ inputs.environment_name'
     }
+    It 'passes optional empty group and explicit labels unchanged through both hosted paths' {
+        InModuleScope Validation -Parameters @{Text=$workflowText} {
+            $workflow=ConvertFrom-ClcDeploymentPrerequisiteYaml $Text
+            $input=$workflow['on']['workflow_call']['inputs']['runner_group']
+            $input['type'] | Should -Be string;$input['default'] | Should -BeExactly ''
+            $input['required'] | Should -Not -Be 'true'
+            foreach ($job in @('validate','administrative')) {
+                $step=$workflow['jobs'][$job]['steps'] | Where-Object {$_['id'] -ceq 'validate'}
+                $step['env']['CLC_RUNNER_GROUP'] | Should -BeExactly '${{ inputs.runner_group }}'
+                $step['env']['CLC_RUNNER_LABELS'] | Should -BeExactly '${{ inputs.runner_labels }}'
+                $step['run'] | Should -Match '-RunnerGroup \$env:CLC_RUNNER_GROUP -RunnerLabels \$env:CLC_RUNNER_LABELS'
+            }
+        }
+    }
+    It 'runs reusable hosted smoke coverage for explicit and empty group configuration' {
+        InModuleScope Validation -Parameters @{Root=$root} {
+            $workflow=ConvertFrom-ClcDeploymentPrerequisiteYaml (Get-Content -LiteralPath (Join-Path $Root '.github/workflows/test-deployment-prerequisites.yml') -Raw)
+            foreach ($job in @('workflow-smoke','workflow-smoke-empty')) {
+                $workflow['jobs'][$job]['uses'] | Should -BeExactly './.github/workflows/validate-deployment.yml'
+            }
+            $workflow['jobs']['workflow-smoke']['with']['runner_group'] | Should -BeExactly 'validator-smoke-not-configured'
+            $workflow['jobs']['workflow-smoke-empty']['with']['runner_group'] | Should -BeExactly ''
+            $workflow['jobs']['workflow-smoke-empty']['with']['runner_labels'] | Should -BeExactly ''
+        }
+    }
 }

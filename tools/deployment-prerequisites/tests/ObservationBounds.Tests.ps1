@@ -16,8 +16,8 @@ Describe 'Bounded data-only observation and input contracts' {
             @{Key='Repository';Value='owner/repo/../../settings'},@{Key='EnvironmentName';Value=''},
             @{Key='EnvironmentName';Value="app`ninjected"},@{Key='IntegrationBranch';Value='master?evil'},
             @{Key='IntegrationBranch';Value='../master'},@{Key='ReleaseWorkflow';Value='https://attacker.invalid/run.ps1'},
-            @{Key='DeploymentWorkflow';Value='.github/workflows/../run.yml'},@{Key='RunnerGroup';Value=''},
-            @{Key='RunnerLabels';Value='self-hosted, Windows'},@{Key='ActivationVariable';Value='GITHUB_TOKEN'},
+            @{Key='DeploymentWorkflow';Value='.github/workflows/../run.yml'},@{Key='RunnerGroup';Value='../unsafe'},
+            @{Key='RunnerGroup';Value=42},@{Key='ActivationVariable';Value='GITHUB_TOKEN'},
             @{Key='DeploymentChannel';Value='production'},@{Key='TargetId';Value='../../other'},
             @{Key='ApplicationId';Value=''},@{Key='SharedRevision';Value='master'},
             @{Key='DiagnosticWorkflow';Value='.github/workflows/../evil.yml'}

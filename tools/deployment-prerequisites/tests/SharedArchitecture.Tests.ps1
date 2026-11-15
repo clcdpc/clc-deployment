@@ -179,7 +179,8 @@ Describe 'Commissioning GitHub observations' {
             $fixture['/repos/example/app/environments/app-dev'].data=42
             $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
             $r.ready | Should -BeFalse
-            ($r.checks | Where-Object id -EQ github.inspection).status | Should -Be UNVERIFIED
+            ($r.checks | Where-Object id -EQ github.environment.restrictions).status | Should -Be UNVERIFIED
+            @($r.checks | Where-Object id -EQ github.inspection).Count | Should -Be 0
         }
     }
 }

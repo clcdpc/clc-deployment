@@ -396,8 +396,8 @@ Describe 'Effective integration branch protection and bypass' -Tag BranchProtect
             ($r.checks | Where-Object id -EQ github.branch.bypass-visibility).status | Should -Be UNVERIFIED
             $r.github_status | Should -Be PASS
         }
-        It 'reports bypass visibility SKIPPED only when source-dependent ruleset inspections did not run' -Tag BypassVisibility {
-            $fixture['/repos/example/app/branches/master']=New-ApiFailure 404
+        It 'reports bypass visibility SKIPPED when repository identity prevents ruleset inspection' -Tag BypassVisibility {
+            $fixture['/repos/example/app']=New-ApiFailure 404
             $r=Invoke-ClcDeploymentPrerequisiteGitHubInspection $config $env:CLC_PREREQUISITES_YAML
             foreach ($area in @('branch','tags')) {
                 $row=$r.checks | Where-Object id -EQ "github.$area.bypass-visibility"
