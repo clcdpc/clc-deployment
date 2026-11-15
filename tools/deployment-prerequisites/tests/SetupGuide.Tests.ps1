@@ -9,7 +9,7 @@ Describe 'Operator setup documentation and report destinations' {
         $guide=Get-Content -LiteralPath $guidePath -Raw
         function Get-DocumentationAnchors([string] $Text) {
             # These source-owned headings use ASCII words; mirror GitHub punctuation removal.
-            @([regex]::Matches($Text,'(?m)^#{1,6} (.+)\r?$') | ForEach-Object {
+            @([regex]::Matches($Text,'(?m)^#{1,6} ([^\r\n]+)\r?$') | ForEach-Object {
                 ($_.Groups[1].Value.Trim().ToLowerInvariant() -replace '[^\w\- ]','') -replace ' ','-'
             })
         }
@@ -20,10 +20,13 @@ Describe 'Operator setup documentation and report destinations' {
             }
         }
     }
-    It 'is the recommended README starting point with twelve ordered operator setup areas' {
+    It 'is the recommended README starting point with twelve ordered operator setup areas under <Ending> endings' -ForEach @(
+        @{Ending='LF';Separator="`n"}, @{Ending='CRLF';Separator="`r`n"}
+    ) {
         $guide | Should -Match '^# Deployment Setup Guide'
         Get-Content -LiteralPath (Join-Path $root 'README.md') -Raw | Should -Match '\[Deployment Setup Guide\]\(docs/setup-guide.md\)'
-        $headings=@([regex]::Matches($guide,'(?m)^## (\d+)\. (.+)\r?$'))
+        $text=$guide -replace '\r?\n',$Separator
+        $headings=@([regex]::Matches($text,'(?m)^## (\d+)\. ([^\r\n]+)\r?$'))
         $headings.Count | Should -Be 12
         ($headings | ForEach-Object {$_.Groups[1].Value}) -join ',' | Should -BeExactly '1,2,3,4,5,6,7,8,9,10,11,12'
         foreach ($topic in @('Before you begin','Configure the repository','Protect release tags','Configure release and deployment workflows',
