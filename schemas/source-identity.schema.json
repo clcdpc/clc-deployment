@@ -57,8 +57,7 @@
       "enum": [
         "DEV",
         "Production",
-        "ArtifactOnly",
-        "Test"
+        "ArtifactOnly"
       ]
     },
     "orderingKind": {

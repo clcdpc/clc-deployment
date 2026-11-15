@@ -2,7 +2,7 @@ BeforeAll {
     . "$PSScriptRoot/../tools/release/Release.Common.ps1"
     function New-ApplicationReleaseFixture {
         $script:sourceCommit='a'*40; $script:integrationCommit='b'*40
-        $script:configuration=@{contractVersion=1L;applicationId='ssrs-web';repository='clcdpc/ssrs-web';integrationBranch='master';sourcePolicy=@{allowUnmergedDevTags=$true;allowSnapshots=$true;allowTestTags=$true};producer=@{workflowPath='.github/workflows/build.yml';job='build'};trustedFiles=@('.clc/release.json','.github/workflows/build.yml');requiredToolkitContractVersion=2L}
+        $script:configuration=@{contractVersion=1L;applicationId='ssrs-web';repository='clcdpc/ssrs-web';integrationBranch='master';sourcePolicy=@{allowUnmergedDevTags=$true;allowSnapshots=$true};producer=@{workflowPath='.github/workflows/build.yml';job='build'};trustedFiles=@('.clc/release.json','.github/workflows/build.yml');requiredToolkitContractVersion=2L}
         $script:responses=@{}
         $base='/repos/clcdpc/ssrs-web'
         $script:responses[$base+'/branches/master']=@{protected=$true;commit=@{sha=$script:integrationCommit}}
@@ -23,8 +23,16 @@ BeforeAll {
 Describe 'Shared application source eligibility' {
     BeforeEach { New-ApplicationReleaseFixture }
     It 'classifies supported semantic releases independently from deployment authority' -ForEach @(
-        @{tag='v1.2.3-dev.1';channel='DEV'},@{tag='v1.2.3-test.1';channel='Test'},@{tag='v1.2.3-beta.1';channel='ArtifactOnly'},@{tag='v1.2.3-rc.1';channel='ArtifactOnly'},@{tag='v1.2.3';channel='Production'}
+        @{tag='v1.2.3-dev.1';channel='DEV'},@{tag='v1.2.3-beta.1';channel='ArtifactOnly'},@{tag='v1.2.3-rc.1';channel='ArtifactOnly'},@{tag='v1.2.3';channel='Production'}
     ) { (Get-ClcApplicationTag $tag).channel | Should -BeExactly $channel }
+    It 'rejects unsupported Test tags before source lookup or fallback with history <History>' -ForEach @(
+        @{History='ahead'},@{History='diverged'},@{History='identical'}
+    ) {
+        $script:responses['/repos/clcdpc/ssrs-web/compare/'+$script:sourceCommit+'...'+$script:integrationCommit].status=$History
+        { Get-ClcApplicationTag 'v1.2.3-test.1' } | Should -Throw -ErrorId 'Clc.InvalidContract*'
+        { Get-ClcVerifiedSource $script:configuration 'v1.2.3-test.1' $script:sourceCommit 123 $script:api } | Should -Throw -ErrorId 'Clc.InvalidContract*'
+        @($script:requests | Where-Object {$_ -match '/git/ref/tags/|/compare/|/contents/'}).Count | Should -Be 0
+    }
     It 'accepts exact SSRS unmerged DEV tag source without PR, review or feature-branch evidence' {
         Set-UnmergedDevTagFixture
         $result=Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api
@@ -74,7 +82,7 @@ Describe 'Shared application source eligibility' {
         (Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api).identity.sourceClass | Should -BeExactly IntegrationTag
     }
     It 'rejects unmerged <Tag> outside the DEV allowance' -ForEach @(
-        @{Tag='v1.2.3'},@{Tag='v1.2.3-beta.1'},@{Tag='v1.2.3-rc.1'},@{Tag='v1.2.3-test.1'}
+        @{Tag='v1.2.3'},@{Tag='v1.2.3-beta.1'},@{Tag='v1.2.3-rc.1'}
     ) {
         Set-UnmergedDevTagFixture
         $script:responses['/repos/clcdpc/ssrs-web/git/ref/tags/'+$Tag]=@{object=@{type='commit';sha=$script:sourceCommit}}

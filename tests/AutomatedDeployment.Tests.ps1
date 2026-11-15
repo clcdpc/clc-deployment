@@ -42,7 +42,7 @@ Describe 'Central tag convention' {
         @{Tag='v1.2.3-beta.1';Channel='ArtifactOnly'},@{Tag='v1.2.3-rc.1';Channel='ArtifactOnly'}
     ) { (Invoke-T2Private Get-ClcDeploymentTag @($Tag)).channel | Should -BeExactly $Channel }
     It 'rejects noncanonical or unbounded tag <Tag>' -ForEach @(
-        @{Tag='v01.2.3'},@{Tag='1.2.3'},@{Tag='v1.2.3-dev.0'},@{Tag='v1.2.3-DEV.1'},@{Tag='v1.2.3+build'},@{Tag='v10000.0.0'},@{Tag='v1.0.0-dev.9999'},@{Tag='v1.0.0/../../'}
+        @{Tag='v1.2.3-test.1'},@{Tag='v0.0.0-test.9998'},@{Tag='v1.2.3-test.01'},@{Tag='v01.2.3'},@{Tag='1.2.3'},@{Tag='v1.2.3-dev.0'},@{Tag='v1.2.3-DEV.1'},@{Tag='v1.2.3+build'},@{Tag='v10000.0.0'},@{Tag='v1.0.0-dev.9999'},@{Tag='v1.0.0/../../'}
     ) { Test-TestRejection { Invoke-T2Private Get-ClcDeploymentTag @($Tag) } 'Clc.InvalidContract*' }
     It 'orders dev iterations, patch, minor and major numerically' {
         $tags=@('v1.0.0-dev.9','v1.0.0-dev.10','v1.0.0','v1.0.1-dev.1','v1.1.0-dev.1','v2.0.0-dev.1')

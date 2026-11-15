@@ -19,8 +19,8 @@ function Assert-ClcHookPolicy {
     foreach ($key in @('channels','sourceClasses','stages')) {
         if ($Value[$key] -isnot [object[]] -or $Value[$key].Count -gt 4 -or @($Value[$key] | Select-Object -Unique).Count -ne $Value[$key].Count) { Stop-ClcError Clc.InvalidContract }
     }
-    foreach ($channel in $Value.channels) { Assert-ClcEnum $channel @('DEV','Production','Test') }
-    Assert-ClcEnum $Value.exactApprovalChannel @('DEV','Production','Test')
+    foreach ($channel in $Value.channels) { Assert-ClcEnum $channel @('DEV','Production') }
+    Assert-ClcEnum $Value.exactApprovalChannel @('DEV','Production')
     if ($Value.channels -cnotcontains $Value.exactApprovalChannel) { Stop-ClcError Clc.InvalidContract }
     foreach ($source in $Value.sourceClasses) { Assert-ClcEnum $source @('ExactApproval','IntegrationTag','UnmergedDevTag','ProtectedBranch') }
     foreach ($stage in $Value.stages) { Assert-ClcEnum $stage @('Preflight','BeforeStop','AfterStop','AfterStart') }

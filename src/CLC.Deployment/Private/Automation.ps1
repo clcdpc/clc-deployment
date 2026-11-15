@@ -2,10 +2,10 @@
 # Caller identity evidence never grants authority independently of that policy.
 function Get-ClcDeploymentTag {
     param($Tag)
-    Assert-ClcText $Tag 64 '^v(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})(-(dev|beta|rc|test)\.([1-9][0-9]{0,3}))?$'
-    $m=[regex]::Match($Tag,'^v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-(dev|beta|rc|test)\.([0-9]+))?$')
+    Assert-ClcText $Tag 64 '^v(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})(-(dev|beta|rc)\.([1-9][0-9]{0,3}))?$'
+    $m=[regex]::Match($Tag,'^v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-(dev|beta|rc)\.([0-9]+))?$')
     $kind=$m.Groups[4].Value
-    $channel=if ($kind -ceq 'dev') {'DEV'} elseif ($kind -ceq 'test') {'Test'} elseif ($kind -ceq '') {'Production'} else {'ArtifactOnly'}
+    $channel=if ($kind -ceq 'dev') {'DEV'} elseif ($kind -ceq '') {'Production'} else {'ArtifactOnly'}
     $ordinal=if ($kind -ceq '') {9999L} else {[long]$m.Groups[5].Value}
     if ($ordinal -gt 9998 -and $kind) { Stop-ClcError Clc.InvalidContract }
     $sequence=(([long]$m.Groups[1].Value*10000L+[long]$m.Groups[2].Value)*10000L+[long]$m.Groups[3].Value)*10000L+$ordinal
@@ -23,7 +23,7 @@ function Assert-ClcSourceIdentity {
     Assert-ClcText $Value.integrationBranch 100 '^[A-Za-z0-9][A-Za-z0-9_/-]*$'
     Assert-ClcId $Value.releaseId
     Assert-ClcInteger $Value.sequence 1
-    Assert-ClcEnum $Value.channel @('DEV','Production','ArtifactOnly','Test')
+    Assert-ClcEnum $Value.channel @('DEV','Production','ArtifactOnly')
     Assert-ClcEnum $Value.orderingKind @('SemVer','Snapshot')
     if ($Value.kind -ceq 'snapshot') {
         Assert-ClcText $Value.reference 128 '^refs/heads/[A-Za-z0-9][A-Za-z0-9_/-]*$'
@@ -41,8 +41,7 @@ function Assert-ClcStandingSource {
     Assert-ClcSourceIdentity $Source
     if ($Standing.schemaVersion -ne 2 -or $Source.repository -cne $Standing.sourceRepository -or $Source.channel -cne $Standing.channel -or $Source.integrationBranch -cne $Standing.sourcePolicy.integrationBranch -or
         ($Source.sourceClass -ceq 'UnmergedDevTag' -and -not $Standing.sourcePolicy.allowUnmergedDevTags) -or
-        ($Source.kind -ceq 'snapshot' -and (-not $Standing.sourcePolicy.allowSnapshots -or $Source.reference -cne ('refs/heads/'+$Standing.sourcePolicy.integrationBranch))) -or
-        ($Source.channel -ceq 'Test' -and -not $Standing.sourcePolicy.allowTestTags)) { Stop-ClcError Clc.StandingAuthorizationRejected }
+        ($Source.kind -ceq 'snapshot' -and (-not $Standing.sourcePolicy.allowSnapshots -or $Source.reference -cne ('refs/heads/'+$Standing.sourcePolicy.integrationBranch)))) { Stop-ClcError Clc.StandingAuthorizationRejected }
     return @{channel=$Source.channel;releaseSequence=$Source.sequence;releaseId=$Source.releaseId}
 }
 
@@ -59,7 +58,7 @@ function Assert-ClcStandingAuthorization {
     foreach ($key in @('standingAuthorizationId','targetId','applicationId','lineageId')) { Assert-ClcId $Value[$key] }
     Assert-ClcBoolean $Value.enabled
     Assert-ClcText $Value.environmentName
-    Assert-ClcEnum $Value.channel $(if ($Value.schemaVersion -eq 2) {@('DEV','Production','Test')} else {@('DEV','Production')})
+    Assert-ClcEnum $Value.channel @('DEV','Production')
     Assert-ClcRepository $Value.sourceRepository
     Assert-ClcWorkflow $Value.buildWorkflowPath
     Assert-ClcCode $Value.buildJob
@@ -68,9 +67,9 @@ function Assert-ClcStandingAuthorization {
     Assert-ClcCode $Value.authorization.reference
     Assert-ClcTimestamp $Value.authorization.approvedUtc
     if ($Value.schemaVersion -eq 2) {
-        Assert-ClcObject $Value.sourcePolicy @('integrationBranch','allowUnmergedDevTags','allowSnapshots','allowTestTags')
+        Assert-ClcObject $Value.sourcePolicy @('integrationBranch','allowUnmergedDevTags','allowSnapshots')
         Assert-ClcText $Value.sourcePolicy.integrationBranch 100 '^[A-Za-z0-9][A-Za-z0-9_/-]*$'
-        foreach ($key in @('allowUnmergedDevTags','allowSnapshots','allowTestTags')) { Assert-ClcBoolean $Value.sourcePolicy[$key] }
+        foreach ($key in @('allowUnmergedDevTags','allowSnapshots')) { Assert-ClcBoolean $Value.sourcePolicy[$key] }
     }
 }
 
