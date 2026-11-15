@@ -64,7 +64,7 @@ jobs:
         with:
           repository: clcdpc/clc-deployment
           # Fixed source, independent of caller inputs and workflow context.
-          ref: d317c3c8a598021166b824011c3fed441c010c18
+          ref: 1be17ebf315bf7eb4e4008d850f4bffa01c30020
           path: github-setup-check
           persist-credentials: false
       - name: Inspect GitHub settings
