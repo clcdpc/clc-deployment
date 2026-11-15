@@ -177,36 +177,197 @@ function Merge-ClcDeploymentPrerequisiteReports {
     New-ClcDeploymentPrerequisiteReport $config $rows.ToArray() $subject.observed_commit
 }
 
+# Presentation only: label, confirmed-failure guidance, missing-evidence guidance.
+# Empty guidance deliberately falls back to the original evidence in technical details.
+function Get-ClcDeploymentPrerequisitePresentation {
+    @{
+        'github.repository.identity'=@('Repository identity','Verify the configured repository identity and API access.','Verify repository identity with authorized API access.')
+        'github.branch.protection'=@('Branch protection','Protect the configured integration branch.','Verify integration-branch identity and protection with read-only API access.')
+        'github.branch.force-push'=@('Branch force pushes','Enforce integration-branch force-push restrictions.','Verify effective branch force-push restrictions.')
+        'github.branch.deletion'=@('Branch deletion','Enforce integration-branch deletion restrictions.','Verify effective branch deletion restrictions.')
+        'github.branch.required-checks'=@('Branch status checks','Require CI status checks on the integration branch.','Verify effective required branch status checks.')
+        'github.branch.bypass'=@('Branch bypass restrictions','Restrict broad bypass of required branch controls.','Verify observable branch bypass restrictions and independent enforcement.')
+        'github.branch.bypass-visibility'=@('Branch bypass visibility','','Review available bypass evidence; retain independent infrastructure control.')
+        'github.branch.reviews'=@('Optional branch reviews','','')
+        'github.tags.creation'=@('Release tag creation','Enforce release-tag creation restrictions for the selected channel.','Verify effective release-tag creation restrictions for the selected channel.')
+        'github.tags.update'=@('Release tag updates','Enforce release-tag update restrictions for the selected channel.','Verify effective release-tag update restrictions for the selected channel.')
+        'github.tags.deletion'=@('Release tag deletion','Enforce release-tag deletion restrictions for the selected channel.','Verify effective release-tag deletion restrictions for the selected channel.')
+        'github.tags.bypass'=@('Tag bypass restrictions','Restrict broad bypass of release-tag controls.','Verify observable release-tag bypass restrictions and independent enforcement.')
+        'github.tags.bypass-visibility'=@('Tag bypass visibility','','Review available release bypass evidence; retain independent infrastructure control.')
+        'github.tags.authority'=@('Release authority','','Retain independent control of release producers and authorized bypass identities.')
+        'github.workflow.producer'=@('Release workflow','Correct the expected release workflow source or structure.','Inspect the expected release workflow at the observed integration commit.')
+        'github.workflow.caller'=@('Deployment workflow','Correct the expected deployment workflow source or structure.','Inspect the expected deployment workflow at the observed integration commit.')
+        'github.workflow.release-trigger'=@('Release trigger','Configure the required version-tag push trigger.','Verify the release workflow version-tag trigger.')
+        'github.workflow.completion-trigger'=@('Producer handoff','Correct the release-to-deployment completion trigger.','Inspect the protected release-to-deployment handoff.')
+        'github.workflow.manual-dispatch'=@('Manual dispatch authority','','Review independent manual-operation authorization in the pinned shared implementation.')
+        'github.workflow.runtime-semantics'=@('Workflow runtime behavior','','Review the pinned shared revision; perform separately authorized consumer acceptance.')
+        'github.workflow.shared-identity'=@('Shared workflow identity','Reconcile exact caller, protected configuration and immutable shared revision.','Verify the caller and protected configuration select the reviewed shared identity.')
+        'github.workflow.shared-definition'=@('Shared workflow definition','','Inspect the exact pinned shared workflow definition and bounded YAML syntax.')
+        'github.workflow.additional-jobs'=@('Additional privileged jobs','Restrict privileged runner use to independently admitted workflow definitions.','Inspect the caller for additional jobs selecting the privileged runner group.')
+        'github.workflow.manual-selection'=@('Manual operation selection','Preserve the explicit shared manual-operation path and independent actor verification.','Verify the caller preserves independent manual-operation selection.')
+        'github.environment.exists'=@('Deployment environment','Create the expected deployment environment under infrastructure authority.','Verify environment visibility with authorized read-only API access.')
+        'github.environment.restrictions'=@('Environment branch rules','Restrict this environment to the integration branch.','Verify the environment admits only the configured integration branch.')
+        'github.environment.protection'=@('Optional environment protection','','Review optional environment protection compatibility with infrastructure.')
+        'github.runner.visibility'=@('Repository visibility','','Verify repository visibility with authorized API access.')
+        'github.runner.group'=@('Runner group','Configure and independently provision the expected dedicated runner group.','Verify runner-group identity and settings with authorized read-only API access.')
+        'github.runner.repository-access'=@('Runner repository access','Restrict the group to the caller; match public access to repository visibility.','Verify selected-repository admission and repository visibility.')
+        'github.runner.workflow-access'=@('Runner workflow access','Reconcile exact workflow admission and cross-organization group ownership.','Verify the job-defining workflow identity, allowlist and group ownership.')
+        'github.runner.labels'=@('Runner labels','Configure valid expected labels and an online group runner matching them.','Verify expected labels and online runner availability with read-only API access.')
+        'github.runner.enterprise'=@('Enterprise runner enforcement','','Retain enterprise control of the configured admission restrictions.')
+        'github.runner.public-risk'=@('Public runner risk','','Have infrastructure review public runner risk and exact repository/workflow admission.')
+        'github.routing.target'=@('Deployment routing','Reconcile protected target, environment, runner and workflow routing.','Inspect protected target routing and the job-defining workflow.')
+        'github.routing.activation'=@('Target activation','','Review pending activation with infrastructure under independent authority.')
+        'github.routing.channel'=@('Channel isolation','Keep DEV and Production target, environment and runner scopes separate.','Inspect protected channel authority and independent channel routing.')
+        'github.inspection'=@('GitHub inspection','','Retry read-only inspection; investigate incomplete source or API evidence.')
+        'github.stage'=@('GitHub inspection stage','','Rerun GitHub inspection for this subject; retain available findings.')
+        'host.toolkit.authentication'=@('Toolkit authentication','Have infrastructure independently authenticate the exact compatible toolkit.','Verify the independently installed toolkit and protected identity evidence.')
+        'host.toolkit.stability'=@('Toolkit stability','','Verify the protected toolkit remained unchanged during inspection.')
+        'host.identity.permissions'=@('Deployment identity','Use the policy-admitted deployment identity with its enabled elevated token.','Verify the admitted deployment identity and enabled elevated token.')
+        'host.machine.binding'=@('Machine binding','Have infrastructure reconcile the actual machine and protected enrollment binding.','Verify actual machine identity against protected enrollment.')
+        'host.target.enrollment'=@('Host enrollment','Have infrastructure independently enroll or reconcile this exact target.','Verify protected target enrollment and application/environment bindings.')
+        'host.iis.presence'=@('IIS site and pool','Have infrastructure reconcile the exact enrolled dedicated IIS site and pool.','Verify the enrolled IIS site and pool through authorized read-only inspection.')
+        'host.iis.configuration'=@('IIS configuration','Have infrastructure reconcile the dedicated IIS application and pool settings.','Verify dedicated IIS application, path, runtime identity and pool settings.')
+        'host.filesystem.permissions'=@('Filesystem isolation','','Verify physical paths, protected ACLs and effective deployment/runtime access.')
+        'host.identity.runtime'=@('Runtime identity','','Verify distinct nonadministrator runtime identity and effective write isolation.')
+        'host.runtime.compatibility'=@('Hosting components','Have infrastructure reconcile supported Windows/IIS/PowerShell/.NET/ANCM components.','Verify supported hosting components through authorized read-only inspection.')
+        'host.iis.environment'=@('Hosting environment','Have infrastructure reconcile HTTPS binding, pool environment and hosting settings.','Verify enrolled HTTPS binding, pool environment and host preflight evidence.')
+        'host.standing.policy'=@('Optional standing policy','Reconcile the selected optional standing policy under independent authority.','Verify the selected optional standing policy; initial deployment does not require it.')
+        'host.standing.scope'=@('Optional standing scope','Reconcile optional standing scope independently; keep DEV and Production separate.','Verify the optional standing policy channel, repository and producer scope.')
+        'host.standing.lineage'=@('Optional standing lineage','Independently reconcile optional standing lineage with the current baseline.','Verify optional standing lineage against the current baseline.')
+        'host.state.pending-admission'=@('Pending admission','','Preserve pending evidence; obtain independent infrastructure reconciliation.')
+        'host.state.lock'=@('Deployment lock','Preserve lock evidence; have infrastructure reconcile the canonical lock and paths.','Fence concurrent deployment and inspect existing canonical lock/path permissions.')
+        'host.state.consistency'=@('Deployment state','','Preserve state; obtain separately authorized recovery or infrastructure reconciliation.')
+        'host.state.current-release'=@('Current release approval','Preserve and independently reconcile current approval, manifest and release bindings.','Verify current approval, manifest and any required active standing authority.')
+        'host.state.inventory'=@('Installed release files','Preserve drift; follow separately authorized recovery without diagnostic cleanup.','Verify installed bytes against the current approved inventory; preserve unexpected files.')
+        'host.state.stability'=@('Host state stability','','Freeze competing trusted writers, investigate drift and rerun inspection.')
+        'host.application.acceptance'=@('Application acceptance','','Perform separately authorized application deployment/recovery acceptance.')
+        'host.stage'=@('Host inspection stage','','Authorize and run the host inspection separately; retain available findings.')
+        'host.report.subject'=@('Report subject binding','Rerun both inspections for the same protected subject and integration commit.','')
+    }
+}
+
+function ConvertTo-ClcDeploymentPrerequisiteText {
+    param([AllowNull()][AllowEmptyString()][string] $Value)
+    # One pass over raw values only. Entities neutralize HTML, table delimiters,
+    # Markdown syntax, autolinks and backslashes without discarding evidence.
+    $normalized=[regex]::Replace($Value,'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+',' ')
+    [regex]::Replace($normalized,'[!-/:-@\[-`{-~]',[Text.RegularExpressions.MatchEvaluator]{
+        param($match)
+        '&#'+([int][char]$match.Value).ToString([Globalization.CultureInfo]::InvariantCulture)+';'
+    })
+}
+
+function Get-ClcDeploymentPrerequisiteNextStep {
+    param($Row, [hashtable] $Presentation)
+    if ($Row.status -ceq 'SKIPPED') {
+        if ($Presentation.ContainsKey($Row.reason)) { return "Resolve prerequisite: $($Presentation[$Row.reason][0])." }
+        switch -CaseSensitive ($Row.reason) {
+            'workflow-source' { return 'Establish release and deployment workflow source first.' }
+            'host.filesystem.permissions/runtime.compatibility' { return 'Establish filesystem isolation and hosting components first.' }
+            'inspection-incomplete' { return 'Complete the corresponding read-only protection inspection first.' }
+            'stage-incomplete' {
+                if ($Row.id -ceq 'host.stage') { return 'Authorize and run the host inspection separately.' }
+                if ($Row.id -ceq 'github.stage') { return 'Run GitHub inspection for the selected subject.' }
+            }
+        }
+        return 'See technical details.'
+    }
+    if ($Presentation.ContainsKey($Row.id)) {
+        $index=if ($Row.status -ceq 'FAIL') {1} else {2}
+        $guidance=$Presentation[$Row.id][$index]
+        if ($guidance) { return $guidance }
+    }
+    'See technical details.'
+}
+
 function Format-ClcDeploymentPrerequisiteSummary {
     param($Report)
     $s=$Report.subject
+    $presentation=Get-ClcDeploymentPrerequisitePresentation
+    # Sort copies with ordinal keys; never reorder report.checks or recalculate readiness.
+    $technical=[Collections.Generic.SortedDictionary[string,object]]::new([StringComparer]::Ordinal)
+    $outstanding=[Collections.Generic.SortedDictionary[string,object]]::new([StringComparer]::Ordinal)
+    $successful=[Collections.Generic.SortedDictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($row in $Report.checks) {
+        $label=if ($presentation.ContainsKey($row.id)) {$presentation[$row.id][0]} else {$row.id}
+        $display=[pscustomobject]@{row=$row;label=$label;impact=$(if ($row.required) {'Required'} else {'Advisory'})}
+        $technical.Add($row.id,$display)
+        if ($row.status -cin @('PASS','NOT_APPLICABLE')) { $successful.Add($row.id,$display);continue }
+        $statusOrder=switch -CaseSensitive ($row.status) {FAIL {0} UNVERIFIED {1} SKIPPED {2}}
+        $impactOrder=if ($row.required) {0} else {1}
+        $categoryOrder=if ($row.category -ceq 'github') {0} else {1}
+        $outstanding.Add("${statusOrder}:${impactOrder}:${categoryOrder}:$($row.id)",$display)
+    }
     $lines=[Collections.Generic.List[string]]::new()
     $lines.Add("# $(if ($Report.ready) {'READY'} else {'NOT READY'})");$lines.Add('')
-    $lines.Add("Repository: **$($s.repository)** · Application: **$($s.application)** · Environment: **$($s.environment)** · Target: **$($s.target)** · Channel: **$($s.channel)**")
-    $lines.Add('');$lines.Add("GitHub prerequisites: **$($Report.github_status)** · Host prerequisites: **$($Report.host_status)**")
+    foreach ($field in @('repository','application','target','environment','channel')) {
+        $lines.Add("$($field.Substring(0,1).ToUpperInvariant()+$field.Substring(1)): $(ConvertTo-ClcDeploymentPrerequisiteText $s.$field)  ")
+    }
+    $lines.Add('');$lines.Add("GitHub: **$(ConvertTo-ClcDeploymentPrerequisiteText $Report.github_status)** | Host: **$(ConvertTo-ClcDeploymentPrerequisiteText $Report.host_status)**")
     foreach ($category in @('github','host')) {
         if (-not @($Report.checks | Where-Object category -CEQ $category).Count) {
             $lines.Add('');$lines.Add("$category inspection: **SKIPPED** — this report contains no observations from that inspector.")
         }
     }
-    $lines.Add('');$lines.Add("Passed: $($Report.counts.passed) · Failed: $($Report.counts.failed) · Unverified: $($Report.counts.unverified) · Skipped: $($Report.counts.skipped) · Not applicable: $($Report.counts.not_applicable)")
-    foreach ($group in @('Blocking problems','Nonblocking warnings','Successful and inapplicable checks')) {
-        $rows=@($Report.checks | Where-Object {
-            if ($group -ceq 'Blocking problems') {$_.required -and $_.status -cin @('FAIL','UNVERIFIED','SKIPPED')}
-            elseif ($group -ceq 'Nonblocking warnings') {-not $_.required -and $_.status -cnotin @('PASS','NOT_APPLICABLE')}
-            else {$_.status -cin @('PASS','NOT_APPLICABLE')}
-        })
-        if (-not $rows.Count) { continue }
-        $lines.Add('');$lines.Add("## $group");$lines.Add('')
-        if ($group -ceq 'Successful and inapplicable checks') { $lines.Add('<details><summary>Show checks</summary>');$lines.Add('') }
-        foreach ($row in $rows) {
-            $description=($row.name+': '+$row.detail+' '+$row.action).Trim().Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('|','&#124;').Replace("`r",' ').Replace("`n",' ')
-            $lines.Add("- **$($row.status)** — $description")
-        }
-        if ($group -ceq 'Successful and inapplicable checks') { $lines.Add('');$lines.Add('</details>') }
+    $countText=foreach ($pair in @(@('Failed','failed'),@('Unverified','unverified'),@('Skipped','skipped'),@('Passed','passed'),@('N/A','not_applicable'))) {
+        $key=$pair[1]
+        "$($pair[0]): $(ConvertTo-ClcDeploymentPrerequisiteText $Report.counts.$key)"
     }
-    $lines.Add('');$lines.Add('Read-only commissioning inspection. Findings do not authorize deployment. Proceed through separately authorized initial deployment and application deployment/recovery acceptance. Rerun after relevant infrastructure changes or for troubleshooting; routine deployment does not require this report.')
-    $lines -join "`n"
+    $lines.Add('');$lines.Add($countText -join ' | ')
+    $lines.Add('');$lines.Add('## Outstanding prerequisites');$lines.Add('')
+    if ($outstanding.Count) {
+        $lines.Add('| Status | Impact | Prerequisite | Next step |')
+        $lines.Add('|--------|--------|--------------|-----------|')
+        foreach ($display in $outstanding.Values) {
+            $row=$display.row
+            $next=Get-ClcDeploymentPrerequisiteNextStep $row $presentation
+            $lines.Add("| **$(ConvertTo-ClcDeploymentPrerequisiteText $row.status)** | $($display.impact) | $(ConvertTo-ClcDeploymentPrerequisiteText $display.label) | $(ConvertTo-ClcDeploymentPrerequisiteText $next) |")
+        }
+        $lines.Add('');$lines.Add('Required findings affect readiness. Advisory findings do not block readiness.')
+    } else { $lines.Add('No outstanding prerequisites.') }
+    if ($successful.Count) {
+        $lines.Add('');$lines.Add("<details><summary>Passed and not applicable checks ($($successful.Count))</summary>");$lines.Add('')
+        $lines.Add('| Status | Impact | Prerequisite |');$lines.Add('|---|---|---|')
+        foreach ($display in $successful.Values) {
+            $lines.Add("| $(ConvertTo-ClcDeploymentPrerequisiteText $display.row.status) | $($display.impact) | $(ConvertTo-ClcDeploymentPrerequisiteText $display.label) |")
+        }
+        $lines.Add('');$lines.Add('</details>')
+    }
+    $technicalStart=$lines.Count
+    $lines.Add('');$lines.Add('<details><summary>Technical details</summary>');$lines.Add('')
+    $lines.Add("Integration branch: $(ConvertTo-ClcDeploymentPrerequisiteText $s.integration_branch)")
+    $lines.Add('');$lines.Add("Observed commit: $(ConvertTo-ClcDeploymentPrerequisiteText $s.observed_commit)")
+    foreach ($display in $technical.Values) {
+        $row=$display.row
+        $lines.Add('');$lines.Add("### $(ConvertTo-ClcDeploymentPrerequisiteText $row.id)");$lines.Add('')
+        foreach ($field in @('category','status')) { $lines.Add("- ${field}: $(ConvertTo-ClcDeploymentPrerequisiteText $row.$field)") }
+        $lines.Add("- Impact: $($display.impact)")
+        foreach ($field in @('name','detail','action')) { $lines.Add("- ${field}: $(ConvertTo-ClcDeploymentPrerequisiteText $row.$field)") }
+        if ($row.reason) { $lines.Add("- Dependency reason: $(ConvertTo-ClcDeploymentPrerequisiteText $row.reason)") }
+    }
+    $lines.Add('');$lines.Add('</details>')
+    $footer='Read-only commissioning inspection. Findings do not authorize deployment. Initial deployment and application deployment/recovery acceptance require separate authorization. Rerun after relevant infrastructure changes or for troubleshooting; routine deployment does not require this report.'
+    $lines.Add('');$lines.Add($footer)
+    $summary=$lines -join "`n"
+    # A valid near-limit JSON report can expand beyond GitHub's 1 MiB per-step
+    # limit when escaped. Keep every checklist row and an explicit evidence index;
+    # never silently truncate diagnostics or change JSON/outputs/readiness.
+    # Reserve one byte for Publish's appended LF.
+    if ([Text.Encoding]::UTF8.GetByteCount($summary) -gt 1048575) {
+        $lines.RemoveRange($technicalStart,$lines.Count-$technicalStart)
+        $lines.Add('');$lines.Add('<details><summary>Technical details</summary>');$lines.Add('')
+        $lines.Add('Complete escaped evidence exceeds the step-summary size limit. See the unchanged JSON report for every original name, detail, action and dependency reason; no diagnostic values were truncated in JSON.')
+        $lines.Add('');$lines.Add("Integration branch: $(ConvertTo-ClcDeploymentPrerequisiteText $s.integration_branch)")
+        $lines.Add('');$lines.Add("Observed commit: $(ConvertTo-ClcDeploymentPrerequisiteText $s.observed_commit)")
+        $lines.Add('');$lines.Add('| Check ID | Category | Status | Impact |');$lines.Add('|---|---|---|---|')
+        foreach ($display in $technical.Values) {
+            $row=$display.row
+            $lines.Add("| $(ConvertTo-ClcDeploymentPrerequisiteText $row.id) | $(ConvertTo-ClcDeploymentPrerequisiteText $row.category) | $(ConvertTo-ClcDeploymentPrerequisiteText $row.status) | $($display.impact) |")
+        }
+        $lines.Add('');$lines.Add('</details>');$lines.Add('');$lines.Add($footer)
+        $summary=$lines -join "`n"
+    }
+    $summary
 }
 
 function Publish-ClcDeploymentPrerequisiteReport {
