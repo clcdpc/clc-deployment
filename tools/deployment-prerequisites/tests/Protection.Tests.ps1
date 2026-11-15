@@ -120,8 +120,10 @@ Describe 'Selected-channel release tag protection' -Tag ReleaseChannel,TagApplic
             ($r.checks | Where-Object id -EQ github.tags.bypass).detail | Should -Match 'does not verify hidden actors'
             $merged=Merge-ClcDeploymentPrerequisiteReports $r (New-ClcDeploymentPrerequisiteReport $config @(New-PassingStageChecks host)) -HostJobResult success
             $merged.ready | Should -BeTrue;$merged.contract_version | Should -Be 3
-            $summary=Format-ClcDeploymentPrerequisiteSummary $merged
-            $summary | Should -Match '# READY';$summary | Should -Match 'Nonblocking warnings[\s\S]*GitHub omitted bypass_actors'
+            $summary=[Net.WebUtility]::HtmlDecode((Format-ClcDeploymentPrerequisiteSummary $merged))
+            $summary | Should -Match '^# READY'
+            $summary | Should -Match '\| \*\*UNVERIFIED\*\* \| Advisory \| Tag bypass visibility \|'
+            $summary | Should -Match 'Technical details[\s\S]*GitHub omitted bypass_actors'
             $summary | Should -Match 'Hidden actors were not verified'
         }
         It 'observes visible tag actors <Type> in mode <Mode>' -Tag BypassVisibility -ForEach @(
@@ -347,7 +349,9 @@ Describe 'Effective integration branch protection and bypass' -Tag BranchProtect
             $r.github_status | Should -Be PASS
             $merged=Merge-ClcDeploymentPrerequisiteReports $r (New-ClcDeploymentPrerequisiteReport $config @(New-PassingStageChecks host)) -HostJobResult success
             $merged.ready | Should -BeTrue
-            (Format-ClcDeploymentPrerequisiteSummary $merged) | Should -Match 'Nonblocking warnings[\s\S]*Hidden actors were not verified'
+            $summary=[Net.WebUtility]::HtmlDecode((Format-ClcDeploymentPrerequisiteSummary $merged))
+            $summary | Should -Match '\| \*\*UNVERIFIED\*\* \| Advisory \| Branch bypass visibility \|'
+            $summary | Should -Match 'Technical details[\s\S]*Hidden actors were not verified'
         }
         It 'does not let an omitted actor list independently defeat confirmed broad <Layer> bypass' -Tag BypassVisibility -ForEach @(
             @{Layer='classic'},@{Layer='ruleset'},@{Layer='partial safe ruleset'}
