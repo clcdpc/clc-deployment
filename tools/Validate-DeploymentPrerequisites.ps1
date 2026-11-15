@@ -5,7 +5,7 @@ param(
     [string] $IntegrationBranch = 'master',
     [string] $ReleaseWorkflow = '.github/workflows/release.yml',
     [string] $DeploymentWorkflow = '.github/workflows/deploy-release.yml',
-    [Parameter(Mandatory)][string] $RunnerGroup,
+    [AllowEmptyString()][string] $RunnerGroup = '',
     [string] $RunnerLabels = 'self-hosted,Windows,X64',
     [string] $ActivationVariable = 'CLC_DEPLOYMENT_ENABLED',
     [ValidateSet('DEV','Production')][string] $DeploymentChannel = 'DEV',
