@@ -1,5 +1,7 @@
 # Shared application release and deployment
 
+Use the [Deployment Setup Guide](setup-guide.md) to configure a new target before verification and independently authorized deployment. Its [workflow compatibility guidance](setup-guide.md#review-intentional-workflow-differences) distinguishes this shared automatic arrangement from intentional manual-only workflows.
+
 This change extends master [`7f814ef`](https://github.com/clcdpc/clc-deployment/commit/7f814ef) with reusable application workflows and package version 2. It does not publish a toolkit/package, configure GitHub, enroll a host, or establish consumer acceptance. **Actual Windows Server 2022/IIS and independent-identity qualification remain NOT RUN.**
 
 ## Responsibilities

@@ -122,7 +122,7 @@ Describe 'Selected-channel release tag protection' -Tag ReleaseChannel,TagApplic
             $merged.ready | Should -BeTrue;$merged.contract_version | Should -Be 3
             $summary=[Net.WebUtility]::HtmlDecode((Format-ClcDeploymentPrerequisiteSummary $merged))
             $summary | Should -Match '^# READY'
-            $summary | Should -Match '\| \*\*UNVERIFIED\*\* \| Advisory \| Tag bypass visibility \|'
+            $summary | Should -Match '\| \*\*UNVERIFIED\*\* · Advisory \| Tag bypass visibility \|'
             $summary | Should -Match 'Technical details[\s\S]*GitHub omitted bypass_actors'
             $summary | Should -Match 'Hidden actors were not verified'
         }
@@ -350,7 +350,7 @@ Describe 'Effective integration branch protection and bypass' -Tag BranchProtect
             $merged=Merge-ClcDeploymentPrerequisiteReports $r (New-ClcDeploymentPrerequisiteReport $config @(New-PassingStageChecks host)) -HostJobResult success
             $merged.ready | Should -BeTrue
             $summary=[Net.WebUtility]::HtmlDecode((Format-ClcDeploymentPrerequisiteSummary $merged))
-            $summary | Should -Match '\| \*\*UNVERIFIED\*\* \| Advisory \| Branch bypass visibility \|'
+            $summary | Should -Match '\| \*\*UNVERIFIED\*\* · Advisory \| Branch bypass visibility \|'
             $summary | Should -Match 'Technical details[\s\S]*Hidden actors were not verified'
         }
         It 'does not let an omitted actor list independently defeat confirmed broad <Layer> bypass' -Tag BypassVisibility -ForEach @(

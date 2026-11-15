@@ -1,5 +1,7 @@
 # Authorized host enrollment and trusted workflow integration
 
+Start with the [Deployment Setup Guide](setup-guide.md) for end-to-end target configuration. This runbook defines the exact enrollment trust, authorization and provisioning procedures.
+
 For fresh or existing enrolled targets, [deployment prerequisites diagnostics](deployment-prerequisites.md) provide a separate read-only host inspection path. A valid empty enrollment can pass commissioning without a deployed release or standing policy. Use the checker during setup, meaningful infrastructure changes or troubleshooting; routine deployment does not require a report. Diagnostics never invoke enrollment Apply, create approvals, repair resources or establish application acceptance.
 
 This is infrastructure tooling for elevated V1 deployment. Offline tests do not qualify a real IIS host or consumer deployment. The four public deployment commands, release approvals, deployment journal, explicit recovery and deadlines remain in force. The normal trusted consumer workflow may perform missing authorized setup; there is no separate initialization workflow.

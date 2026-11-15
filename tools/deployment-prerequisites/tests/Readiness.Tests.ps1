@@ -26,7 +26,7 @@ Describe 'Contract 3 commissioning reports' {
         $r.counts.not_applicable | Should -Be 3
         $summary=Format-ClcDeploymentPrerequisiteSummary $r
         $summary | Should -Match '^# READY'
-        $summary | Should -Match '\| \*\*UNVERIFIED\*\* \| Advisory \| Application acceptance \|'
+        $summary | Should -Match '\| \*\*UNVERIFIED\*\* · Advisory \| Application acceptance \|'
     }
     It 'blocks required <Status> with category <Expected>' -ForEach @(
         @{Status='FAIL';Expected='FAIL'},@{Status='UNVERIFIED';Expected='UNVERIFIED'},@{Status='SKIPPED';Expected='UNVERIFIED'}

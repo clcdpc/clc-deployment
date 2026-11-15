@@ -1,5 +1,7 @@
 # GitHub prerequisites for shared application workflows
 
+For the ordered application/target setup sequence, start with the [Deployment Setup Guide](setup-guide.md). This checklist retains the detailed shared-workflow controls.
+
 The [shared integration guide](shared-release-orchestration.md) supplies conventional and prequalified-artifact examples. Infrastructure must independently establish the controls below before enabling their protected target routes. These instructions create no settings, runners, secrets, environments or host authority. Actual runner admission and consumer deployment qualification remain **NOT RUN**.
 
 ## Protect source and executable workflow code

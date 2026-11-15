@@ -20,6 +20,8 @@ The repository, PowerShell toolkit and ASP.NET Core companion source are license
 
 ## Consumers and operators
 
+Start with the [Deployment Setup Guide](docs/setup-guide.md) for a new application/target: configure GitHub and Windows/IIS, install and enroll the toolkit, then verify prerequisites before separately authorized deployment and acceptance.
+
 | Guide | Purpose |
 | --- | --- |
 | [Installation](docs/installation.md) | Authenticate, verify and install an exact toolkit distribution |
