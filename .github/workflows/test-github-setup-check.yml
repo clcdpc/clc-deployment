@@ -45,9 +45,7 @@ jobs:
     uses: ./.github/workflows/check-github-setup.yml
     with:
       integration_branch: master
-      environment_name: github-setup-smoke-not-configured
-      runner_group: github-setup-smoke-not-configured
-      runner_labels: self-hosted,Windows,X64,github-setup-smoke-not-configured
+      application_id: github-setup-smoke-not-configured
 
   smoke-outputs:
     needs: hosted-smoke

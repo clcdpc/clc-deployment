@@ -15,28 +15,29 @@ BeforeAll {
         @('config','user.email','fixture@example.invalid'),@('config','core.autocrlf','false'),@('add','.'),@('commit','-m','Exact offline machinery')
     )) { $null=Get-DistGit $script:machinery $arguments }
     $script:sharedCommit=Get-DistGit $script:machinery @('rev-parse','HEAD')
+    function Write-EntrypointAssembly([string] $Path,[string] $ApplicationId,[string] $ReleaseId,[string] $SourceCommit,[string] $Kind='Release') {
+        if ([IO.File]::Exists($Path)) { [IO.File]::Delete($Path) }
+        Add-Type -OutputAssembly $Path -TypeDefinition ('[assembly: System.Reflection.AssemblyMetadata("Clc.ApplicationId","'+$ApplicationId+'")]' +
+            '[assembly: System.Reflection.AssemblyMetadata("Clc.ReleaseId","'+$ReleaseId+'")]' +
+            '[assembly: System.Reflection.AssemblyMetadata("Clc.SourceCommit","'+$SourceCommit+'")]' +
+            '[assembly: System.Reflection.AssemblyMetadata("Clc.IdentityKind","'+$Kind+'")] public class Fixture_'+[guid]::NewGuid().ToString('N')+' {}')
+    }
     function New-EntrypointFixture([string] $Reference='v1.2.3-dev.1',[switch] $Superseded,
         [string] $ProducerWorkflowPath='.github/workflows/build.yml',[string] $ProducerJob='build',[string] $ProducerJobName='package / build') {
         $script:workspace=New-TestWorkspace
-        $script:sourceCommit='a'*40; $script:caller='b'*40
+        $script:sourceCommit='a'*40; $script:caller=$script:sourceCommit
         # Script/module mock scopes share only this explicitly named test state.
         $global:ClcWorkflowEntry=@{sourceCommit=$script:sourceCommit;release=$null;uploaded=$null}
         $script:integration=if ($Superseded) {'e'*40} else {$script:sourceCommit}
         $script:reference=$Reference; $script:configurationBlob='d'*40
-        $script:configuration=@{contractVersion=1L;applicationId='probe';repository='clcdpc/example';integrationBranch='master';
-            sourcePolicy=@{allowUnmergedDevTags=$true;allowSnapshots=$true};producer=@{workflowPath=$ProducerWorkflowPath;job=$ProducerJob;jobName=$ProducerJobName};
-            trustedFiles=@('.clc/release.json',$ProducerWorkflowPath,'.github/workflows/deploy.yml');requiredToolkitContractVersion=2L;
-            orchestration=@{sharedRevision=$script:sharedCommit;deploymentWorkflowPath='.github/workflows/deploy.yml'};
-            targets=@(@{channel='DEV';targetId='probe-dev';environment='probe-dev';runnerGroup='probe-dev';runnerLabels=@('self-hosted','Windows','X64','probe-dev');standingAuthorizationId='probe-dev';enabled=$true;runnerAdmissionReady=$true},
-                @{channel='Production';targetId='probe-production';environment='probe-production';runnerGroup='probe-production';runnerLabels=@('self-hosted','Windows','X64','probe-production');standingAuthorizationId='probe-production';enabled=$false;runnerAdmissionReady=$false})}
+        $script:configuration=@{contractVersion=2L;applicationId='probe';repository='clcdpc/example';integrationBranch='master';
+            producer=@{workflowPath=$ProducerWorkflowPath;job=$ProducerJob;jobName=$ProducerJobName};requiredToolkitContractVersion=2L;
+            orchestration=@{sharedRevision=$script:sharedCommit}}
         $script:claims=@{iss='https://token.actions.githubusercontent.com';aud='clc-deployment';repository=$script:configuration.repository;
-            workflow_ref='clcdpc/example/.github/workflows/deploy.yml@refs/heads/master';workflow_sha=$script:caller;
-            job_workflow_ref=('clcdpc/clc-deployment/.github/workflows/application-deploy.yml@'+$script:sharedCommit);job_workflow_sha=$script:sharedCommit;event_name='workflow_run';actor='operator';environment='probe-dev'}
+            workflow_ref=('clcdpc/example/'+$ProducerWorkflowPath+'@refs/tags/'+$Reference);workflow_sha=$script:caller;
+            job_workflow_ref=('clcdpc/clc-deployment/.github/workflows/application-deploy.yml@'+$script:sharedCommit);job_workflow_sha=$script:sharedCommit;event_name='push';run_id='123';run_attempt='2';actor='operator';environment='probe-dev'}
         $script:responses=@{}; $base='/repos/clcdpc/example'
         $script:responses[$base+'/branches/master']=@{protected=$true;commit=@{sha=$script:integration}}
-        foreach ($commit in @($script:caller,$script:sourceCommit,$script:integration)) {
-            foreach ($path in $script:configuration.trustedFiles) { $script:responses[$base+'/contents/'+$path+'?ref='+$commit]=@{type='file';sha=('f'*40)} }
-        }
         $content=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script:configuration | ConvertTo-Json -Depth 12)))
         foreach ($commit in @($script:caller,$script:sourceCommit,$script:integration)) {
             $script:responses[$base+'/contents/.clc/release.json?ref='+$commit]=@{type='file';sha=$script:configurationBlob;encoding='base64';size=2000;content=$content}
@@ -44,14 +45,16 @@ BeforeAll {
         $script:responses[$base+'/git/ref/tags/'+$Reference]=@{object=@{type='commit';sha=$script:sourceCommit}}
         $script:responses[$base+'/compare/'+$script:sourceCommit+'...'+$script:integration]=@{status='ahead';merge_base_commit=@{sha=$script:sourceCommit}}
         $branch=if ($Reference.StartsWith('refs/heads/')) {'master'} else {$Reference}
-        $script:responses[$base+'/actions/runs/123/attempts/2']=@{id=123L;run_attempt=2L;status='completed';conclusion='success';head_sha=$script:sourceCommit;repository=@{full_name='clcdpc/example'};head_repository=@{full_name='clcdpc/example'};path=$ProducerWorkflowPath;event='push';head_branch=$branch;run_started_at='2026-11-13T00:00:00Z';updated_at='2026-11-13T00:10:00Z'}
-        $script:responses[$base+'/actions/runs/123/attempts/2/jobs?per_page=100&page=1']=@{jobs=@(@{name=$ProducerJobName;status='completed';conclusion='success';run_id=123L})}
+        $script:responses[$base+'/actions/runs/123/attempts/2']=@{id=123L;run_attempt=2L;status='in_progress';conclusion=$null;head_sha=$script:sourceCommit;repository=@{full_name='clcdpc/example'};head_repository=@{full_name='clcdpc/example'};path=$ProducerWorkflowPath;event='push';head_branch=$branch;run_started_at='2026-11-13T00:00:00Z';updated_at='2026-11-13T00:10:00Z'}
+        $script:responses[$base+'/actions/runs/123/attempts/2/jobs?per_page=100&page=1']=@{jobs=@(@{name=$ProducerJobName;status='completed';conclusion='success';head_sha=$script:sourceCommit;started_at='2026-11-13T00:00:01Z';completed_at='2026-11-13T00:09:00Z';run_id=123L})}
         $script:inputs=New-TestPublish $script:workspace
         $metadata=Get-TestMetadata; $metadata.schemaVersion=2L; $metadata.changeKind='application-deployment'
         $metadata.source=@{repository=$script:configuration.repository;commit=$script:sourceCommit}
         $metadata.releaseId=if ($Reference.StartsWith('refs/heads/')) {'dev-123-'+$script:sourceCommit.Substring(0,12)} else {(Get-ClcApplicationTag $Reference).releaseId}
         $metadata.build.runId=123L; $metadata.build.runAttempt=2L; $metadata.build.dependencyLockSha256=$null
         $metadata.build.workflowPath=$ProducerWorkflowPath; $metadata.build.job=$ProducerJob; $metadata.builder.sourceCommit=$script:sharedCommit
+        # Inert compiled metadata fixture; never load or execute application code.
+        Write-EntrypointAssembly (Join-Path $script:inputs.PublishRoot 'Probe.dll') 'probe' $metadata.releaseId $script:sourceCommit
         Write-TestJson $script:inputs.MetadataPath $metadata
         $script:package=New-ClcRelease @script:inputs
         Set-EntrypointArtifact
@@ -72,9 +75,6 @@ BeforeAll {
     }
     function Set-EntrypointUnmergedSource {
         $base='/repos/clcdpc/example'; $next='e'*40
-        foreach ($path in $script:configuration.trustedFiles) {
-            $script:responses[$base+'/contents/'+$path+'?ref='+$next]=$script:responses[$base+'/contents/'+$path+'?ref='+$script:integration]
-        }
         $script:integration=$next; $script:responses[$base+'/branches/master'].commit.sha=$next
         $script:responses[$base+'/compare/'+$script:sourceCommit+'...'+$next]=@{status='diverged';merge_base_commit=@{sha=('d'*40)}}
     }
@@ -138,6 +138,27 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         Should -Invoke Send-ClcApplicationReleaseAsset -Times 1 -Exactly
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
     }
+    It 'fails publication when asset upload fails without opening the installed toolkit' {
+        $script:parameters.Action='Release'
+        $script:claims.job_workflow_ref='clcdpc/clc-deployment/.github/workflows/application-release.yml@'+$script:sharedCommit
+        $script:parameters.ClaimsJson=$script:claims | ConvertTo-Json -Compress
+        Mock Send-ClcApplicationReleaseAsset { throw 'Offline publication failure.' }
+        { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw '*Asset upload failed; compatible draft retained*'
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+        $global:ClcWorkflowEntry.release.draft | Should -BeTrue
+    }
+    It 'rejects a different executing tag, workflow revision, run or attempt before downloading or publishing' -ForEach @(@{Mode='tag'},@{Mode='revision'},@{Mode='run'},@{Mode='attempt'}) {
+        switch ($Mode) {
+            tag {$script:parameters.Reference='v1.2.3-dev.2'}
+            revision {$script:parameters.SourceCommit='e'*40}
+            run {$script:parameters.RunId=124L}
+            attempt {$script:parameters.RunAttempt=1L}
+        }
+        { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw '*differs from selected producer*'
+        Should -Invoke Invoke-ClcReleaseApi -Times 0 -Exactly -ParameterFilter {$Bytes}
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+        Should -Invoke Send-ClcApplicationReleaseAsset -Times 0 -Exactly
+    }
     It 'admits the exact qualified artifact and writes protected routing outputs' {
         $result=& "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters
         $result.status | Should -BeExactly Admitted; $result.admitted | Should -BeTrue
@@ -172,7 +193,7 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         $result=& "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters
         $result.status | Should -BeExactly $(if ($Action -ceq 'Release') {'Published'} else {'Admitted'})
         Should -Invoke Invoke-ClcReleaseApi -Times 0 -Exactly -ParameterFilter {$Path -match '/pulls|/collaborators/|/branches/(?!master$)'}
-        Should -Invoke Invoke-ClcReleaseApi -Times 2 -Exactly -ParameterFilter {$Path -ceq '/repos/clcdpc/example/git/ref/tags/v1.2.3-dev.1'}
+        Should -Invoke Invoke-ClcReleaseApi -Times 3 -Exactly -ParameterFilter {$Path -ceq '/repos/clcdpc/example/git/ref/tags/v1.2.3-dev.1'}
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
     }
     It 'rejects an unmerged DEV tag moved after artifact download during <Action>' -ForEach @(@{Action='Release'},@{Action='Admit'}) {
@@ -187,16 +208,6 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         Should -Invoke Send-ClcApplicationReleaseAsset -Times 0 -Exactly
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
     }
-    It 'rejects disabled unmerged DEV tags before artifact download and host routing' {
-        Set-EntrypointUnmergedSource
-        $script:configuration.sourcePolicy.allowUnmergedDevTags=$false
-        $content=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($script:configuration | ConvertTo-Json -Depth 12)))
-        foreach ($commit in @($script:caller,$script:sourceCommit,$script:integration)) {$script:responses['/repos/clcdpc/example/contents/.clc/release.json?ref='+$commit].content=$content}
-        { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw '*outside the protected integration history*'
-        [IO.File]::Exists($env:GITHUB_OUTPUT) | Should -BeFalse
-        Should -Invoke Invoke-ClcReleaseApi -Times 0 -Exactly -ParameterFilter {$Bytes}
-        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
-    }
     It 'admits the observed <Consumer> producer workflow, job ID and exact REST display name' -ForEach @(
         @{Consumer='Favorite Authors';WorkflowPath='.github/workflows/build-test.yml';JobName='Build, test, publish, and package'},
         @{Consumer='ASAP';WorkflowPath='.github/workflows/dotnet.yml';JobName='Frontend, CI checks and package'}
@@ -206,6 +217,22 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         $result=& "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters
         $result.status | Should -BeExactly Admitted; $result.admitted | Should -BeTrue
         [IO.File]::ReadAllText($env:GITHUB_OUTPUT) | Should -Match '(?m)^admitted=true$'
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+    }
+    It 'rejects rehashed packages with wrong compiled <Field> before publication or host admission' -ForEach @(
+        @{Field='application'},@{Field='release'},@{Field='source'},@{Field='kind'}
+    ) {
+        $app='probe'; $release=(Get-ClcApplicationTag $script:reference).releaseId; $source=$script:sourceCommit; $kind='Release'
+        switch ($Field) { application {$app='other'}; release {$release='other'}; source {$source='e'*40}; kind {$kind='Development'} }
+        Write-EntrypointAssembly (Join-Path $script:inputs.PublishRoot 'Probe.dll') $app $release $source $kind
+        [IO.File]::Delete($script:package.archivePath); $script:package=New-ClcRelease @script:inputs
+        (Test-ClcRelease $script:package.archivePath).integrityVerified | Should -BeTrue
+        Set-EntrypointArtifact
+        $script:parameters.Action='Release'
+        $script:claims.job_workflow_ref='clcdpc/clc-deployment/.github/workflows/application-release.yml@'+$script:sharedCommit
+        $script:parameters.ClaimsJson=$script:claims | ConvertTo-Json -Compress
+        { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw '*Compiled application identity differs*'
+        Should -Invoke Send-ClcApplicationReleaseAsset -Times 0 -Exactly
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
     }
     It 'rejects an otherwise verified package with an unapproved builder revision during <Action>' -ForEach @(
@@ -238,15 +265,11 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
             } else { Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly }
         } finally { $script:heldToolkit.Dispose() }
     }
-    It 'returns <Status> without downloading or invoking infrastructure' -ForEach @(
-        @{Reference='v1.2.3';Status='ActivationDisabled';Superseded=$false},
-        @{Reference='refs/heads/master';Status='Superseded';Superseded=$true}
-    ) {
+    It 'keeps beta and RC artifacts off privileged runners' -ForEach @(@{Reference='v1.2.3-beta.1'},@{Reference='v1.2.3-rc.1'}) {
         Remove-EntrypointFixture
-        New-EntrypointFixture -Reference $Reference -Superseded:$Superseded
+        New-EntrypointFixture -Reference $Reference
         $result=& "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters
-        $result.status | Should -BeExactly $Status; $result.admitted | Should -BeFalse
-        [IO.File]::ReadAllText($env:GITHUB_OUTPUT) | Should -Match '(?m)^admitted=false$'
+        $result.status | Should -BeExactly ArtifactOnly; $result.admitted | Should -BeFalse
         Should -Invoke Invoke-ClcReleaseApi -Times 0 -Exactly -ParameterFilter { $Bytes }
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
     }
@@ -365,6 +388,11 @@ Describe 'Actual package entry point with independently qualified publish files'
         $output | Should -Match ('(?m)^artifact_path='+[regex]::Escape((Join-Path $script:packageParameters.OutputDirectory 'qualified'))+'$')
         # No SDK provisioning or build outputs are created on this path.
         [IO.Directory]::Exists((Join-Path $script:packageParameters.OutputDirectory 'sdk')) | Should -BeFalse
+    }
+    It 'refuses prequalified files whose compiled identity differs before advertising a package' {
+        Write-EntrypointAssembly (Join-Path $script:inputs.PublishRoot 'Probe.dll') 'probe' 'wrong-release' $script:sourceCommit
+        { & "$script:machinery/tools/release/New-ClcApplicationPackage.ps1" @script:packageParameters } | Should -Throw '*Compiled application identity differs*'
+        [IO.File]::Exists($env:GITHUB_OUTPUT) | Should -BeFalse
     }
     It 'rejects an unapproved shared builder revision before <Mode> package work' -ForEach @(@{Mode='Prequalified'},@{Mode='Build'}) {
         $script:configuration.orchestration.sharedRevision='e'*40

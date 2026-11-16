@@ -6,30 +6,14 @@ on:
       integration_branch:
         type: string
         default: master
-      environment_name:
+      application_id:
         type: string
         required: true
+      channel:
+        type: string
+        default: DEV
       runner_group:
-        type: string
-        required: true
-      runner_labels:
-        description: Comma-separated expected labels on one online group runner
-        type: string
-        required: true
-      expected_workflows:
-        description: Comma-separated exact workflow references allowed by the runner group; omission requires manual review
-        type: string
-        default: ''
-      release_tag_pattern:
-        type: string
-        default: v*
-      runner_group_variable:
-        type: string
-        default: ''
-      runner_labels_variable:
-        type: string
-        default: ''
-      additional_variable_names:
+        description: Optional organization group to inspect; repository runners need no group
         type: string
         default: ''
       check_release_immutability:
@@ -79,15 +63,10 @@ jobs:
           CLC_INSPECTION_TOKEN: ${{ secrets.inspection_token }}
           CLC_REPOSITORY: ${{ github.repository }}
           CLC_BRANCH: ${{ inputs.integration_branch }}
-          CLC_ENVIRONMENT: ${{ inputs.environment_name }}
+          CLC_APPLICATION: ${{ inputs.application_id }}
+          CLC_CHANNEL: ${{ inputs.channel }}
           CLC_RUNNER_GROUP: ${{ inputs.runner_group }}
-          CLC_RUNNER_LABELS: ${{ inputs.runner_labels }}
-          CLC_EXPECTED_WORKFLOWS: ${{ inputs.expected_workflows }}
-          CLC_TAG_PATTERN: ${{ inputs.release_tag_pattern }}
-          CLC_GROUP_VARIABLE: ${{ inputs.runner_group_variable }}
-          CLC_LABELS_VARIABLE: ${{ inputs.runner_labels_variable }}
-          CLC_VARIABLE_NAMES: ${{ inputs.additional_variable_names }}
           CLC_IMMUTABILITY: ${{ inputs.check_release_immutability }}
         run: |
           $env:GITHUB_REPOSITORY = $env:CLC_REPOSITORY
-          & ./github-setup-check/tools/github-setup-check/Check-GitHubSetup.ps1 -IntegrationBranch $env:CLC_BRANCH -EnvironmentName $env:CLC_ENVIRONMENT -RunnerGroup $env:CLC_RUNNER_GROUP -RunnerLabels $env:CLC_RUNNER_LABELS -ExpectedWorkflows $env:CLC_EXPECTED_WORKFLOWS -ReleaseTagPattern $env:CLC_TAG_PATTERN -RunnerGroupVariable $env:CLC_GROUP_VARIABLE -RunnerLabelsVariable $env:CLC_LABELS_VARIABLE -AdditionalVariableNames $env:CLC_VARIABLE_NAMES -CheckReleaseImmutability ([bool]::Parse($env:CLC_IMMUTABILITY))
+          & ./github-setup-check/tools/github-setup-check/Check-GitHubSetup.ps1 -ApplicationId $env:CLC_APPLICATION -Channel $env:CLC_CHANNEL -IntegrationBranch $env:CLC_BRANCH -RunnerGroup $env:CLC_RUNNER_GROUP -CheckReleaseImmutability ([bool]::Parse($env:CLC_IMMUTABILITY))

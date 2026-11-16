@@ -9,18 +9,18 @@ BeforeAll {
             "$base/rules/branches/master?per_page=100&page=1" = @()
             "$base/rulesets?includes_parents=true&targets=tag&per_page=100&page=1" = @(@{id=1;name='release tags';source_type='Repository';source='example-org/example';enforcement='active'})
             "$base/rulesets/1" = @{id=1;target='tag';enforcement='active';bypass_actors=@();conditions=@{ref_name=@{include=@('refs/tags/v*');exclude=@()}};rules=@(@{type='creation'},@{type='update'},@{type='deletion'})}
-            "$base/environments?per_page=100&page=1" = @{total_count=1;environments=@(@{name='example-dev';deployment_branch_policy=@{custom_branch_policies=$true;protected_branches=$false};protection_rules=@(@{type='branch_policy'})})}
+            "$base/environments?per_page=100&page=1" = @{total_count=1;environments=@(@{name='example-dev';deployment_branch_policy=$null;protection_rules=@(@{type='branch_policy'})})}
             "$base/environments/example-dev/deployment-branch-policies?per_page=100&page=1" = @{total_count=1;branch_policies=@(@{name='master';type='branch'})}
             '/orgs/example-org/actions/runner-groups?per_page=100&page=1' = @{total_count=1;runner_groups=@(@{id=5;name='example-dev';visibility='selected';allows_public_repositories=$false;restricted_to_workflows=$true;selected_workflows=@('example-org/example/.github/workflows/deploy.yml@refs/heads/master')})}
             '/orgs/example-org/actions/runner-groups/5/repositories?per_page=100&page=1' = @{total_count=1;repositories=@(@{full_name='example-org/example'})}
-            '/orgs/example-org/actions/runner-groups/5/runners?per_page=100&page=1' = @{total_count=1;runners=@(@{status='online';labels=@(@{name='self-hosted'},@{name='Windows'},@{name='X64'},@{name='example-dev'})})}
+            "$base/actions/runners?per_page=100&page=1" = @{total_count=1;runners=@(@{status='online';labels=@(@{name='self-hosted'},@{name='Windows'},@{name='X64'},@{name='example-dev'})})}
             $base = @{private=$true}
             "$base/actions/variables?per_page=30&page=1" = @{total_count=4;variables=@(@{name='GROUP';value='example-dev'},@{name='LABELS';value='Windows,example-dev,self-hosted,X64'},@{name='DEPLOYMENT_ENABLED';value='false'},@{name='UNRELATED';value='PRIVATE-DO-NOT-PRINT'})}
             "$base/immutable-releases" = @{enabled=$true;enforced_by_owner=$false}
         }
     }
     function Invoke-Check([hashtable] $Overrides = @{}) {
-        $parameters = @{EnvironmentName='example-dev';RunnerGroup='example-dev';RunnerLabels='self-hosted,Windows,X64,example-dev';ExpectedWorkflows='example-org/example/.github/workflows/deploy.yml@refs/heads/master';RunnerGroupVariable='GROUP';RunnerLabelsVariable='LABELS';AdditionalVariableNames='DEPLOYMENT_ENABLED'}
+        $parameters = @{ApplicationId='example'}
         foreach ($key in $Overrides.Keys) { $parameters[$key] = $Overrides[$key] }
         $env:GITHUB_STEP_SUMMARY = Join-Path $TestDrive 'summary.md'
         $env:GITHUB_OUTPUT = Join-Path $TestDrive 'outputs.txt'
@@ -59,13 +59,13 @@ Describe 'GitHub setup inspection' {
             @{StatusCode=200;Content=(ConvertTo-Json -InputObject $api[$path] -Depth 30 -Compress);Headers=@{Link=$(if ($nextPages.Contains($path)) { '<https://api.github.com/unused>; rel="next"' } else { '' })}}
         }
     }
-    It 'generates the actual concise summary and four outputs, with activation intentionally false' {
+    It 'keeps seven concise categories and four outputs with policy inspection limits explicit' {
         $result = Invoke-Check
-        $result.Outputs.status | Should -BeExactly 'CONFIGURED'
+        $result.Outputs.status | Should -BeExactly 'CHECK MANUALLY'
         $result.Outputs.Keys.Count | Should -Be 4
-        $result.Outputs.configured_count | Should -Be '7'
+        $result.Outputs.configured_count | Should -Be '5'
         $result.Outputs.needs_configuration_count | Should -Be '0'
-        $result.Outputs.manual_count | Should -Be '0'
+        $result.Outputs.manual_count | Should -Be '2'
         $result.File | Should -BeExactly $result.Summary
         @($result.Summary -split "`n" | Where-Object { $_ -match '^\| (CONFIGURED|NEEDS CONFIGURATION|CHECK MANUALLY) \|' }).Count | Should -Be 7
         $result.Summary | Should -Not -Match 'PRIVATE-DO-NOT-PRINT|DEFAULT-TEST-TOKEN|"total_count"|DEPLOYMENT READY'
@@ -157,192 +157,56 @@ Describe 'GitHub setup inspection' {
         $global:GitHubSetupTest.Api=New-ApiFixture; $api=$global:GitHubSetupTest.Api; $api['/repos/example-org/example/rulesets/1'].conditions.ref_name.exclude=@('refs/tags/v1*')
         Row (Invoke-Check) 'Tag protection' | Should -Match 'CHECK MANUALLY'
     }
-    It 'distinguishes a confirmed missing environment from wrong rules and approval gates' {
-        $api['/repos/example-org/example/environments?per_page=100&page=1']=@{total_count=0;environments=@()}
-        Row (Invoke-Check) 'Environment' | Should -Match 'NEEDS CONFIGURATION.*does not exist'
-        $global:GitHubSetupTest.Api=New-ApiFixture; $api=$global:GitHubSetupTest.Api; $api['/repos/example-org/example/environments/example-dev/deployment-branch-policies?per_page=100&page=1'].branch_policies[0].name='*'
-        Row (Invoke-Check) 'Environment' | Should -Match 'NEEDS CONFIGURATION.*branch/tag rules'
-        $global:GitHubSetupTest.Api=New-ApiFixture; $api=$global:GitHubSetupTest.Api; $api['/repos/example-org/example/environments?per_page=100&page=1'].environments[0].protection_rules=@(@{type='required_reviewers'})
-        Row (Invoke-Check) 'Environment' | Should -Match 'NEEDS CONFIGURATION.*reviewers'
-    }
-    It 'accepts a valid unattended wait timer and keeps malformed policy names manual' {
-        $api['/repos/example-org/example/environments?per_page=100&page=1'].environments[0].protection_rules=@(@{type='wait_timer';wait_timer=10})
-        Row (Invoke-Check) 'Environment' | Should -Match '^\| CONFIGURED'
-        $api['/repos/example-org/example/environments/example-dev/deployment-branch-policies?per_page=100&page=1'].branch_policies[0].name=42
-        Row (Invoke-Check) 'Environment' | Should -Match 'CHECK MANUALLY.*Malformed string'
-    }
-    It 'reports a missing group once and explains unavailable runner observations' {
-        $api['/orgs/example-org/actions/runner-groups?per_page=100&page=1']=@{total_count=0;runner_groups=@()}
+    It 'accepts repository-scoped runners without any organization group or variables' {
         $result=Invoke-Check
-        Row $result 'Runner group' | Should -Match 'NEEDS CONFIGURATION.*does not exist'
-        Row $result 'Runners' | Should -Match 'CHECK MANUALLY.*group'
+        Row $result 'Runners' | Should -Match '^\| CONFIGURED'
+        $result.Summary | Should -Not -Match '\| \[Runner group\]|Actions variables'
+        Should -Invoke Invoke-WebRequest -Times 0 -ParameterFilter { $Uri -match '/orgs/|/variables|/contents/|/collaborators/' }
     }
-    It 'rejects incorrect runner repository, workflow and public access' {
-        $api['/orgs/example-org/actions/runner-groups/5/repositories?per_page=100&page=1'].repositories[0].full_name='example-org/other'
-        $group=$api['/orgs/example-org/actions/runner-groups?per_page=100&page=1'].runner_groups[0]
-        $group.allows_public_repositories=$true; $group.restricted_to_workflows=$false
-        $row=Row (Invoke-Check) 'Runner group'
-        $row | Should -Match 'NEEDS CONFIGURATION.*not admitted.*Public-repository.*Selected workflows'
-    }
-    It 'accepts the exact expected direct workflow' {
-        Row (Invoke-Check) 'Runner group' | Should -Match '^\| CONFIGURED.*exact expected allowlist'
-    }
-    It 'accepts the exact expected shared workflow at an immutable SHA without reading contents' {
-        $shared='other-org/shared/.github/workflows/release.yml@' + ('a'*40)
-        $api['/orgs/example-org/actions/runner-groups?per_page=100&page=1'].runner_groups[0].selected_workflows=@($shared)
-        Row (Invoke-Check @{ExpectedWorkflows=$shared}) 'Runner group' | Should -Match '^\| CONFIGURED'
-        Should -Invoke Invoke-WebRequest -Times 0 -ParameterFilter { $Uri -match '/contents/|/secrets' }
-    }
-    It 'compares workflow sets ignoring order and identity case while preserving ref case' {
-        $direct='EXAMPLE-ORG/EXAMPLE/.GITHUB/WORKFLOWS/DEPLOY.YML@refs/heads/master'
-        $shared='other-org/shared/.github/workflows/release.yml@' + ('a'*40)
-        $group=$api['/orgs/example-org/actions/runner-groups?per_page=100&page=1'].runner_groups[0]
-        $group.selected_workflows=@($shared,$direct)
-        Row (Invoke-Check @{ExpectedWorkflows="example-org/example/.github/workflows/deploy.yml@refs/heads/master,$shared"}) 'Runner group' | Should -Match '^\| CONFIGURED'
-        $group.selected_workflows=@($direct.Replace('heads/master','heads/Master'),$shared)
-        Row (Invoke-Check @{ExpectedWorkflows="example-org/example/.github/workflows/deploy.yml@refs/heads/master,$shared"}) 'Runner group' | Should -Match '^\| NEEDS CONFIGURATION.*Missing expected workflow.*1 unexpected'
-    }
-    It 'rejects a missing expected workflow, including an unrelated-only allowlist' {
-        $group=$api['/orgs/example-org/actions/runner-groups?per_page=100&page=1'].runner_groups[0]
-        $group.selected_workflows=@()
-        Row (Invoke-Check) 'Runner group' | Should -Match '^\| NEEDS CONFIGURATION.*Missing expected workflow'
-        $group.selected_workflows=@('private-org/unrelated/.github/workflows/PRIVATE-WORKFLOW.yml@refs/heads/master')
+    It 'leaves native Restrict actors and workflow review manual with direct links' {
         $result=Invoke-Check
-        Row $result 'Runner group' | Should -Match '^\| NEEDS CONFIGURATION.*Missing expected workflow.*1 unexpected'
-        $result.Summary | Should -Not -Match 'private-org|unrelated|PRIVATE-WORKFLOW'
+        Row $result 'Restrict actors' | Should -Match 'CHECK MANUALLY.*settings/actions/policies'
+        Row $result 'Workflow trigger' | Should -Match 'CHECK MANUALLY.*tagged consumer workflow'
     }
-    It 'rejects unexpected extra workflows without reporting their identities' {
+    It 'accepts optional organization repository access without an exact workflow allowlist' {
         $group=$api['/orgs/example-org/actions/runner-groups?per_page=100&page=1'].runner_groups[0]
-        $group.selected_workflows+= 'private-org/unrelated/.github/workflows/PRIVATE-WORKFLOW.yml@refs/heads/master'
+        $group.restricted_to_workflows=$false; $group.Remove('selected_workflows')
+        Row (Invoke-Check @{RunnerGroup='example-dev'}) 'Runner group' | Should -Match '^\| CONFIGURED'
+        $api['/orgs/example-org/actions/runner-groups/5/repositories?per_page=100&page=1'].repositories=@(); $api['/orgs/example-org/actions/runner-groups/5/repositories?per_page=100&page=1'].total_count=0
+        Row (Invoke-Check @{RunnerGroup='example-dev'}) 'Runner group' | Should -Match '^\| NEEDS CONFIGURATION'
+    }
+    It 'reports missing environments, branch restrictions and human gates' -ForEach @(@{Kind='missing'},@{Kind='branch'},@{Kind='reviewer'},@{Kind='timer'}) {
+        $environment=$api['/repos/example-org/example/environments?per_page=100&page=1'].environments[0]
+        switch ($Kind) {
+            missing {$api['/repos/example-org/example/environments?per_page=100&page=1']=@{total_count=0;environments=@()}}
+            branch {$environment.deployment_branch_policy=@{protected_branches=$true;custom_branch_policies=$false}}
+            reviewer {$environment.protection_rules=@(@{type='required_reviewers'})}
+            timer {$environment.protection_rules=@(@{type='wait_timer';wait_timer=10})}
+        }
+        Row (Invoke-Check) 'Environment' | Should -Match '^\| NEEDS CONFIGURATION'
+    }
+    It 'requires all labels on one online repository-accessible runner' -ForEach @(@{Kind='offline'},@{Kind='labels'}) {
+        $runner=$api['/repos/example-org/example/actions/runners?per_page=100&page=1'].runners[0]
+        if ($Kind -ceq 'offline') {$runner.status='offline'} else {$runner.labels=@(@{name='self-hosted'},@{name='Linux'})}
+        Row (Invoke-Check) 'Runners' | Should -Match '^\| NEEDS CONFIGURATION'
+    }
+    It 'derives the Production environment and runner label from the application ID' {
+        $api['/repos/example-org/example/environments?per_page=100&page=1'].environments[0].name='example-production'
+        $api['/repos/example-org/example/actions/runners?per_page=100&page=1'].runners[0].labels[3].name='example-production'
+        $result=Invoke-Check @{Channel='Production'}
+        Row $result 'Environment' | Should -Match '^\| CONFIGURED'
+        Row $result 'Runners' | Should -Match '^\| CONFIGURED'
+    }
+    It 'keeps denied read APIs manual without disclosing responses or tokens' -ForEach @(@{Code=401},@{Code=403},@{Code=404}) {
+        $httpStatus['/repos/example-org/example/actions/runners?per_page=100&page=1']=$Code
         $result=Invoke-Check
-        Row $result 'Runner group' | Should -Match '^\| NEEDS CONFIGURATION.*1 unexpected'
-        Row $result 'Runner group' | Should -Not -Match 'Missing expected'
-        $result.Summary | Should -Not -Match 'private-org|unrelated|PRIVATE-WORKFLOW'
+        Row $result 'Runners' | Should -Match "CHECK MANUALLY.*HTTP $Code"
+        $result.Summary | Should -Not -Match 'PRIVATE-ERROR|DEFAULT-TEST-TOKEN'
     }
-    It 'accepts an exact explicit ref with valid punctuation' {
-        $workflow='example-org/example/.github/workflows/deploy.yml@refs/heads/release+fix'
-        $api['/orgs/example-org/actions/runner-groups?per_page=100&page=1'].runner_groups[0].selected_workflows=@($workflow)
-        Row (Invoke-Check @{ExpectedWorkflows=$workflow}) 'Runner group' | Should -Match '^\| CONFIGURED'
-    }
-    It 'rejects wildcard and unrestricted workflow entries: <Entry>' -ForEach @(
-        @{Entry='*'}, @{Entry='example-org/example/.github/workflows/*.yml@refs/heads/master'},
-        @{Entry='example-org/example/.github/workflows/deploy.yml@refs/heads/*'}
-    ) {
-        $api['/orgs/example-org/actions/runner-groups?per_page=100&page=1'].runner_groups[0].selected_workflows+= $Entry
-        Row (Invoke-Check) 'Runner group' | Should -Match '^\| NEEDS CONFIGURATION.*wildcard'
-    }
-    It 'leaves the exact allowlist manual when expected_workflows is omitted and still checks Selected workflows' {
-        $row=Row (Invoke-Check @{ExpectedWorkflows=''}) 'Runner group'
-        $row | Should -Match '^\| CHECK MANUALLY.*Exact workflow allowlist is unverified.*Organization Settings.*Workflow access'
-        $api['/orgs/example-org/actions/runner-groups?per_page=100&page=1'].runner_groups[0].restricted_to_workflows=$false
-        Row (Invoke-Check @{ExpectedWorkflows=''}) 'Runner group' | Should -Match '^\| NEEDS CONFIGURATION.*Selected workflows must be enabled.*unverified'
-    }
-    It 'keeps an inaccessible workflow allowlist manual while inspecting Selected workflows' {
-        $group=$api['/orgs/example-org/actions/runner-groups?per_page=100&page=1'].runner_groups[0]
-        $group.Remove('selected_workflows')
-        Row (Invoke-Check) 'Runner group' | Should -Match '^\| CHECK MANUALLY.*allowlist unavailable.*Workflow access'
-        $group.selected_workflows='PRIVATE-MALFORMED'
-        Row (Invoke-Check) 'Runner group' | Should -Match '^\| CHECK MANUALLY.*allowlist unavailable'
-        $group.selected_workflows=@(42)
-        $row=Row (Invoke-Check) 'Runner group'
-        $row | Should -Match '^\| CHECK MANUALLY.*Malformed selected workflow'
-        $row | Should -Not -Match 'Missing expected|PRIVATE-MALFORMED'
-        $group.Remove('selected_workflows'); $group.restricted_to_workflows=$false
-        Row (Invoke-Check) 'Runner group' | Should -Match '^\| NEEDS CONFIGURATION.*Selected workflows must be enabled.*allowlist unavailable'
-    }
-    It 'rejects invalid expected workflow inputs before API access' {
-        { Invoke-Check @{ExpectedWorkflows='example-org/example/.github/workflows/*.yml@refs/heads/master'} } | Should -Throw '*Expected workflows*'
-        Should -Invoke Invoke-WebRequest -Times 0
-    }
-    It 'requires the expected labels on one online runner in the selected group' {
-        $runner=$api['/orgs/example-org/actions/runner-groups/5/runners?per_page=100&page=1'].runners[0]
-        $runner.labels=@(@{name='self-hosted'},@{name='Linux'})
-        Row (Invoke-Check) 'Runners' | Should -Match 'NEEDS CONFIGURATION.*expected labels'
-        $runner.status='offline'
-        Row (Invoke-Check) 'Runners' | Should -Match 'NEEDS CONFIGURATION.*online'
-    }
-    It 'identifies missing variables and selected value mismatches without printing values' {
-        $vars=$api['/repos/example-org/example/actions/variables?per_page=30&page=1']
-        $vars.variables=@($vars.variables | Where-Object name -NE 'DEPLOYMENT_ENABLED'); $vars.total_count=3
-        $vars.variables[0].value='PRIVATE-WRONG-GROUP'
-        $vars.variables[1].value='wrong'
-        $row=Row (Invoke-Check) 'Actions variables'
-        $row | Should -Match 'NEEDS CONFIGURATION.*DEPLOYMENT&#95;ENABLED does not exist.*differs.*differs'
-        $row | Should -Not -Match 'PRIVATE-WRONG-GROUP'
-        Row (Invoke-Check @{RunnerGroupVariable=' GROUP ';RunnerLabelsVariable=' LABELS '}) 'Actions variables' | Should -Match 'Runner-group variable GROUP differs.*Runner-label variable LABELS differs'
-    }
-    It 'compares SSRS_DEV_RUNNER_LABELS safely: <Case>' -ForEach @(
-        @{Case='CSV';Value='self-hosted,Windows,X64,ssrs-web-dev';Status='CONFIGURED'},
-        @{Case='JSON';Value='["self-hosted","Windows","X64","ssrs-web-dev"]';Status='CONFIGURED'},
-        @{Case='CSV order and case';Value='SSRS-WEB-DEV,x64,WINDOWS,SELF-HOSTED';Status='CONFIGURED'},
-        @{Case='JSON order and case';Value=' ["SSRS-WEB-DEV","x64","WINDOWS","SELF-HOSTED"] ';Status='CONFIGURED'},
-        @{Case='missing CSV label';Value='self-hosted,Windows,X64';Status='NEEDS CONFIGURATION'},
-        @{Case='missing JSON label';Value='["self-hosted","Windows","X64"]';Status='NEEDS CONFIGURATION'},
-        @{Case='additional CSV label';Value='self-hosted,Windows,X64,ssrs-web-dev,PRIVATE-EXTRA';Status='NEEDS CONFIGURATION'},
-        @{Case='additional JSON label';Value='["self-hosted","Windows","X64","ssrs-web-dev","PRIVATE-EXTRA"]';Status='NEEDS CONFIGURATION'},
-        @{Case='malformed JSON';Value='["self-hosted",PRIVATE-INVALID';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON number';Value='["self-hosted","Windows","X64","ssrs-web-dev",42]';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON null';Value='["self-hosted","Windows","X64","ssrs-web-dev",null]';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON object';Value='["self-hosted","Windows","X64","ssrs-web-dev",{}]';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON nested array';Value='[["self-hosted","Windows","X64","ssrs-web-dev"]]';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON scalar';Value='"self-hosted,Windows,X64,ssrs-web-dev"';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON trailing comma';Value='["self-hosted","Windows","X64","ssrs-web-dev",]';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON empty string';Value='["self-hosted","Windows","X64","ssrs-web-dev",""]';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON whitespace string';Value='["self-hosted","Windows","X64","ssrs-web-dev"," "]';Status='NEEDS CONFIGURATION'},
-        @{Case='CSV empty';Value='';Status='NEEDS CONFIGURATION'},
-        @{Case='CSV empty label';Value='self-hosted,Windows,X64,ssrs-web-dev,';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON empty array';Value='[]';Status='NEEDS CONFIGURATION'},
-        @{Case='CSV duplicate';Value='self-hosted,Windows,X64,ssrs-web-dev,WINDOWS';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON duplicate';Value='["self-hosted","Windows","X64","ssrs-web-dev","WINDOWS"]';Status='NEEDS CONFIGURATION'},
-        @{Case='JSON comma within one label';Value='["self-hosted","Windows,X64","ssrs-web-dev"]';Status='NEEDS CONFIGURATION'}
-    ) {
-        $variable=$api['/repos/example-org/example/actions/variables?per_page=30&page=1'].variables[1]
-        $variable.name='SSRS_DEV_RUNNER_LABELS'; $variable.value=$Value
-        $api['/orgs/example-org/actions/runner-groups/5/runners?per_page=100&page=1'].runners[0].labels[3].name='ssrs-web-dev'
-        $result=Invoke-Check @{RunnerLabels='self-hosted,Windows,X64,ssrs-web-dev';RunnerLabelsVariable='SSRS_DEV_RUNNER_LABELS'}
-        Row $result 'Actions variables' | Should -Match ('^\| ' + $Status + ' \|')
-        $result.Outputs.status | Should -BeExactly $Status
-        $result.Summary | Should -Not -Match 'PRIVATE-EXTRA|PRIVATE-INVALID'
-        if ($Status -eq 'NEEDS CONFIGURATION') { Row $result 'Actions variables' | Should -Match 'Runner-label variable SSRS&#95;DEV&#95;RUNNER&#95;LABELS differs' }
-    }
-    It 'handles permission denial and ambiguous 404 as manual with exact UI instructions: <Code>' -ForEach @(@{Code=403},@{Code=404},@{Code=500}) {
-        $httpStatus['/orgs/example-org/actions/runner-groups?per_page=100&page=1']=$Code
-        $httpStatus['/repos/example-org/example/immutable-releases']=$Code
+    It 'uses an optional read-only inspection token without printing it' {
+        $env:CLC_INSPECTION_TOKEN='OPTIONAL-TEST-TOKEN'
         $result=Invoke-Check
-        Row $result 'Runner group' | Should -Match "CHECK MANUALLY.*HTTP $Code.*Organization Settings.*Workflow access"
-        Row $result 'Release immutability' | Should -Match 'CHECK MANUALLY.*Release immutability'
-        $result.Outputs.status | Should -BeExactly 'CHECK MANUALLY'
-        $result.Summary | Should -Not -Match 'PRIVATE-ERROR'
-    }
-    It 'rejects incomplete pagination, malformed and contradictory successful responses' {
-        $api['/repos/example-org/example/actions/variables?per_page=30&page=1'].total_count=100
-        Row (Invoke-Check) 'Actions variables' | Should -Match 'CHECK MANUALLY.*Incomplete API pagination'
-        $global:GitHubSetupTest.Api=New-ApiFixture; $api=$global:GitHubSetupTest.Api; $api['/repos/example-org/example/environments?per_page=100&page=1']='invalid'
-        Row (Invoke-Check) 'Environment' | Should -Match 'CHECK MANUALLY.*Malformed'
-        $global:GitHubSetupTest.Api=New-ApiFixture; $api=$global:GitHubSetupTest.Api; $api['/repos/example-org/example/immutable-releases']=@{enabled=$false;enforced_by_owner=$true}
-        Row (Invoke-Check) 'Release immutability' | Should -Match 'CHECK MANUALLY.*Contradictory'
-    }
-    It 'follows bounded pages and rejects an unfinished final page' {
-        $path='/repos/example-org/example/actions/variables?per_page=30&page=1'
-        $nextPages[$path]=$true
-        $api[$path].total_count=5
-        $api['/repos/example-org/example/actions/variables?per_page=30&page=2']=@{total_count=5;variables=@(@{name='EXTRA'})}
-        Row (Invoke-Check) 'Actions variables' | Should -Match '^\| CONFIGURED'
-        $api['/repos/example-org/example/actions/variables?per_page=30&page=2'].total_count=6
-        Row (Invoke-Check) 'Actions variables' | Should -Match 'CHECK MANUALLY.*Contradictory'
-    }
-    It 'rejects repeated pages before they can falsely establish a requested resource is absent' {
-        $path='/repos/example-org/example/environments?per_page=100&page=1'
-        $nextPages[$path]=$true; $api[$path].total_count=2
-        $api['/repos/example-org/example/environments?per_page=100&page=2']=$api[$path]
-        Row (Invoke-Check @{EnvironmentName='other'}) 'Environment' | Should -Match 'CHECK MANUALLY.*duplicate resource'
-    }
-    It 'uses the default token when optional inspection credentials are absent, and the optional token when present' {
-        $null=Invoke-Check
-        @($seenHeaders | Select-Object -Unique) | Should -Be @('Bearer DEFAULT-TEST-TOKEN')
-        $seenHeaders.Clear(); $env:CLC_INSPECTION_TOKEN='OPTIONAL-TEST-TOKEN'
-        $result=Invoke-Check
-        @($seenHeaders | Select-Object -Unique) | Should -Be @('Bearer OPTIONAL-TEST-TOKEN')
+        @($seenHeaders | Where-Object {$_ -cne 'Bearer OPTIONAL-TEST-TOKEN'}).Count | Should -Be 0
         $result.Summary | Should -Not -Match 'OPTIONAL-TEST-TOKEN'
     }
     It 'checks the supported immutability setting and can omit that optional category' {
@@ -350,18 +214,13 @@ Describe 'GitHub setup inspection' {
         Row (Invoke-Check) 'Release immutability' | Should -Match 'NEEDS CONFIGURATION.*not enabled'
         $result=Invoke-Check @{CheckReleaseImmutability=$false}
         $result.Summary | Should -Not -Match '\| \[Release immutability\]'
-        $result.Outputs.configured_count | Should -Be '6'
+        $result.Outputs.configured_count | Should -Be '4'
     }
-    It 'escapes dynamic Markdown, formats deterministically and gives precedence to confirmed discrepancies' {
-        $first=Invoke-Check @{EnvironmentName='bad|[link](https://evil.invalid)<script>'}
-        $second=Invoke-Check @{EnvironmentName='bad|[link](https://evil.invalid)<script>'}
-        $first.Summary | Should -BeExactly $second.Summary
-        $first.Summary | Should -Match '&#124;.*&#91;link&#93;.*&lt;script&gt;'
-        $httpStatus['/repos/example-org/example/immutable-releases']=404
-        $result=Invoke-Check @{EnvironmentName='absent'}
+    It 'formats deterministically and gives discrepancies precedence over manual checks' {
+        (Invoke-Check).Summary | Should -BeExactly (Invoke-Check).Summary
+        $api['/repos/example-org/example/environments?per_page=100&page=1']=@{total_count=0;environments=@()}
+        $result=Invoke-Check
         $result.Outputs.status | Should -BeExactly 'NEEDS CONFIGURATION'
-        $result.Outputs.needs_configuration_count | Should -Be '1'
-        $result.Outputs.manual_count | Should -Be '1'
     }
     It 'fails unexpected execution errors instead of returning a successful report' {
         $env:GITHUB_SERVER_URL='https://unsupported.invalid'
@@ -381,10 +240,8 @@ Describe 'Workflow and guide contract' {
         $example=Get-Content -LiteralPath (Join-Path $repositoryRoot 'docs/examples/check-github-setup.yml') -Raw
         $example | Should -Match 'workflow_dispatch:'
         $example | Should -Match 'check-github-setup.yml@[a-f0-9]{40}'
-        $workflow | Should -Match 'expected_workflows:'
-        $workflow | Should -Match 'CLC_EXPECTED_WORKFLOWS: \$\{\{ inputs.expected_workflows \}\}'
-        $workflow | Should -Match '-ExpectedWorkflows \$env:CLC_EXPECTED_WORKFLOWS'
-        $example | Should -Match 'expected_workflows: example-org/example-app/\.github/workflows/deploy-release.yml@refs/heads/master'
+        $workflow | Should -Match 'application_id:'
+        $workflow | Should -Not -Match 'expected_workflows:|runner_labels:|runner_group_variable:|additional_variable_names:'
         $example | Should -Not -Match 'needs:|runs-on:|push:|pull_request:'
     }
     It 'keeps every reported setup-guide anchor valid and retains host and deployment instructions' {
@@ -392,6 +249,6 @@ Describe 'Workflow and guide contract' {
         $guide=Get-Content -LiteralPath (Join-Path $repositoryRoot 'docs/setup-guide.md') -Raw
         $anchors=@([regex]::Matches($guide,'(?m)^#{1,6} (.+?)\r?$') | ForEach-Object { ($_.Groups[1].Value.ToLowerInvariant() -replace '[^a-z0-9 -]','') -replace ' ','-' })
         foreach ($match in [regex]::Matches($source,"Add-Category '[^']+' '([^']+)'")) { $match.Groups[1].Value | Should -BeIn $anchors }
-        foreach ($text in @('Prepare the Windows/IIS host','Install and verify the toolkit','Enroll the target','Authorize first deployment and acceptance')) { $guide | Should -Match ([regex]::Escape($text)) }
+        foreach ($text in @('Prepare and enroll IIS hosts','standing authorization','Verify tag deployments')) { $guide | Should -Match ([regex]::Escape($text)) }
     }
 }

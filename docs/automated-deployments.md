@@ -1,8 +1,8 @@
 # Standing authorization for shared releases
 
-Infrastructure may enable routine releases for one established target under a protected standing policy. The shared [GitHub workflows](shared-release-orchestration.md) independently verify source eligibility, producer run/job/attempt, artifact ownership and downloaded bytes. The installed toolkit then creates an exact approval under the canonical machine/pool lock and uses the existing IIS engine. Release publication never authorizes deployment.
+Infrastructure may enable routine releases for one established target under a protected standing policy. The shared [GitHub workflows](shared-release-orchestration.md) independently verify source eligibility, producer run/job/attempt, artifact ownership and downloaded bytes. The installed toolkit then creates an exact approval under the canonical machine/pool lock and uses the existing IIS engine. The tag is the release decision; host standing authority independently authorizes target execution. Publication must succeed before the dependent deployment job starts.
 
-The four exports remain unchanged. Existing exact manual approvals need no standing policy. GitHub API access stays outside the installed module; no signing service, privileged consumer checkout or application-bundled engine is introduced. See the [host integration contract](verified-workflow-integration.md), [GitHub prerequisites](github-setup.md) and [deployment/recovery rules](deployment.md).
+The four exports remain unchanged. Existing exact manual approvals need no standing policy. GitHub API access stays outside the installed module; no signing service or application-bundled engine is introduced. See the [host integration contract](verified-workflow-integration.md), [GitHub prerequisites](github-setup.md) and [deployment/recovery rules](deployment.md).
 
 ## Independent infrastructure setup
 
@@ -14,7 +14,7 @@ Use distinct DEV and Production targets, environments and policies. Standing aut
 "sourcePolicy": {
   "integrationBranch": "main",
   "allowUnmergedDevTags": true,
-  "allowSnapshots": true
+  "allowSnapshots": false
 }
 ```
 
@@ -28,17 +28,17 @@ The policy still binds application, target, environment, channel, repository, pr
 | --- | --- |
 | `vMAJOR.MINOR.PATCH-dev.N` | DEV; `IntegrationTag` in protected master history, or explicitly enabled `UnmergedDevTag` outside it |
 | `vMAJOR.MINOR.PATCH-beta.N`, `-rc.N` | ArtifactOnly; package/publication without automatic IIS admission |
-| `vMAJOR.MINOR.PATCH` | Production; separately enabled production target and standing authority |
+| `vMAJOR.MINOR.PATCH` | Production; protected integration ancestry and separate production standing authority |
 | `vMAJOR.MINOR.PATCH-test.N` | Unsupported; rejected by release-tag validation |
 | `refs/heads/<integrationBranch>` | DEV snapshot; explicit snapshot policy, verified protected-branch source and authenticated producer-run ordering |
 
-Creating and pushing a valid DEV version tag authorizes that exact release through GitHub repository permissions and tag creation controls. With `allowUnmergedDevTags=true` in both protected consumer configuration and host standing policy, an exact same-repository commit outside master needs no associated PR or formal GitHub review. A PR may be draft, closed or advanced beyond the tagged commit, and its branch may be unprotected or deleted. Master (the actual configured `integrationBranch`, such as `main`) must remain protected. The source must retain identical trusted workflows, configuration and declared supporting files. The shared verifier checks the current tag object and full source commit, exact successful producer and artifact/package identity, then repeats eligibility after privileged queueing and download. A qualifying tag push can proceed unattended; no additional manual release approval gate is needed. Independent host and hook authorization still apply.
+Creating and pushing a valid DEV version tag authorizes that exact release through GitHub native repository-wide Restrict actors policy and tag creation controls. With `allowUnmergedDevTags=true` in host standing policy, an exact same-repository commit outside master needs no associated PR or formal GitHub review. A PR may be draft, closed or advanced beyond the tagged commit, and its branch may be unprotected or deleted. Master (the actual configured `integrationBranch`, such as `main`) must remain protected. The tagged source may change workflows, scripts, configuration and immutable shared pins before merging. The shared verifier checks the current tag object and full source commit, exact successful producer and artifact/package identity, then repeats eligibility after privileged queueing and download. A qualifying tag push can proceed unattended; no additional manual release approval gate is needed. Independent host and hook authorization still apply.
 
 SemVer ordering uses the existing bounded numeric tag sequence; `Test-ClcRelease -ReleaseTag` exposes classification without authority. Snapshots use authenticated producer `runId`, with release ID `dev-<runId>-<first12SourceCommit>`. Their sequence is separate from SemVer: switching ordering kind within an automated lineage refuses. A separately approved manual baseline is required to establish another ordering scheme. Protect integration history against force pushes/deletion; run ordering is not a Git history rollback detector.
 
-Automatic snapshots that have been superseded by the current integration head are skipped. Explicit redeployment uses protected `workflow_dispatch` and independently checked repository write authority; it still must pass source eligibility, monotonic host ordering and every approval check. A rerun retains its original run ID; it does not make an older snapshot newer.
+The shared routine entry point accepts version tags only; it does not trigger branch snapshots or manual dispatch. Installed snapshot evidence and recovery remain supported for existing integrations.
 
-A later run, or later attempt of the same run, can rebuild the same immutable tag/source with new package bytes. Changed bytes for the same run/attempt, moved tags and older builds refuse. A fresh observation that an `UnmergedDevTag` source is now integrated into master can be admitted for the same run only when the exact source/reference/release ID, full provenance, ZIP and manifest bytes match. Current trusted configuration and workflow files must still match; after deliberate policy, producer or shared-pin changes, a historical tag may need separately reviewed repinning or new exact authority. No historical policy registry is maintained.
+A later run, or later attempt of the same run, can rebuild the same immutable tag/source with new package bytes. Changed bytes for the same run/attempt, moved tags and older builds refuse. A fresh observation that an `UnmergedDevTag` source is now integrated into master can be admitted for the same run only when the exact source/reference/release ID, full provenance, ZIP and manifest bytes match. The workflow/configuration and shared pin are authenticated at the tagged revision; there is no equality requirement with current master files. No historical policy registry is maintained.
 
 ## Admission, interruption and revocation
 

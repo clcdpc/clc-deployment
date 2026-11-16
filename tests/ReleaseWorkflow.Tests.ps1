@@ -45,3 +45,34 @@ Describe 'Shared release workflow permissions and artifact identity' {
         $publish | Should -Not -Match '--skip-duplicate|(?m)^\s+NUGET_API_KEY\s*:'
     }
 }
+
+Describe 'Tag-authoritative consumer release chain' {
+    It 'runs all three stages from the tag and propagates build and publication failures' -ForEach @(
+        @{Example='shared-conventional-build.yml'},@{Example='shared-prequalified-build.yml'},@{Example='shared-application-deploy.yml'}
+    ) {
+        $text=Normalize-WorkflowLineEndings ([IO.File]::ReadAllText((Join-Path $script:RepositoryRoot ('docs/examples/'+$Example))))
+        $text | Should -Match "(?m)^    tags: \['v\*'\]$"
+        $text | Should -Not -Match '(?m)^  (workflow_run|workflow_dispatch):|^    branches:'
+        $publication=[regex]::Match($text,'(?ms)^  publication:\n(?<body>.*?)(?=^  deployment:)').Groups['body'].Value
+        $deployment=[regex]::Match($text,'(?ms)^  deployment:\n(?<body>.*)\z').Groups['body'].Value
+        $publication | Should -Match '(?m)^    needs: package$'
+        $deployment | Should -Match '(?m)^    needs: publication$'
+        foreach ($job in @($publication,$deployment)) {
+            $job | Should -Not -Match '(?m)^    if:|continue-on-error:|always\('
+            $job | Should -Match 'reference: \$\{\{ github.ref_name \}\}'
+            $job | Should -Match 'source-commit: \$\{\{ github.sha \}\}'
+            $job | Should -Match 'producer-run-id: \$\{\{ fromJSON\(github.run_id\) \}\}'
+            $job | Should -Match 'producer-run-attempt: \$\{\{ fromJSON\(github.run_attempt\) \}\}'
+        }
+    }
+    It 'keeps deployment labels-only and authenticates current-run identity in every bootstrap' {
+        foreach ($name in @('build','release','deploy')) {
+            $text=Get-Content -LiteralPath (Join-Path $script:RepositoryRoot ('.github/workflows/application-'+$name+'.yml')) -Raw
+            $text | Should -Match "'run_id','run_attempt'"
+            $text | Should -Not -Match 'runner-group|runnerGroup|inputs.automatic|vars\.'
+        }
+        $deployment=Get-Content -LiteralPath (Join-Path $script:RepositoryRoot '.github/workflows/application-deploy.yml') -Raw
+        $deployment | Should -Match 'runs-on: \$\{\{ fromJSON\(needs.admit.outputs.runner-labels\) \}\}'
+        $deployment | Should -Not -Match '(?m)^    runs-on:\r?\n      group:'
+    }
+}

@@ -33,7 +33,7 @@ jobs:
             $expected = 'clcdpc/clc-deployment/.github/workflows/application-build.yml@' + $claims.job_workflow_sha
             if ($claims.iss -cne 'https://token.actions.githubusercontent.com' -or $claims.aud -cne 'clc-deployment' -or $claims.job_workflow_sha -cnotmatch '^[a-f0-9]{40}$' -or $claims.job_workflow_ref -cne $expected -or $claims.exp -le [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) { throw 'Invalid platform identity.' }
             $projection = [ordered]@{}
-            foreach ($key in @('iss','aud','repository','workflow_ref','workflow_sha','job_workflow_ref','job_workflow_sha','event_name','actor','environment')) { if ($claims.Contains($key)) { $projection[$key] = $claims[$key] } }
+            foreach ($key in @('iss','aud','repository','workflow_ref','workflow_sha','job_workflow_ref','job_workflow_sha','event_name','run_id','run_attempt','actor','environment')) { if ($claims.Contains($key)) { $projection[$key] = $claims[$key] } }
             'sha=' + $claims.job_workflow_sha | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
             'claims=' + ($projection | ConvertTo-Json -Compress) | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
           } catch { throw 'Cannot authenticate immutable shared workflow through the GitHub job endpoint.' }
@@ -43,17 +43,20 @@ jobs:
           ref: ${{ steps.bootstrap.outputs.sha }}
           path: machinery
           persist-credentials: false
-      - name: Verify protected consumer build policy
+      - name: Verify tagged consumer build configuration
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           CLC_CLAIMS: ${{ steps.bootstrap.outputs.claims }}
           CLC_REPOSITORY: ${{ github.repository }}
+          CLC_REFERENCE: ${{ inputs.reference }}
+          CLC_SOURCE: ${{ inputs.source-commit }}
         run: |
           . machinery/tools/release/Workflow.Common.ps1
           $claims = $env:CLC_CLAIMS | ConvertFrom-Json -AsHashtable
           $api = { param($method,$path,$body,[switch]$Bytes) Invoke-ClcReleaseApi -Repository $env:CLC_REPOSITORY -Method $method -Path $path -Body $body -Bytes:$Bytes }
-          $null = Get-ClcProtectedWorkflowConfiguration $claims $env:CLC_REPOSITORY build $env:RUNNER_TEMP $api
+          $selected = Get-ClcProtectedWorkflowConfiguration $claims $env:CLC_REPOSITORY build $env:RUNNER_TEMP $api
+          Assert-ClcWorkflowSource $claims $selected.configuration $env:CLC_REFERENCE $env:CLC_SOURCE ([long]$env:GITHUB_RUN_ID) ([long]$env:GITHUB_RUN_ATTEMPT)
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ inputs.source-commit }}

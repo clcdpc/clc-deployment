@@ -1,54 +1,22 @@
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory)][string] $ApplicationId,
+    [ValidateSet('DEV','Production')][string] $Channel = 'DEV',
     [ValidateNotNullOrEmpty()][string] $IntegrationBranch = 'master',
-    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $EnvironmentName,
-    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $RunnerGroup,
-    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $RunnerLabels,
-    [string] $ExpectedWorkflows = '',
-    [ValidateNotNullOrEmpty()][string] $ReleaseTagPattern = 'v*',
-    [string] $RunnerGroupVariable = '',
-    [string] $RunnerLabelsVariable = '',
-    [string] $AdditionalVariableNames = '',
+    [string] $RunnerGroup = '',
+    [string] $ReleaseTagPattern = 'v*',
     [bool] $CheckReleaseImmutability = $true
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# The reusable workflow supplies repository identity from github.repository, never an input.
+# The reusable workflow supplies repository identity from github.repository.
 if ($env:GITHUB_REPOSITORY -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Invalid Actions repository context.' }
 if ($env:GITHUB_SERVER_URL -cne 'https://github.com') { throw 'Only GitHub.com is supported.' }
-foreach ($value in @($IntegrationBranch,$EnvironmentName,$RunnerGroup,$RunnerLabels,$ReleaseTagPattern)) {
-    if ($value.Length -gt 256 -or $value -match '[\x00-\x1f\x7f]') { throw 'Invalid setup input.' }
-}
-function Split-Names([string] $Value) {
-    if (-not $Value) { return }
-    $names = @($Value.Split(',') | ForEach-Object { $_.Trim() })
-    if ($names.Count -gt 30 -or @($names | Where-Object { -not $_ -or $_.Length -gt 100 -or $_ -match '[\x00-\x1f\x7f]' }).Count) { throw 'Invalid comma-separated names.' }
-    $names | Sort-Object -Unique
-}
-$expectedLabels = @(Split-Names $RunnerLabels)
-function Workflow-Key($Value) {
-    if ($Value -isnot [string] -or $Value.Length -gt 512 -or $Value -inotmatch '^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml)@([a-f0-9]{40}|refs/(?:heads|tags)/[^\x00-\x20\x7f~^:?*\[\\]+)$') { return $null }
-    $path = $Matches[1]; $revision = $Matches[2]
-    if ($revision -match '\.\.|//|/\.|[./]$|\.lock(?:/|$)|@\{') { return $null }
-    $path.ToLowerInvariant() + '@' + $revision
-}
-$expectedWorkflowSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-if ($ExpectedWorkflows) {
-    if ($ExpectedWorkflows.Length -gt 15360) { throw 'Expected workflows exceed the input bound.' }
-    $entries = $ExpectedWorkflows.Split(',')
-    if ($entries.Count -gt 30) { throw 'Too many expected workflows.' }
-    foreach ($entry in $entries) {
-        $key = Workflow-Key $entry.Trim()
-        if (-not $key) { throw 'Expected workflows must be comma-separated exact workflow paths at full commits or explicit refs.' }
-        [void]$expectedWorkflowSet.Add($key)
-    }
-}
-$RunnerGroupVariable = $RunnerGroupVariable.Trim()
-$RunnerLabelsVariable = $RunnerLabelsVariable.Trim()
-$variableNames = @(Split-Names (($RunnerGroupVariable,$RunnerLabelsVariable,$AdditionalVariableNames | Where-Object { $_ }) -join ','))
-foreach ($name in $variableNames) { if ($name -cnotmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw 'Invalid variable name.' } }
-if ($RunnerGroupVariable.Contains(',') -or $RunnerLabelsVariable.Contains(',')) { throw 'Runner variable inputs accept one name each.' }
+if ($ApplicationId -cnotmatch '^[a-z0-9][a-z0-9-]{0,52}$' -or $IntegrationBranch -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_/-]{0,99}$' -or
+    $RunnerGroup.Length -gt 128 -or $RunnerGroup -match '[\x00-\x1f\x7f]' -or $ReleaseTagPattern -cne 'v*') { throw 'Invalid setup input.' }
+$EnvironmentName = $ApplicationId + '-' + $Channel.ToLowerInvariant()
+$expectedLabels = @('self-hosted','Windows','X64',$EnvironmentName)
 $repository = $env:GITHUB_REPOSITORY
 $owner = $repository.Split('/')[0]
 $repoPath = '/repos/' + $repository
@@ -135,23 +103,6 @@ function Add-Category([string] $Name, [string] $Anchor, [string] $Url, [string] 
     try { $result = & $Inspect } catch [IO.InvalidDataException] { $result = Observation -Manual $_.Exception.Message }
     $rows.Add(@{ Name=$Name; Status=$result.Status; Details=$result.Details; Guide="$guideUrl#$Anchor"; Url=$Url; Navigation=$Navigation; Expected=$Expected })
 }
-function Same-Labels([string[]] $Left, [string[]] $Right) { [Collections.Generic.HashSet[string]]::new($Left,[StringComparer]::OrdinalIgnoreCase).SetEquals($Right) }
-function Read-RunnerLabels([string] $Value) {
-    $labels = @(); $document = $null
-    if ($Value.TrimStart().StartsWith('[')) {
-        try {
-            $document = [Text.Json.JsonDocument]::Parse($Value)
-            foreach ($element in $document.RootElement.EnumerateArray()) {
-                if ($element.ValueKind -ne [Text.Json.JsonValueKind]::String) { return ,@() }
-                $labels += $element.GetString()
-            }
-        } catch { return ,@() } finally { if ($null -ne $document) { $document.Dispose() } }
-    } else { $labels = @($Value.Split(',') | ForEach-Object { $_.Trim() }) }
-    $unique = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($label in $labels) { if ([string]::IsNullOrWhiteSpace($label) -or -not $unique.Add($label)) { return ,@() } }
-    return ,$labels
-}
-
 # Each independently enforcing, visible no-bypass ruleset can establish a control.
 # Hidden or selected-actor bypass needs UI review; broad role bypass cannot establish it.
 function Rule-Bypass($RuleSet) {
@@ -177,7 +128,7 @@ function Check-Controls([string[]] $Required, [string[]] $Present, [string[]] $E
     Observation -Missing $missing -Manual $manual -Confirmed 'Required restrictions and observable bypass confirmed.'
 }
 
-Add-Category 'Branch protection' '2-configure-the-repository' "$repoUrl/settings/rules" 'Repository Settings > Rules > Rulesets / Settings > Branches' 'Existing integration branch; nonempty required status checks; force pushes and deletion restricted; no defeating bypass.' {
+Add-Category 'Branch protection' '4-protect-master' "$repoUrl/settings/rules" 'Repository Settings > Rules > Rulesets / Settings > Branches' 'Existing integration branch; nonempty required status checks; force pushes and deletion restricted; no defeating bypass.' {
     $branches = Read-List "$repoPath/branches"
     foreach ($branch in $branches) { Require-Strings $branch @('name'); Require-Bools $branch @('protected') }
     $branchMatches = @($branches | Where-Object { $_.name -ceq $IntegrationBranch })
@@ -274,7 +225,15 @@ Add-Category 'Tag protection' '3-protect-release-tags' "$repoUrl/settings/rules"
     Check-Controls @('creation','update','deletion') $present $enforced $complete @() $bypassed $unknownBypass
 }
 
-Add-Category 'Environment' '5-configure-github-environments' "$repoUrl/settings/environments" "Repository Settings > Environments > $EnvironmentName > Deployment branches and tags / Deployment protection rules" "Selected branches and tags: exactly branch $IntegrationBranch; no human approval gate for unattended execution." {
+Add-Category 'Restrict actors' '2-configure-restrict-actors' "$repoUrl/settings/actions/policies" 'Repository Settings > Actions > Policies > New policy > Restrict actors' 'Repository-wide native Restrict actors policy admits only authorized release developers and trusted automation.' {
+    Observation -Manual 'Read-only APIs do not reliably expose this repository-wide policy. Review Restrict actors in GitHub; do not create a second application allowlist.'
+}
+
+Add-Category 'Workflow trigger' '9-verify-tag-deployments' "$repoUrl/tree/$IntegrationBranch/.github/workflows" 'Repository > Code > .github/workflows > application release workflow' 'Version-tag push only; package then publication then deployment using needs; caller runs at the tag, including unmerged DEV commits.' {
+    Observation -Manual 'Review the tagged consumer workflow and immutable shared pins. No workflow_run or manual release trigger; ordinary build/test jobs use hosted runners. This diagnostic does not analyze workflow code.'
+}
+
+Add-Category 'Environment' '5-create-environments' "$repoUrl/settings/environments" "Repository Settings > Environments > $EnvironmentName > Deployment branches and tags / Deployment protection rules" 'No restriction for deployment branches and tags; no required reviewers or wait timer.' {
     $environments = Read-List "$repoPath/environments" 'environments'
     foreach ($item in $environments) { Require-Strings $item @('name') }
     $found = @($environments | Where-Object { $_.name -ieq $EnvironmentName })
@@ -284,113 +243,55 @@ Add-Category 'Environment' '5-configure-github-environments' "$repoUrl/settings/
     Require-Fields $environment @('protection_rules')
     if ($environment.protection_rules -isnot [array] -or -not $environment.Contains('deployment_branch_policy')) { Uncertain 'Environment protection settings unavailable.' }
     $missing = @(); $manual = @()
-    $policy = $environment.deployment_branch_policy
-    if ($null -eq $policy) { $missing += 'Environment allows unrestricted branches/tags.' }
-    else {
-        Require-Bools $policy @('custom_branch_policies','protected_branches')
-        if (-not $policy.custom_branch_policies -or $policy.protected_branches) { $missing += 'Environment must select only the expected integration branch.' }
-        else {
-            $policies = Read-List "$repoPath/environments/$([uri]::EscapeDataString($EnvironmentName))/deployment-branch-policies" 'branch_policies'
-            foreach ($item in $policies) { Require-Strings $item @('name','type') }
-            if ($policies.Count -ne 1 -or $policies[0].name -cne $IntegrationBranch -or $policies[0].type -cne 'branch') { $missing += 'Environment branch/tag rules differ from the single expected branch.' }
-        }
-    }
+    if ($null -ne $environment.deployment_branch_policy) { $missing += 'Select No restriction for deployment branches and tags so unmerged DEV tags can deploy.' }
     foreach ($rule in $environment.protection_rules) {
         Require-Strings $rule @('type')
         switch ($rule.type) {
-            'required_reviewers' { $missing += 'Required reviewers prevent unattended deployment.' }
+            'required_reviewers' { $missing += 'Required reviewers prevent automatic tag deployment.' }
             'wait_timer' {
                 Require-Fields $rule @('wait_timer')
                 if (($rule.wait_timer -isnot [int] -and $rule.wait_timer -isnot [long]) -or $rule.wait_timer -lt 0 -or $rule.wait_timer -gt 43200) { Uncertain 'Malformed environment wait timer.' }
+                if ($rule.wait_timer -gt 0) { $missing += 'Remove the deployment wait timer.' }
             }
             'branch_policy' { }
             default { $manual += 'Review custom environment protection behavior.' }
         }
     }
-    Observation -Missing $missing -Manual $manual -Confirmed "$EnvironmentName selects only $IntegrationBranch with visible unattended protections."
+    Observation -Missing $missing -Manual $manual -Confirmed "$EnvironmentName allows automatic version-tag deployment."
 }
 
-Add-Category 'Runner group' '6-configure-self-hosted-runners' $groupUrl "Organization Settings > Actions > Runner groups > $RunnerGroup > Repository access / Workflow access" 'Selected repositories including this caller; matching public eligibility; Selected workflows with only approved definitions at explicit protected refs or full commits.' {
-    $groups = Read-List "/orgs/$owner/actions/runner-groups" 'runner_groups'
-    foreach ($item in $groups) { Require-Fields $item @('id'); Require-Strings $item @('name') }
-    $found = @($groups | Where-Object { $_.name -ceq $RunnerGroup })
-    if (-not $found.Count) { return Observation -Missing "Runner group $RunnerGroup does not exist; its settings cannot yet be inspected." }
-    if ($found.Count -ne 1 -or [string]$found[0].id -notmatch '^[1-9][0-9]*$') { Uncertain 'Ambiguous runner-group identity.' }
-    $script:group = $found[0]
-    Require-Strings $group @('visibility'); Require-Bools $group @('allows_public_repositories','restricted_to_workflows')
-    $missing = @(); $manual = @()
-    if ($group.visibility -cne 'selected') { $missing += 'Runner group must use Selected repositories.' }
-    else {
-        $repos = Read-List "/orgs/$owner/actions/runner-groups/$($group.id)/repositories" 'repositories'
-        foreach ($item in $repos) { Require-Strings $item @('full_name') }
-        if (-not @($repos | Where-Object { $_.full_name -ieq $repository }).Count) { $missing += 'Consumer repository is not admitted to the selected runner group.' }
+if ($RunnerGroup) {
+    Add-Category 'Runner group' '6-register-deployment-runners' $groupUrl "Organization Settings > Actions > Runner groups > $RunnerGroup > Repository access" 'Optional organization group grants the application repository access; labels select the runner.' {
+        $groups = Read-List "/orgs/$owner/actions/runner-groups" 'runner_groups'
+        foreach ($item in $groups) { Require-Fields $item @('id'); Require-Strings $item @('name') }
+        $found = @($groups | Where-Object { $_.name -ceq $RunnerGroup })
+        if (-not $found.Count) { return Observation -Missing 'Requested optional runner group does not exist.' }
+        if ($found.Count -ne 1 -or [string]$found[0].id -notmatch '^[1-9][0-9]*$') { Uncertain 'Ambiguous runner-group identity.' }
+        $group=$found[0]; Require-Strings $group @('visibility')
+        if ($group.visibility -ceq 'selected') {
+            $repos=Read-List "/orgs/$owner/actions/runner-groups/$($group.id)/repositories" 'repositories'
+            foreach ($item in $repos) { Require-Strings $item @('full_name') }
+            if (-not @($repos | Where-Object { $_.full_name -ieq $repository }).Count) { return Observation -Missing 'Application repository is not admitted to the optional group.' }
+        } elseif ($group.visibility -cne 'all') { Uncertain 'Review organization runner-group repository access.' }
+        Observation -Confirmed 'Optional organization group grants repository access. No exact workflow allowlist is required by CLC.'
     }
-    $metadata = (Read-GitHub $repoPath).Data
-    Require-Bools $metadata @('private')
-    if ($group.allows_public_repositories -eq $metadata.private) { $missing += 'Public-repository eligibility does not match caller visibility.' }
-    if (-not $group.restricted_to_workflows) { $missing += 'Selected workflows must be enabled.' }
-    if (-not $expectedWorkflowSet.Count) { $manual += 'Exact workflow allowlist is unverified: supply expected_workflows or compare it in Workflow access.' }
-    if (-not $group.Contains('selected_workflows') -or $group.selected_workflows -isnot [array]) { $manual += 'Runner workflow allowlist unavailable.' }
-    else {
-        if (-not $group.selected_workflows.Count) { $missing += 'Selected workflows must have a nonempty allowlist.' }
-        $observed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        $wellFormed = $true
-        foreach ($entry in $group.selected_workflows) {
-            if ($entry -isnot [string]) { $manual += 'Malformed selected workflow entry.'; $wellFormed = $false; continue }
-            $key = Workflow-Key $entry
-            if (-not $key) { $missing += 'Workflow access contains a wildcard or nonexplicit workflow definition.'; continue }
-            [void]$observed.Add($key)
-        }
-        if ($expectedWorkflowSet.Count -and $wellFormed) {
-            foreach ($entry in $expectedWorkflowSet) { if (-not $observed.Contains($entry)) { $missing += "Missing expected workflow: $entry." } }
-            $extra = @($observed | Where-Object { -not $expectedWorkflowSet.Contains($_) }).Count
-            if ($extra) { $missing += "Workflow allowlist contains $extra unexpected entries (values withheld)." }
-        }
-    }
-    Observation -Missing $missing -Manual $manual -Confirmed 'Selected repository and Selected workflows restrictions match the exact expected allowlist.'
 }
 
-Add-Category 'Runners' 'register-runners-and-configure-labels' $groupUrl "Organization Settings > Actions > Runner groups > $RunnerGroup > Runners" "One online runner in this exact group with all labels: $($expectedLabels -join ', ')." {
-    if ($null -eq $group) { Uncertain 'Expected runner group could not be resolved; inspect its registrations after resolving the group.' }
-    $runners = Read-List "/orgs/$owner/actions/runner-groups/$($group.id)/runners" 'runners'
-    if (-not $runners.Count) { return Observation -Missing 'Expected runner group has no registered runners.' }
-    $online = 0
+Add-Category 'Runners' '6-register-deployment-runners' "$repoUrl/settings/actions/runners" 'Repository Settings > Actions > Runners (or Organization Settings > Actions > Runners)' "One online repository-accessible runner with labels: $($expectedLabels -join ', '). No runner group or routing variables required." {
+    $runners=Read-List "$repoPath/actions/runners" 'runners'
+    if (-not $runners.Count) { return Observation -Missing 'No repository-accessible deployment runner is registered.' }
     foreach ($runner in $runners) {
         Require-Strings $runner @('status'); Require-Fields $runner @('labels')
         if ($runner.status -cnotin @('online','offline') -or $runner.labels -isnot [array]) { Uncertain 'Malformed runner state.' }
-        if ($runner.status -ne 'online') { continue }
-        $online++
         foreach ($label in $runner.labels) { Require-Strings $label @('name') }
-        $actual = @($runner.labels | ForEach-Object { $_.name })
-        if (-not @($expectedLabels | Where-Object { $_ -notin $actual }).Count) { return Observation -Confirmed 'An online runner in the expected group has every expected label.' }
+        $actual=@($runner.labels | ForEach-Object { $_.name })
+        if ($runner.status -ceq 'online' -and -not @($expectedLabels | Where-Object { $_ -notin $actual }).Count) { return Observation -Confirmed 'An online repository-accessible runner has every derived label.' }
     }
-    Observation -Missing $(if ($online) { 'No online runner in this group has all expected labels.' } else { 'No runner in the expected group is online.' })
-}
-
-Add-Category 'Actions variables' '7-configure-deployment-routing-and-activation' "$repoUrl/settings/variables/actions" 'Repository Settings > Secrets and variables > Actions > Variables' "Requested repository variable names exist; selected runner variables match $RunnerGroup and the expected labels. Activation may remain false." {
-    if (-not $variableNames.Count) { return Observation -Confirmed 'No repository variable names requested.' }
-    $variables = Read-List "$repoPath/actions/variables" 'variables' 30
-    $missing = @(); $manual = @()
-    foreach ($variable in $variables) { Require-Strings $variable @('name') }
-    foreach ($name in $variableNames) {
-        $found = @($variables | Where-Object { $_.name -ieq $name })
-        if (-not $found.Count) { $missing += "Repository variable $name does not exist."; continue }
-        if ($found.Count -ne 1) { Uncertain 'Contradictory repository variable list.' }
-        if ($name -ieq $RunnerGroupVariable -or $name -ieq $RunnerLabelsVariable) {
-            if (-not $found[0].Contains('value') -or $found[0].value -isnot [string]) { $manual += "Value of $name is unavailable."; continue }
-            if ($name -ieq $RunnerGroupVariable -and $found[0].value -cne $RunnerGroup) { $missing += "Runner-group variable $name differs from expected group." }
-            if ($name -ieq $RunnerLabelsVariable) {
-                # Malformed observed values are discrepancies, not input validation errors.
-                $labels = Read-RunnerLabels $found[0].value
-                if (-not (Same-Labels $labels $expectedLabels)) { $missing += "Runner-label variable $name differs from expected labels." }
-            }
-        }
-    }
-    Observation -Missing $missing -Manual $manual -Confirmed 'Requested variable names and expected runner values confirmed; activation values are not interpreted.'
+    Observation -Missing 'No online repository-accessible runner has all expected labels.'
 }
 
 if ($CheckReleaseImmutability) {
-    Add-Category 'Release immutability' 'configure-release-immutability' "$repoUrl/settings#releases" 'Repository Settings > General > Releases > Release immutability' 'Enable release immutability (or owner-enforced immutability).' {
+    Add-Category 'Release immutability' '3-protect-release-tags' "$repoUrl/settings#releases" 'Repository Settings > General > Releases > Release immutability' 'Enable release immutability (or owner-enforced immutability).' {
         $setting = (Read-GitHub "$repoPath/immutable-releases").Data
         Require-Bools $setting @('enabled','enforced_by_owner')
         if (-not $setting.enabled -and $setting.enforced_by_owner) { Uncertain 'Contradictory immutability settings.' }
@@ -410,7 +311,7 @@ $status = if ($needs) { 'NEEDS CONFIGURATION' } elseif ($manual) { 'CHECK MANUAL
 $summary = [Collections.Generic.List[string]]::new()
 $summary.Add('# GitHub Deployment Setup')
 $summary.Add('')
-foreach ($item in @(@('Repository',$repository),@('Branch',$IntegrationBranch),@('Environment',$EnvironmentName),@('Runner group',$RunnerGroup))) { $summary.Add("$($item[0]): $(Escape-Markdown $item[1])  ") }
+foreach ($item in @(@('Repository',$repository),@('Branch',$IntegrationBranch),@('Environment',$EnvironmentName),@('Runner labels',($expectedLabels -join ', ')))) { $summary.Add("$($item[0]): $(Escape-Markdown $item[1])  ") }
 $summary.Add('')
 $summary.Add("Overall: **$status**  ")
 $summary.Add("Configured: $configured | Needs configuration: $needs | Check manually: $manual")

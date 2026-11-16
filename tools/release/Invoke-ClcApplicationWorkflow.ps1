@@ -8,7 +8,6 @@ param(
     [Parameter(Mandatory)][ValidateRange(1,[long]::MaxValue)][long] $RunId,
     [Parameter(Mandatory)][ValidateRange(1,1000)][long] $RunAttempt,
     [ValidateRange(0,[long]::MaxValue)][long] $ArtifactId=0,
-    [bool] $Automatic=$true,
     [ValidateSet('Deploy','ValidateOnly')][string] $Operation='Deploy',
     [string] $ExpectedConfigurationBlob,
     [Parameter(Mandatory)][string] $OutputDirectory
@@ -27,17 +26,18 @@ function Write-WorkflowOutput([string] $Name,[string] $Value) {
 $workflow=if ($Action -ceq 'Release') {'release'} else {'deploy'}
 $trusted=Get-ClcProtectedWorkflowConfiguration $claims $Repository $workflow $OutputDirectory $api
 $c=$trusted.configuration
+Assert-ClcWorkflowSource $claims $c $Reference $SourceCommit $RunId $RunAttempt
 if ($Action -ceq 'Deploy' -and ($ExpectedConfigurationBlob -cnotmatch '^[a-f0-9]{40}$' -or $trusted.blob -cne $ExpectedConfigurationBlob)) { throw 'Protected routing configuration changed while queued.' }
 $qualified=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $ArtifactId $api
 $source=$qualified.source; $producer=$qualified.producer
 if ($Action -ceq 'Admit') {
-    $route=Get-ClcDeploymentRoute $c $source $Automatic $claims $api
+    $route=Get-ClcDeploymentRoute $c $source
     if ($route.admitted) {
         $archive=Save-ClcVerifiedArtifact $Repository $producer (Join-Path $OutputDirectory 'artifact') $api
         Import-Module (Join-Path $PSScriptRoot '../../src/CLC.Deployment/CLC.Deployment.psd1') -Force
         $null=New-ClcVerifiedPackageIdentity $c $source $producer $archive $route.target.targetId
         $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
-        $route=Get-ClcDeploymentRoute $c $again.source $Automatic $claims $api
+        $route=Get-ClcDeploymentRoute $c $again.source
     }
     Write-WorkflowOutput admitted $route.admitted.ToString().ToLowerInvariant()
     Write-WorkflowOutput status $route.status
@@ -45,14 +45,13 @@ if ($Action -ceq 'Admit') {
     Write-WorkflowOutput artifact_id $producer.artifactId.ToString([Globalization.CultureInfo]::InvariantCulture)
     if ($route.admitted) {
         Write-WorkflowOutput environment $route.target.environment
-        Write-WorkflowOutput runner_group $route.target.runnerGroup
         Write-WorkflowOutput runner_labels ($route.target.runnerLabels | ConvertTo-Json -Compress)
         Write-WorkflowOutput target_id $route.target.targetId
     }
     return [pscustomobject]@{status=$route.status;admitted=$route.admitted}
 }
 if ($Action -ceq 'Deploy') {
-    $route=Get-ClcDeploymentRoute $c $source $Automatic $claims $api
+    $route=Get-ClcDeploymentRoute $c $source
     if (-not $route.admitted) { return [pscustomobject]@{status=$route.status;admitted=$false} }
     if (-not $claims.Contains('environment') -or $claims.environment -cne $route.target.environment) { throw 'Queued job environment differs from protected target authorization.' }
 }
@@ -63,7 +62,6 @@ if ($Action -ceq 'Release') {
     # Reobserve mutable eligibility after the download and before publication.
     $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
     if (($again.source.identity | ConvertTo-Json -Compress) -cne ($source.identity | ConvertTo-Json -Compress)) { throw 'Release source changed during verification.' }
-    if ($source.identity.kind -ceq 'snapshot') { return [pscustomobject]@{status='ActionsArtifactRetained';releaseId=$verified.releaseId} }
     $asset=@{name='release.zip';path=$archive;length=[long](Get-Item -LiteralPath $archive).Length;sha256=$verified.releaseZipSha256}
     $hash={param($asset) $bytes=Invoke-ClcReleaseApi $Repository GET ('/repos/'+$Repository+'/releases/assets/'+$asset.id) -Bytes; return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$bytes)).ToLowerInvariant()}
     $upload={param($release,$asset) Send-ClcApplicationReleaseAsset $Repository $release $asset}
@@ -98,7 +96,7 @@ $target=$handoff.target; $inboxZip=$handoff.zip; $inboxIdentity=$handoff.identit
 # Recheck exact tag/source, successful producer attempt and artifact identity
 # immediately before protected host admission, after runner queue and download.
 $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
-$finalRoute=Get-ClcDeploymentRoute $c $again.source $Automatic $claims $api
+$finalRoute=Get-ClcDeploymentRoute $c $again.source
 if (-not $finalRoute.admitted) { return [pscustomobject]@{status=$finalRoute.status;admitted=$false} }
 if (($again.source.identity | ConvertTo-Json -Compress) -cne ($source.identity | ConvertTo-Json -Compress)) { throw 'Release source changed before host admission.' }
 $safePath=Join-Path $OutputDirectory 'deployment-summary.json'

@@ -72,6 +72,13 @@ Describe 'Versioned source admission preserves protected authority' {
         $global:ClcLifecycle.operations.Clear()
     }
     AfterEach { Remove-TestWorkspace $fixture.workspace }
+    It 'rejects missing or revoked host standing authorization for an otherwise exact tagged release before effects' -ForEach @(@{Mode='missing'},@{Mode='revoked'}) {
+        $source=New-SourceAdmissionFixture $fixture -Reference 'v1.0.0-dev.1' -SourceClass UnmergedDevTag
+        if ($Mode -ceq 'missing') { [IO.File]::Delete($source.path) }
+        else { $source.standing.enabled=$false; Write-TestJson $source.path $source.standing }
+        Test-TestRejection { Invoke-SourceAdmission $fixture $source } 'Clc.StandingAuthorizationRejected*'
+        $global:ClcLifecycle.operations.Count | Should -Be 0
+    }
     It 'admits successive ASAP protected-main snapshots under a separate explicit source policy' {
         $first=New-SourceAdmissionFixture $fixture
         (Invoke-SourceAdmission $fixture $first).status | Should -BeExactly 'Deployed'
