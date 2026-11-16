@@ -7,8 +7,9 @@ BeforeAll {
             "$base/branches?per_page=100&page=1" = @(@{name='master';protected=$true})
             "$base/branches/master/protection" = @{enforce_admins=@{enabled=$true};allow_force_pushes=@{enabled=$false};allow_deletions=@{enabled=$false};required_status_checks=@{contexts=@('build');checks=@()}}
             "$base/rules/branches/master?per_page=100&page=1" = @()
-            "$base/rulesets?includes_parents=true&targets=tag&per_page=100&page=1" = @(@{id=1;name='release tags';source_type='Repository';source='example-org/example';enforcement='active'})
-            "$base/rulesets/1" = @{id=1;target='tag';enforcement='active';bypass_actors=@();conditions=@{ref_name=@{include=@('refs/tags/v*');exclude=@()}};rules=@(@{type='creation'},@{type='update'},@{type='deletion'})}
+            "$base/rulesets?includes_parents=true&targets=tag&per_page=100&page=1" = @(@{id=1;name='release creators';source_type='Repository';source='example-org/example';enforcement='active'},@{id=3;name='immutable release tags';source_type='Repository';source='example-org/example';enforcement='active'})
+            "$base/rulesets/1" = @{id=1;target='tag';enforcement='active';bypass_actors=@(@{actor_id=42;actor_type='Team';bypass_mode='always'});conditions=@{ref_name=@{include=@('refs/tags/v*');exclude=@()}};rules=@(@{type='creation'})}
+            "$base/rulesets/3" = @{id=3;target='tag';enforcement='active';bypass_actors=@();conditions=@{ref_name=@{include=@('refs/tags/v*');exclude=@()}};rules=@(@{type='update'},@{type='deletion'})}
             "$base/environments?per_page=100&page=1" = @{total_count=1;environments=@(@{name='example-dev';deployment_branch_policy=$null;protection_rules=@(@{type='branch_policy'})})}
             "$base/environments/example-dev/deployment-branch-policies?per_page=100&page=1" = @{total_count=1;branch_policies=@(@{name='master';type='branch'})}
             '/orgs/example-org/actions/runner-groups?per_page=100&page=1' = @{total_count=1;runner_groups=@(@{id=5;name='example-dev';visibility='selected';allows_public_repositories=$false;restricted_to_workflows=$true;selected_workflows=@('example-org/example/.github/workflows/deploy.yml@refs/heads/master')})}
@@ -18,6 +19,10 @@ BeforeAll {
             "$base/actions/variables?per_page=30&page=1" = @{total_count=4;variables=@(@{name='GROUP';value='example-dev'},@{name='LABELS';value='Windows,example-dev,self-hosted,X64'},@{name='DEPLOYMENT_ENABLED';value='false'},@{name='UNRELATED';value='PRIVATE-DO-NOT-PRINT'})}
             "$base/immutable-releases" = @{enabled=$true;enforced_by_owner=$false}
         }
+    }
+    function Add-TagFixture([int] $Id, [string[]] $Types, [object[]] $Bypass = @(), [string[]] $Include = @('refs/tags/v*'), [string[]] $Exclude = @(), [string] $Source = 'Repository') {
+        $global:GitHubSetupTest.Api['/repos/example-org/example/rulesets?includes_parents=true&targets=tag&per_page=100&page=1'] += @{id=$Id;source_type=$Source;enforcement='active'}
+        $global:GitHubSetupTest.Api["/repos/example-org/example/rulesets/$Id"] = @{id=$Id;target='tag';enforcement='active';bypass_actors=$Bypass;conditions=@{ref_name=@{include=$Include;exclude=$Exclude}};rules=@($Types | ForEach-Object { @{type=$_} })}
     }
     function Invoke-Check([hashtable] $Overrides = @{}) {
         $parameters = @{ApplicationId='example'}
@@ -63,9 +68,9 @@ Describe 'GitHub setup inspection' {
         $result = Invoke-Check
         $result.Outputs.status | Should -BeExactly 'CHECK MANUALLY'
         $result.Outputs.Keys.Count | Should -Be 4
-        $result.Outputs.configured_count | Should -Be '5'
+        $result.Outputs.configured_count | Should -Be '4'
         $result.Outputs.needs_configuration_count | Should -Be '0'
-        $result.Outputs.manual_count | Should -Be '2'
+        $result.Outputs.manual_count | Should -Be '3'
         $result.File | Should -BeExactly $result.Summary
         @($result.Summary -split "`n" | Where-Object { $_ -match '^\| (CONFIGURED|NEEDS CONFIGURATION|CHECK MANUALLY) \|' }).Count | Should -Be 7
         $result.Summary | Should -Not -Match 'PRIVATE-DO-NOT-PRINT|DEFAULT-TEST-TOKEN|"total_count"|DEPLOYMENT READY'
@@ -99,36 +104,150 @@ Describe 'GitHub setup inspection' {
         $api['/repos/example-org/example/rules/branches/master?per_page=100&page=1']=@(@{type='required_status_checks';ruleset_id=2;parameters=@{required_status_checks=@(@{})}})
         Row (Invoke-Check) 'Branch protection' | Should -Match 'CHECK MANUALLY.*Effective rules: Required API fields'
     }
-    It 'reports known broad bypass while accepting an independently enforcing rule' {
+    It 'reports known broad branch bypass' {
         $api['/repos/example-org/example/branches/master/protection'].enforce_admins.enabled=$false
         Row (Invoke-Check) 'Branch protection' | Should -Match 'NEEDS CONFIGURATION.*Broad administrator/role bypass'
-        $set=$api['/repos/example-org/example/rulesets/1']
-        $set.bypass_actors=@(@{actor_type='OrganizationAdmin';bypass_mode='always'})
-        Row (Invoke-Check) 'Tag protection' | Should -Match 'NEEDS CONFIGURATION.*Broad administrator/role bypass'
-        $set.bypass_actors[0].bypass_mode='pull_request'
-        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CHECK MANUALLY'
-        $set.bypass_actors[0].bypass_mode='always'
-        $independent=$set.Clone(); $independent.id=3; $independent.bypass_actors=@()
-        $api['/repos/example-org/example/rulesets/3']=$independent
-        $api['/repos/example-org/example/rulesets?includes_parents=true&targets=tag&per_page=100&page=1']+=@{id=3;target='tag';enforcement='active'}
-        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CONFIGURED'
     }
     It 'reports missing release-tag restriction: <Control>' -ForEach @(@{Control='creation'},@{Control='update'},@{Control='deletion'}) {
-        $set=$api['/repos/example-org/example/rulesets/1']; $set.rules=@($set.rules | Where-Object type -NE $Control)
+        $id=if ($Control -ceq 'creation') {1} else {3}
+        $set=$api["/repos/example-org/example/rulesets/$id"]; $set.rules=@($set.rules | Where-Object type -NE $Control)
         Row (Invoke-Check) 'Tag protection' | Should -Match "NEEDS CONFIGURATION.*$Control"
+    }
+    It 'distinguishes creator authorization from independently protected immutability' {
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| CHECK MANUALLY.*designated release creators.*exact permitted creators'
+        $row | Should -Match 'Independent update/deletion restrictions without tag bypass are visible'
+        $row | Should -Not -Match 'blocks all|Creation bypass also permits|Confirm independent (update|deletion)'
+        $api['/repos/example-org/example/rulesets/1'].bypass_actors=@()
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| NEEDS CONFIGURATION.*no tag-creation bypass.*blocks all'
+        $row | Should -Match 'Independent update/deletion restrictions without tag bypass are visible'
+    }
+    It 'rejects a combined no-bypass ruleset despite all three restriction types being present' {
+        $set=$api['/repos/example-org/example/rulesets/1']
+        $set.rules=@(@{type='creation'},@{type='update'},@{type='deletion'}); $set.bypass_actors=@()
+        $api['/repos/example-org/example/rulesets?includes_parents=true&targets=tag&per_page=100&page=1']=@(@{id=1})
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| NEEDS CONFIGURATION.*ruleset 1 has no tag-creation bypass'
+        $row | Should -Not -Match 'Missing.*restriction'
+    }
+    It 'requires independent protection when the same creator bypass covers all three rules: <Actor>' -ForEach @(@{Actor='Team'},@{Actor='Integration'},@{Actor='OrganizationAdmin'}) {
+        $set=$api['/repos/example-org/example/rulesets/1']
+        $set.rules=@(@{type='creation'},@{type='update'},@{type='deletion'})
+        $set.bypass_actors=@(@{actor_id=42;actor_type=$Actor;bypass_mode='always'})
+        $api['/repos/example-org/example/rulesets?includes_parents=true&targets=tag&per_page=100&page=1']=@(@{id=1})
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| NEEDS CONFIGURATION.*Creation bypass also permits update'
+        $row | Should -Match 'Creation bypass also permits deletion'
+        $row | Should -Not -Match 'no tag-creation bypass'
+    }
+    It 'accepts independently visible immutability while leaving creator-specific bypass manual: <Actor>/<Mode>' -ForEach @(@{Actor='Team';Mode='always'},@{Actor='Integration';Mode='always'},@{Actor='Team';Mode='exempt'},@{Actor='RepositoryRole';Mode='always'}) {
+        $api['/repos/example-org/example/rulesets/1'].bypass_actors=@(@{actor_id=42;actor_type=$Actor;bypass_mode=$Mode})
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| CHECK MANUALLY.*effective permissions'
+        $row | Should -Match 'Independent update/deletion restrictions without tag bypass are visible'
+        $row | Should -Not -Match 'blocks all|Creation bypass also permits'
+    }
+    It 'does not mistake pull-request-only bypass for permission to create tags' {
+        $api['/repos/example-org/example/rulesets/1'].bypass_actors[0].bypass_mode='pull_request'
+        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| NEEDS CONFIGURATION.*no tag-creation bypass'
+        $api['/repos/example-org/example/rulesets/1'].bypass_actors+=@{actor_id=43;actor_type='Integration';bypass_mode='always'}
+        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CHECK MANUALLY.*designated release creators'
+    }
+    It 'does not mistake hidden or partial bypass evidence for creator authority: <Kind>' -ForEach @(@{Kind='hidden'},@{Kind='null'},@{Kind='partial'},@{Kind='mode'}) {
+        $set=$api['/repos/example-org/example/rulesets/1']
+        switch ($Kind) {
+            hidden {$set.Remove('bypass_actors')}
+            null {$set.bypass_actors=$null}
+            partial {$set.bypass_actors=@(@{actor_type='Team'})}
+            mode {$set.bypass_actors[0].bypass_mode='unsupported'}
+        }
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| CHECK MANUALLY'
+        $row | Should -Not -Match 'blocks all|Creation bypass also permits'
+    }
+    It 'requires manual review of hidden immutability bypass despite visible creator bypass' {
+        $api['/repos/example-org/example/rulesets/3'].Remove('bypass_actors')
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| CHECK MANUALLY.*Confirm independent update.*Confirm independent deletion'
+        $row | Should -Not -Match 'restrictions without tag bypass are visible'
+    }
+    It 'retains an overlapping creation blocker regardless of source or rule order: <Source>/<First>' -ForEach @(@{Source='Repository';First=$false},@{Source='Organization';First=$false},@{Source='Organization';First=$true}) {
+        Add-TagFixture 4 @('creation') -Source $Source
+        $path='/repos/example-org/example/rulesets?includes_parents=true&targets=tag&per_page=100&page=1'
+        if ($First) { $api[$path]=@($api[$path][2],$api[$path][0],$api[$path][1]) }
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| NEEDS CONFIGURATION.*ruleset 4 has no tag-creation bypass'
+        $row | Should -Match 'Independent update/deletion restrictions without tag bypass are visible'
+    }
+    It 'detects known partial creation blockers instead of dropping narrower scopes: <Pattern>' -ForEach @(@{Pattern='refs/tags/v1*'},@{Pattern='refs/tags/v1.2.3'},@{Pattern='~ALL'}) {
+        Add-TagFixture 4 @('creation') -Include @($Pattern)
+        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| NEEDS CONFIGURATION.*ruleset 4 has no tag-creation bypass'
+    }
+    It 'ignores provably disjoint or fully excluded creation blockers: <Kind>' -ForEach @(@{Kind='other-prefix'},@{Kind='case'},@{Kind='excluded'},@{Kind='narrow-excluded'},@{Kind='literal-excluded'}) {
+        switch ($Kind) {
+            other-prefix {Add-TagFixture 4 @('creation') -Include @('refs/tags/other*')}
+            case {Add-TagFixture 4 @('creation') -Include @('refs/tags/V*')}
+            excluded {Add-TagFixture 4 @('creation') -Include @('~ALL') -Exclude @('refs/tags/v*')}
+            narrow-excluded {Add-TagFixture 4 @('creation') -Include @('refs/tags/v1*') -Exclude @('refs/tags/v1*')}
+            literal-excluded {Add-TagFixture 4 @('creation') -Include @('refs/tags/v1.2.3') -Exclude @('refs/tags/v1.2.3')}
+        }
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| CHECK MANUALLY.*designated release creators'
+        $row | Should -Not -Match 'blocks all|overlapping tag scopes'
+    }
+    It 'keeps uncertain include/exclude coverage manual: <Kind>' -ForEach @(@{Kind='include'},@{Kind='exclude'},@{Kind='partial-exclude'}) {
+        switch ($Kind) {
+            include {Add-TagFixture 4 @('creation') -Include @('refs/tags/v[12]*')}
+            exclude {Add-TagFixture 4 @('creation') -Exclude @('refs/tags/v[12]*')}
+            partial-exclude {Add-TagFixture 4 @('creation') -Exclude @('refs/tags/v1*')}
+        }
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| CHECK MANUALLY.*overlapping tag scopes and exclusions'
+        $row | Should -Not -Match 'blocks all'
+    }
+    It 'does not infer a common permitted creator from overlapping selected-actor rulesets' {
+        Add-TagFixture 4 @('creation') -Bypass @(@{actor_id=99;actor_type='Team';bypass_mode='always'}) -Source Organization
+        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CHECK MANUALLY.*every applicable repository and inherited organization ruleset'
+    }
+    It 'retains proven blockers when another ruleset cannot be inspected: <Kind>' -ForEach @(@{Kind='hidden'},@{Kind='denied'},@{Kind='malformed'}) {
+        $api['/repos/example-org/example/rulesets/1'].bypass_actors=@()
+        switch ($Kind) {
+            hidden {$api['/repos/example-org/example/rulesets/3'].Remove('bypass_actors')}
+            denied {$httpStatus['/repos/example-org/example/rulesets/3']=403}
+            malformed {$api['/repos/example-org/example/rulesets/3'].Remove('enforcement')}
+        }
+        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| NEEDS CONFIGURATION.*ruleset 1 has no tag-creation bypass'
+    }
+    It 'does not let a broad or combined bypass defeat independent no-bypass immutability' {
+        $set=$api['/repos/example-org/example/rulesets/1']
+        $set.rules=@(@{type='creation'},@{type='update'},@{type='deletion'})
+        $set.bypass_actors=@(@{actor_type='OrganizationAdmin';bypass_mode='always'})
+        $row=Row (Invoke-Check) 'Tag protection'
+        $row | Should -Match '^\| CHECK MANUALLY.*Independent update/deletion restrictions without tag bypass are visible'
+        $row | Should -Not -Match 'Creation bypass also permits|Broad administrator/role bypass defeats'
+    }
+    It 'does not count inactive rules as creation authority or immutability: <Enforcement>/<Id>' -ForEach @(@{Enforcement='disabled';Id=1},@{Enforcement='evaluate';Id=1},@{Enforcement='disabled';Id=3},@{Enforcement='evaluate';Id=3}) {
+        $set=$api["/repos/example-org/example/rulesets/$Id"]; $set.enforcement=$Enforcement
+        $row=Row (Invoke-Check) 'Tag protection'
+        if ($Id -eq 1) { $row | Should -Match '^\| NEEDS CONFIGURATION.*Missing enforced creation' }
+        else { $row | Should -Match '^\| NEEDS CONFIGURATION.*Missing independently enforced update.*Missing independently enforced deletion' }
+        $set.enforcement='active'
+        Add-TagFixture 4 @('creation'); $api['/repos/example-org/example/rulesets/4'].enforcement=$Enforcement
+        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CHECK MANUALLY.*designated release creators'
     }
     It 'evaluates tag details from documented summaries without target, including inherited rulesets' {
         $path='/repos/example-org/example/rulesets?includes_parents=true&targets=tag&per_page=100&page=1'
         $api[$path][0].Contains('target') | Should -BeFalse
-        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CONFIGURED'
+        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CHECK MANUALLY.*designated release creators'
         $api[$path][0].source_type='Organization'; $api[$path][0].source='example-org'
-        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CONFIGURED'
+        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CHECK MANUALLY.*designated release creators'
         Should -Invoke Invoke-WebRequest -Times 2 -Exactly -ParameterFilter { $Uri -like '*rulesets?includes_parents=true&targets=tag&per_page=100&page=1' }
         Should -Invoke Invoke-WebRequest -Times 2 -Exactly -ParameterFilter { $Uri -eq 'https://api.github.com/repos/example-org/example/rulesets/1' }
     }
     It 'does not trust summary enforcement over the authoritative detail' {
         $api['/repos/example-org/example/rulesets?includes_parents=true&targets=tag&per_page=100&page=1'][0].enforcement='disabled'
-        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CONFIGURED'
+        Row (Invoke-Check) 'Tag protection' | Should -Match '^\| CHECK MANUALLY.*designated release creators'
     }
     It 'keeps wrong-target and missing enforcement details manual' {
         $set=$api['/repos/example-org/example/rulesets/1']; $set.target='branch'
@@ -214,7 +333,7 @@ Describe 'GitHub setup inspection' {
         Row (Invoke-Check) 'Release immutability' | Should -Match 'NEEDS CONFIGURATION.*not enabled'
         $result=Invoke-Check @{CheckReleaseImmutability=$false}
         $result.Summary | Should -Not -Match '\| \[Release immutability\]'
-        $result.Outputs.configured_count | Should -Be '4'
+        $result.Outputs.configured_count | Should -Be '3'
     }
     It 'formats deterministically and gives discrepancies precedence over manual checks' {
         (Invoke-Check).Summary | Should -BeExactly (Invoke-Check).Summary

@@ -103,18 +103,68 @@ function Add-Category([string] $Name, [string] $Anchor, [string] $Url, [string] 
     try { $result = & $Inspect } catch [IO.InvalidDataException] { $result = Observation -Manual $_.Exception.Message }
     $rows.Add(@{ Name=$Name; Status=$result.Status; Details=$result.Details; Guide="$guideUrl#$Anchor"; Url=$Url; Navigation=$Navigation; Expected=$Expected })
 }
-# Each independently enforcing, visible no-bypass ruleset can establish a control.
-# Hidden or selected-actor bypass needs UI review; broad role bypass cannot establish it.
-function Rule-Bypass($RuleSet) {
+# No bypass can establish immutability, but blocks creation. Pull-request-only
+# bypass does not permit tag operations; actor identity/permissions need UI review.
+function Rule-Bypass($RuleSet, [switch] $Tag) {
     if (-not $RuleSet.Contains('bypass_actors')) { return 'hidden' }
     if ($RuleSet.bypass_actors -isnot [array]) { Uncertain 'Malformed ruleset bypass settings.' }
     if (-not $RuleSet.bypass_actors.Count) { return 'none' }
+    $effective = 0
     foreach ($actor in $RuleSet.bypass_actors) {
         Require-Strings $actor @('actor_type','bypass_mode')
         if ($actor.bypass_mode -cnotin @('always','pull_request','exempt')) { Uncertain 'Unsupported ruleset bypass mode.' }
+        if ($Tag -and $actor.bypass_mode -ceq 'pull_request') { continue }
+        $effective++
         if ($actor.actor_type -in @('RepositoryRole','OrganizationAdmin','EnterpriseRole') -and $actor.bypass_mode -in @('always','exempt')) { return 'broad' }
     }
+    if (-not $effective) { return 'none' }
     'selected'
+}
+
+# Deliberately recognize only literal tag names, simple trailing-star prefixes
+# and ~ALL. Complex fnmatch scopes stay manual; do not guess effective coverage.
+function Tag-Pattern([string] $Pattern) {
+    if ($Pattern -ceq '~ALL') { return @{ Prefix=''; Exact=$false } }
+    if ($Pattern -cmatch '^refs/tags/([A-Za-z0-9._-]+)(\*)?$') { return @{ Prefix=$Matches[1]; Exact=(-not $Matches.ContainsKey(2)) } }
+    $null
+}
+function Tag-Scope($Conditions) {
+    Require-Fields $Conditions @('include','exclude')
+    if ($Conditions.include -isnot [array] -or $Conditions.exclude -isnot [array]) { Uncertain 'Malformed tag ruleset conditions.' }
+    $includes = @(); $excludes = @(); $unknownInclude = $false; $unknownExclude = $false
+    foreach ($kind in @('include','exclude')) {
+        foreach ($pattern in $Conditions[$kind]) {
+            if ($pattern -isnot [string]) { Uncertain 'Malformed tag pattern.' }
+            $scope = Tag-Pattern $pattern
+            if ($kind -ceq 'include') { if ($null -eq $scope) { $unknownInclude=$true } else { $includes += $scope } }
+            else { if ($null -eq $scope) { $unknownExclude=$true } else { $excludes += $scope } }
+        }
+    }
+    $prefix = $ReleaseTagPattern.TrimEnd('*')
+    # An exclusion covering v* makes every include irrelevant to release tags.
+    foreach ($exclude in $excludes) {
+        if (-not $exclude.Exact -and $prefix.StartsWith($exclude.Prefix,[StringComparison]::Ordinal)) { return 'none' }
+    }
+    $partial = $false; $unknown = $unknownInclude
+    foreach ($include in $includes) {
+        if ($include.Exact) {
+            if (-not $include.Prefix.StartsWith($prefix,[StringComparison]::Ordinal)) { continue }
+        } elseif ($prefix.StartsWith($include.Prefix,[StringComparison]::Ordinal)) { $include = @{Prefix=$prefix;Exact=$false} }
+        elseif (-not $include.Prefix.StartsWith($prefix,[StringComparison]::Ordinal)) { continue }
+        $excluded = $false; $overlap = $unknownExclude
+        foreach ($exclude in $excludes) {
+            if ((-not $exclude.Exact -and $include.Prefix.StartsWith($exclude.Prefix,[StringComparison]::Ordinal)) -or
+                ($include.Exact -and $include.Prefix -ceq $exclude.Prefix)) { $excluded=$true; break }
+            if (-not $include.Exact -and $exclude.Prefix.StartsWith($include.Prefix,[StringComparison]::Ordinal)) { $overlap=$true }
+        }
+        if ($excluded) { continue }
+        if ($overlap) { $unknown=$true; continue }
+        if (-not $include.Exact -and $include.Prefix -ceq $prefix) { return 'full' }
+        $partial=$true
+    }
+    if ($partial) { return 'partial' }
+    if ($unknown) { return 'unknown' }
+    'none'
 }
 function Check-Controls([string[]] $Required, [string[]] $Present, [string[]] $Enforced, [bool] $Complete, [string[]] $Notes = @(), [string[]] $Bypassed = @(), [string[]] $UnknownBypass = @()) {
     $missing = @(); $manual = @()
@@ -185,44 +235,57 @@ Add-Category 'Branch protection' '4-protect-master' "$repoUrl/settings/rules" 'R
     Check-Controls @('status checks','force push','deletion') $present $enforced ($classicComplete -and $rulesComplete) $notes $bypassed $unknownBypass
 }
 
-Add-Category 'Tag protection' '3-protect-release-tags' "$repoUrl/settings/rules" 'Repository Settings > Rules > Rulesets > release-tag rules' "Active creation, update and deletion restrictions covering $ReleaseTagPattern, with controlled bypass." {
-    if ($ReleaseTagPattern -cnotmatch '^[A-Za-z0-9._-]+\*$') { Uncertain 'Complex expected tag pattern; inspect full coverage and exclusions manually.' }
+Add-Category 'Tag protection' '3-protect-release-tags' "$repoUrl/settings/rules" 'Repository Settings > Rules > Rulesets > release-tag rules' "Active creation restriction covering $ReleaseTagPattern with designated creator bypass; independent update/deletion restrictions without routine release-actor bypass." {
     $sets = Read-List "$repoPath/rulesets?includes_parents=true&targets=tag"
-    $present = @(); $enforced = @(); $complete = $true; $bypassed = @(); $unknownBypass = @()
+    $present = @(); $enforced = @(); $complete = $true; $bypassed = @(); $unknownBypass = @(); $creatorBypass = @()
+    $protectionSets = @{ update=0; deletion=0 }
+    $missing = @(); $manual = @(); $notes = @()
     foreach ($set in $sets) {
-        Require-Fields $set @('id')
-        if ([string]$set.id -notmatch '^[1-9][0-9]*$') { Uncertain 'Unrecognized ruleset identity.' }
-        $detail = (Read-GitHub "$repoPath/rulesets/$($set.id)").Data
-        Require-Fields $detail @('id'); Require-Strings $detail @('target','enforcement')
-        if ($detail.id -ne $set.id -or $detail.target -cne 'tag') { Uncertain 'Contradictory tag ruleset.' }
-        if ($detail.enforcement -cin @('disabled','evaluate')) { continue }
-        if ($detail.enforcement -cne 'active') { Uncertain 'Unrecognized ruleset enforcement.' }
-        Require-Fields $detail @('conditions','rules')
-        Require-Fields $detail.conditions @('ref_name'); Require-Fields $detail.conditions.ref_name @('include','exclude')
-        $conditions = $detail.conditions.ref_name
-        if ($conditions.include -isnot [array] -or $conditions.exclude -isnot [array] -or $detail.rules -isnot [array]) { Uncertain 'Malformed tag ruleset conditions.' }
-        $covers = $false
-        foreach ($pattern in $conditions.include) {
-            if ($pattern -isnot [string]) { Uncertain 'Malformed tag pattern.' }
-            if ($pattern -ceq '~ALL') { $covers = $true }
-            elseif ($pattern -cmatch '^refs/tags/([A-Za-z0-9._-]+)\*$') {
-                if ($ReleaseTagPattern.StartsWith($Matches[1],[StringComparison]::Ordinal)) { $covers = $true }
-            } else { $complete = $false }
-        }
-        if ($conditions.exclude.Count) { $complete = $false; continue }
-        if (-not $covers) { continue }
-        $bypass = Rule-Bypass $detail
-        foreach ($rule in $detail.rules) {
-            Require-Strings $rule @('type')
-            if ($rule.type -in @('creation','update','deletion')) {
-                $present += $rule.type
-                if ($bypass -eq 'none') { $enforced += $rule.type }
-                elseif ($bypass -eq 'broad') { $bypassed += $rule.type }
-                else { $unknownBypass += $rule.type }
+        try {
+            Require-Fields $set @('id')
+            if ([string]$set.id -notmatch '^[1-9][0-9]*$') { Uncertain 'Unrecognized ruleset identity.' }
+            $detail = (Read-GitHub "$repoPath/rulesets/$($set.id)").Data
+            Require-Fields $detail @('id'); Require-Strings $detail @('target','enforcement')
+            if ($detail.id -ne $set.id -or $detail.target -cne 'tag') { Uncertain 'Contradictory tag ruleset.' }
+            if ($detail.enforcement -cin @('disabled','evaluate')) { continue }
+            if ($detail.enforcement -cne 'active') { Uncertain 'Unrecognized ruleset enforcement.' }
+            Require-Fields $detail @('conditions','rules'); Require-Fields $detail.conditions @('ref_name')
+            if ($detail.rules -isnot [array]) { Uncertain 'Malformed tag ruleset rules.' }
+            $scope = Tag-Scope $detail.conditions.ref_name
+            if ($scope -ceq 'none') { continue }
+            if ($scope -cne 'full') { $complete=$false; $notes += 'Review overlapping tag scopes and exclusions across all rulesets.' }
+            if ($scope -ceq 'unknown') { continue }
+            $types = @($detail.rules | ForEach-Object { Require-Strings $_ @('type'); $_.type })
+            $bypass = Rule-Bypass $detail -Tag
+            if ('creation' -in $types -and $bypass -ceq 'none') {
+                # Every applicable creation rule must admit the creator. Another
+                # ruleset's bypass cannot override this full or partial blocker.
+                $missing += "Active creation restriction in ruleset $($set.id) has no tag-creation bypass and blocks all matching release tag creation."
             }
-        }
+            if ($scope -cne 'full') { continue }
+            foreach ($type in @('creation','update','deletion')) {
+                if ($type -notin $types) { continue }
+                $present += $type
+                if ($type -ceq 'creation') { continue }
+                $protectionSets[$type]++
+                if ($bypass -ceq 'none') { $enforced += $type }
+                elseif ($bypass -ceq 'broad') { $bypassed += $type }
+                else { $unknownBypass += $type }
+                if ('creation' -in $types -and $bypass -cin @('selected','broad')) { $creatorBypass += $type }
+            }
+        } catch [IO.InvalidDataException] { $complete=$false; $notes += $_.Exception.Message }
     }
-    Check-Controls @('creation','update','deletion') $present $enforced $complete @() $bypassed $unknownBypass
+    if ('creation' -notin $present -and $complete) { $missing += 'Missing enforced creation restriction covering release tags.' }
+    else { $manual += 'Confirm designated release creators have usable tag-creation bypass through every applicable repository and inherited organization ruleset; the API cannot establish exact permitted creators and effective permissions.' }
+    foreach ($control in @('update','deletion')) {
+        if ($control -in $enforced) { continue }
+        if ($control -notin $present -and $complete) { $missing += "Missing independently enforced $control restriction." }
+        elseif ($control -in $creatorBypass -and $complete -and $protectionSets[$control] -eq 1) { $missing += "Creation bypass also permits $control; add independent protection without routine release-actor bypass." }
+        elseif ($control -in $bypassed -and $complete -and $control -notin $unknownBypass) { $missing += "Broad administrator/role bypass defeats the $control restriction." }
+        else { $manual += "Confirm independent $control enforcement without routine release-actor bypass in GitHub." }
+    }
+    if ('update' -in $enforced -and 'deletion' -in $enforced) { $manual += 'Independent update/deletion restrictions without tag bypass are visible.' }
+    Observation -Missing $missing -Manual ($manual + $notes)
 }
 
 Add-Category 'Restrict actors' '2-configure-restrict-actors' "$repoUrl/settings/actions/policies" 'Repository Settings > Actions > Policies > New policy > Restrict actors' 'Repository-wide native Restrict actors policy admits only authorized release developers and trusted automation.' {

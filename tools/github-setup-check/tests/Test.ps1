@@ -28,7 +28,7 @@ Push-Location $root
 try {
     & $ActionlintPath -shellcheck= -pyflakes=
     if ($LASTEXITCODE -ne 0) { throw 'Workflow YAML/actionlint validation failed.' }
-    & $ActionlintPath -shellcheck= -pyflakes= docs/examples/check-github-setup.yml
+    & $ActionlintPath -shellcheck= -pyflakes= docs/examples/check-github-setup.yml docs/examples/shared-conventional-build.yml docs/examples/shared-prequalified-build.yml docs/examples/shared-application-deploy.yml
     if ($LASTEXITCODE -ne 0) { throw 'Consumer example YAML/actionlint validation failed.' }
 } finally { Pop-Location }
 foreach ($file in @((Get-Item -LiteralPath (Join-Path $root 'README.md'))) + @(Get-ChildItem -LiteralPath (Join-Path $root 'docs') -Recurse -File -Filter '*.md')) {
