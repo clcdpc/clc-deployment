@@ -1,0 +1,68 @@
+name: GitHub setup checker tests
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Provision verified test tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP ('github-setup-tests-' + [guid]::NewGuid())
+          [void][IO.Directory]::CreateDirectory($root)
+          $lock = Get-Content -LiteralPath tools/dependencies.lock.json -Raw | ConvertFrom-Json -AsHashtable
+          $lock['actionlint'] = Get-Content -LiteralPath tools/github-setup-check/tests/actionlint.lock.json -Raw | ConvertFrom-Json -AsHashtable
+          foreach ($name in @('powershell','pester','actionlint')) {
+            $archive = Join-Path $root ($name + '.zip')
+            Invoke-WebRequest -Uri $lock[$name].url -OutFile $archive -TimeoutSec 120
+            if ((Get-FileHash -LiteralPath $archive).Hash.ToLowerInvariant() -cne $lock[$name].sha256) { throw 'Test dependency hash mismatch.' }
+            [IO.Compression.ZipFile]::ExtractToDirectory($archive,(Join-Path $root $name))
+          }
+          "CLC_SETUP_TEST_TOOLS=$root" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Offline API fixtures, syntax, workflow YAML, actionlint and documentation links
+        shell: pwsh
+        run: |
+          & "$env:CLC_SETUP_TEST_TOOLS/powershell/pwsh.exe" -NoLogo -NoProfile -NonInteractive -File tools/github-setup-check/tests/Test.ps1 -PesterManifestPath "$env:CLC_SETUP_TEST_TOOLS/pester/Pester.psd1" -ActionlintPath "$env:CLC_SETUP_TEST_TOOLS/actionlint/actionlint.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub setup checker verification failed.' }
+
+  hosted-smoke:
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/check-github-setup.yml
+    with:
+      integration_branch: master
+      application_id: github-setup-smoke-not-configured
+
+  smoke-outputs:
+    needs: hosted-smoke
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - name: Verify the four diagnostic outputs
+        shell: pwsh
+        env:
+          CLC_OUTPUTS: ${{ toJSON(needs.hosted-smoke.outputs) }}
+        run: |
+          $outputs = $env:CLC_OUTPUTS | ConvertFrom-Json -AsHashtable
+          if ($outputs.Count -ne 4 -or $outputs.status -cnotin @('CONFIGURED','NEEDS CONFIGURATION','CHECK MANUALLY')) { throw 'Invalid setup status contract.' }
+          $count = 0
+          foreach ($name in @('configured_count','needs_configuration_count','manual_count')) {
+            if ($outputs[$name] -cnotmatch '^[0-9]+$') { throw 'Missing numeric setup output.' }
+            $count += [int]$outputs[$name]
+          }
+          if ($count -ne 7) { throw 'Expected seven configuration categories.' }
+          if ($outputs.status -ceq 'CONFIGURED') { throw 'Synthetic absent smoke settings cannot be configured.' }

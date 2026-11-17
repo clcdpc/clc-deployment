@@ -1,0 +1,72 @@
+name: Check GitHub deployment setup
+
+on:
+  workflow_call:
+    inputs:
+      integration_branch:
+        type: string
+        default: master
+      application_id:
+        type: string
+        required: true
+      channel:
+        type: string
+        default: DEV
+      runner_group:
+        description: Optional organization group to inspect; repository runners need no group
+        type: string
+        default: ''
+      check_release_immutability:
+        type: boolean
+        default: true
+    secrets:
+      inspection_token:
+        description: Optional read-only inspection token for settings unavailable to GITHUB_TOKEN
+        required: false
+    outputs:
+      status:
+        value: ${{ jobs.check.outputs.status }}
+      configured_count:
+        value: ${{ jobs.check.outputs.configured_count }}
+      needs_configuration_count:
+        value: ${{ jobs.check.outputs.needs_configuration_count }}
+      manual_count:
+        value: ${{ jobs.check.outputs.manual_count }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    outputs:
+      status: ${{ steps.check.outputs.status }}
+      configured_count: ${{ steps.check.outputs.configured_count }}
+      needs_configuration_count: ${{ steps.check.outputs.needs_configuration_count }}
+      manual_count: ${{ steps.check.outputs.manual_count }}
+    steps:
+      - name: Read reviewed checker implementation
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: clcdpc/clc-deployment
+          # Fixed source, independent of caller inputs and workflow context.
+          ref: 0e27b132e6b6e1841ffacf7650e7bf2d3ab249b7
+          path: github-setup-check
+          persist-credentials: false
+      - name: Inspect GitHub settings
+        id: check
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLC_INSPECTION_TOKEN: ${{ secrets.inspection_token }}
+          CLC_REPOSITORY: ${{ github.repository }}
+          CLC_BRANCH: ${{ inputs.integration_branch }}
+          CLC_APPLICATION: ${{ inputs.application_id }}
+          CLC_CHANNEL: ${{ inputs.channel }}
+          CLC_RUNNER_GROUP: ${{ inputs.runner_group }}
+          CLC_IMMUTABILITY: ${{ inputs.check_release_immutability }}
+        run: |
+          $env:GITHUB_REPOSITORY = $env:CLC_REPOSITORY
+          & ./github-setup-check/tools/github-setup-check/Check-GitHubSetup.ps1 -ApplicationId $env:CLC_APPLICATION -Channel $env:CLC_CHANNEL -IntegrationBranch $env:CLC_BRANCH -RunnerGroup $env:CLC_RUNNER_GROUP -CheckReleaseImmutability ([bool]::Parse($env:CLC_IMMUTABILITY))

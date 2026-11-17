@@ -1,0 +1,16 @@
+name: Check GitHub deployment setup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check:
+    # Replace 000... with one reviewed full clc-deployment commit containing this workflow.
+    uses: clcdpc/clc-deployment/.github/workflows/check-github-setup.yml@0000000000000000000000000000000000000000
+    with:
+      application_id: example-app
+      channel: DEV

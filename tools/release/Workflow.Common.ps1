@@ -65,7 +65,7 @@ function Assert-ClcWorkflowClaims {
     $expected='clcdpc/clc-deployment/.github/workflows/application-'+$Workflow+'.yml@'+$Claims.job_workflow_sha
     if ($Claims.iss -cne 'https://token.actions.githubusercontent.com' -or $Claims.aud -cne 'clc-deployment' -or
         $Claims.repository -cne $Repository -or $Claims.job_workflow_ref -cne $expected -or
-        $Claims.event_name -cnotin @('push','workflow_run','workflow_dispatch')) { throw 'Caller or immutable reusable workflow identity refused.' }
+        $Claims.event_name -cne 'push') { throw 'Caller or immutable reusable workflow identity refused.' }
     Assert-ClcText $Claims.workflow_ref 512
 }
 
@@ -90,19 +90,19 @@ function Get-ClcProtectedWorkflowConfiguration {
     $branch=& $Api GET ('/repos/'+$Repository+'/branches/'+[Uri]::EscapeDataString($c.integrationBranch)) $null
     if ($branch.protected -isnot [bool] -or -not $branch.protected) { throw 'Caller integration branch is not protected.' }
     Assert-ClcCommit $branch.commit.sha
-    $trusted=Read-ClcConfigurationAtRevision $Repository $branch.commit.sha $Directory $Api
-    if ($trusted.blob -cne $candidate.blob -or $c.orchestration.sharedRevision -cne $Claims.job_workflow_sha) { throw 'Caller policy or shared revision differs from protected configuration.' }
-    $callerPath=if ($Workflow -ceq 'build') {$c.producer.workflowPath} else {$c.orchestration.deploymentWorkflowPath}
-    $expectedRef=$Repository+'/'+$callerPath+'@refs/heads/'+$c.integrationBranch
-    if ($Workflow -ceq 'build') {
-        # Build runs may execute eligible tag source on an isolated hosted runner.
-        if (-not $Claims.workflow_ref.StartsWith($Repository+'/'+$callerPath+'@refs/',[StringComparison]::Ordinal)) { throw 'Producer workflow path is not approved.' }
-    } elseif ($Claims.workflow_ref -cne $expectedRef) { throw 'Deployment orchestration must run from the protected integration branch.' }
-    $path=($callerPath.Split('/') | ForEach-Object {[Uri]::EscapeDataString($_)}) -join '/'
-    $a=& $Api GET ('/repos/'+$Repository+'/contents/'+$path+'?ref='+$Claims.workflow_sha) $null
-    $b=& $Api GET ('/repos/'+$Repository+'/contents/'+$path+'?ref='+$branch.commit.sha) $null
-    if ($null -eq $a -or $null -eq $b -or $a.type -cne 'file' -or $b.type -cne 'file' -or $a.sha -cne $b.sha) { throw 'Executing caller workflow differs from protected code.' }
-    return $trusted
+    if ($c.orchestration.sharedRevision -cne $Claims.job_workflow_sha) { throw 'Caller shared revision differs from tagged configuration.' }
+    $prefix=$Repository+'/'+$c.producer.workflowPath+'@refs/tags/'
+    if (-not $Claims.workflow_ref.StartsWith($prefix,[StringComparison]::Ordinal)) { throw 'Caller must execute the configured workflow at the release tag.' }
+    $tag=$Claims.workflow_ref.Substring($prefix.Length)
+    $null=Get-ClcVerifiedSource $c $tag $Claims.workflow_sha 1 $Api
+    return $candidate
+}
+
+function Assert-ClcWorkflowSource {
+    param($Claims,$Configuration,[string] $Reference,[string] $SourceCommit,[long] $RunId,[long] $RunAttempt)
+    $tag=(Get-ClcApplicationTag $Reference).tag
+    if ($Claims.workflow_sha -cne $SourceCommit -or $Claims.workflow_ref -cne ($Configuration.repository+'/'+$Configuration.producer.workflowPath+'@refs/tags/'+$tag) -or
+        [string]$Claims.run_id -cne [string]$RunId -or [string]$Claims.run_attempt -cne [string]$RunAttempt) { throw 'Executing tag, source, run or attempt differs from selected producer.' }
 }
 
 function Get-ClcQualifiedArtifactId {
@@ -115,23 +115,16 @@ function Get-ClcQualifiedArtifactId {
 }
 
 function Get-ClcDeploymentRoute {
-    param($Configuration,$Source,[bool] $Automatic,$Claims,[scriptblock] $Api)
-    if (-not $Automatic) {
-        if ($Claims.event_name -cne 'workflow_dispatch') { throw 'Explicit redeployment requires protected workflow dispatch.' }
-        $permission=& $Api GET ('/repos/'+$Configuration.repository+'/collaborators/'+[Uri]::EscapeDataString($Claims.actor)+'/permission') $null
-        if ($permission.permission -cnotin @('write','maintain','admin')) { throw 'Explicit redeployment requires repository write authority.' }
-    }
-    if ($Automatic -and $Source.superseded) { return @{admitted=$false;status='Superseded'} }
+    param($Configuration,$Source)
     if ($Source.identity.channel -ceq 'ArtifactOnly') { return @{admitted=$false;status='ArtifactOnly'} }
-    if (-not $Configuration.Contains('targets')) { throw 'No deployment target configuration is installed.' }
-    $routes=@($Configuration.targets | Where-Object {$_.channel -ceq $Source.identity.channel})
-    if ($routes.Count -ne 1 -or -not $routes[0].enabled -or -not $routes[0].runnerAdmissionReady) { return @{admitted=$false;status='ActivationDisabled'} }
-    return @{admitted=$true;status='Admitted';target=$routes[0]}
+    Assert-ClcEnum $Source.identity.channel @('DEV','Production')
+    $id=$Configuration.applicationId+'-'+$Source.identity.channel.ToLowerInvariant()
+    Assert-ClcId $id
+    return @{admitted=$true;status='Admitted';target=@{targetId=$id;environment=$id;standingAuthorizationId=$id;runnerLabels=@('self-hosted','Windows','X64',$id)}}
 }
 
 function Get-ClcWorkflowRelease {
     param($Configuration,[string] $Reference,[string] $SourceCommit,[long] $RunId,[long] $RunAttempt,[long] $ArtifactId,[scriptblock] $Api)
-    if ($Reference -ceq $Configuration.integrationBranch) { $Reference='refs/heads/'+$Reference }
     $source=Get-ClcVerifiedSource $Configuration $Reference $SourceCommit $RunId $Api
     if ($ArtifactId -eq 0) { $ArtifactId=Get-ClcQualifiedArtifactId $Configuration $SourceCommit $RunId $RunAttempt $Api }
     $producer=Get-ClcVerifiedProducer $Configuration $source $RunId $RunAttempt $ArtifactId $Api

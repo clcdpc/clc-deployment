@@ -17,9 +17,6 @@ on:
       artifact-id:
         type: number
         default: 0
-      automatic:
-        type: boolean
-        default: true
       operation:
         type: string
         default: Deploy
@@ -34,7 +31,6 @@ jobs:
     outputs:
       admitted: ${{ steps.admission.outputs.admitted }}
       environment: ${{ steps.admission.outputs.environment }}
-      runner-group: ${{ steps.admission.outputs.runner_group }}
       runner-labels: ${{ steps.admission.outputs.runner_labels }}
       target-id: ${{ steps.admission.outputs.target_id }}
       configuration-blob: ${{ steps.admission.outputs.configuration_blob }}
@@ -53,7 +49,7 @@ jobs:
             $expected = 'clcdpc/clc-deployment/.github/workflows/application-deploy.yml@' + $claims.job_workflow_sha
             if ($claims.iss -cne 'https://token.actions.githubusercontent.com' -or $claims.aud -cne 'clc-deployment' -or $claims.job_workflow_sha -cnotmatch '^[a-f0-9]{40}$' -or $claims.job_workflow_ref -cne $expected -or $claims.exp -le [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) { throw 'Invalid platform identity.' }
             $projection = [ordered]@{}
-            foreach ($key in @('iss','aud','repository','workflow_ref','workflow_sha','job_workflow_ref','job_workflow_sha','event_name','actor','environment')) { if ($claims.Contains($key)) { $projection[$key] = $claims[$key] } }
+            foreach ($key in @('iss','aud','repository','workflow_ref','workflow_sha','job_workflow_ref','job_workflow_sha','event_name','run_id','run_attempt','actor','environment')) { if ($claims.Contains($key)) { $projection[$key] = $claims[$key] } }
             'sha=' + $claims.job_workflow_sha | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
             'claims=' + ($projection | ConvertTo-Json -Compress) | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
           } catch { throw 'Cannot authenticate immutable shared workflow through the GitHub job endpoint.' }
@@ -74,10 +70,9 @@ jobs:
           CLC_RUN: ${{ inputs.producer-run-id }}
           CLC_ATTEMPT: ${{ inputs.producer-run-attempt }}
           CLC_ARTIFACT: ${{ inputs.artifact-id }}
-          CLC_AUTOMATIC: ${{ inputs.automatic }}
           CLC_OPERATION: ${{ inputs.operation }}
         run: |
-          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Admit -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_ARTIFACT) -Automatic ([bool]::Parse($env:CLC_AUTOMATIC)) -Operation $env:CLC_OPERATION -OutputDirectory (Join-Path $env:RUNNER_TEMP 'clc-application-admission')
+          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Admit -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_ARTIFACT) -Operation $env:CLC_OPERATION -OutputDirectory (Join-Path $env:RUNNER_TEMP 'clc-application-admission')
   deploy:
     needs: admit
     env:
@@ -86,9 +81,7 @@ jobs:
     if: needs.admit.outputs.admitted == 'true'
     timeout-minutes: 45
     environment: ${{ needs.admit.outputs.environment }}
-    runs-on:
-      group: ${{ needs.admit.outputs.runner-group }}
-      labels: ${{ fromJSON(needs.admit.outputs.runner-labels) }}
+    runs-on: ${{ fromJSON(needs.admit.outputs.runner-labels) }}
     concurrency:
       group: clc-application-${{ github.repository }}-${{ needs.admit.outputs.target-id }}
       cancel-in-progress: false
@@ -103,7 +96,7 @@ jobs:
         shell: pwsh
         env: *release-inputs
         run: |
-          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Deploy -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_QUEUED_ARTIFACT) -Automatic ([bool]::Parse($env:CLC_AUTOMATIC)) -Operation $env:CLC_OPERATION -ExpectedConfigurationBlob $env:CLC_CONFIG_BLOB -OutputDirectory (Join-Path $env:RUNNER_TEMP ('clc-application-deployment-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT))
+          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Deploy -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_QUEUED_ARTIFACT) -Operation $env:CLC_OPERATION -ExpectedConfigurationBlob $env:CLC_CONFIG_BLOB -OutputDirectory (Join-Path $env:RUNNER_TEMP ('clc-application-deployment-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT))
       - name: Retain safe deployment summary
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

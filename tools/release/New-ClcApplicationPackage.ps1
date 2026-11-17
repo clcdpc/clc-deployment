@@ -21,7 +21,6 @@ if ($PSCmdlet.ParameterSetName -ceq 'Build' -and -not $c.Contains('project')) { 
 if ([IO.Directory]::Exists($OutputDirectory) -or [IO.File]::Exists($OutputDirectory)) { throw 'Build output must be new.' }
 $null=[IO.Directory]::CreateDirectory($OutputDirectory)
 $api={param($method,$path,$body,[switch]$Bytes) Invoke-ClcReleaseApi -Repository $c.repository -Method $method -Path $path -Body $body -Bytes:$Bytes}
-if ($Reference -ceq $c.integrationBranch) { $Reference='refs/heads/'+$Reference }
 $source=Get-ClcVerifiedSource $c $Reference $SourceCommit $RunId $api
 if ($PSCmdlet.ParameterSetName -ceq 'Prequalified') {
     $qualified=Get-ClcQualifiedPublishInputs $c $SourceRoot $QualifiedPublishRoot $SdkVersion $ValidationEntryPoint
@@ -58,6 +57,8 @@ $lockPath=Join-Path $lockDirectory 'packages.lock.json'
 if (-not [IO.File]::Exists($lockPath)) { throw 'Application dependency lock is required.' }
 }
 $lockHash=if ($null -ne $lockPath) { (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
+$embedded=Get-ProbeEmbeddedMetadata (Join-Path $publish ($assembly+'.dll'))
+Assert-ClcCompiledApplicationIdentity $embedded $c.applicationId $source.identity.releaseId $SourceCommit
 $sharedRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $distribution=& (Join-Path $sharedRoot 'tools/New-ToolkitDistribution.ps1') -RepositoryRoot $sharedRoot -SourceCommit $SharedSourceCommit -OutputPath (Join-Path $OutputDirectory 'toolkit.zip')
 Import-Module (Join-Path $sharedRoot 'src/CLC.Deployment/CLC.Deployment.psd1') -Force

@@ -10,7 +10,7 @@ Applications own build/test qualification, configuration semantics and revisions
 
 Applications validate their own `web.config` IIS semantics in CI. Shared packaging checks its exact inventoried bytes and bounded well-formed XML, with DTD/entity resolution disabled; authorized releases can change application-level IIS settings under independent infrastructure authorization. Existing qualified CI can package without a NuGet lock file, recording explicit absent lock evidence in V2; conventional shared builds retain locked restore.
 
-An optional infrastructure-owned [standing deployment policy](docs/automated-deployments.md) admits independently verified tagged releases and protected-branch snapshots into exact approvals for the same engine. DEV and Production remain explicitly scoped; enrollment, initial baseline, toolkit changes and exceptional recovery retain independent authorization. The [shared workflows and consumer examples](docs/shared-release-orchestration.md) support conventional .NET applications and applications retaining their own CI.
+An optional infrastructure-owned [standing deployment policy](docs/automated-deployments.md) admits independently verified tagged releases into exact approvals for the same engine. DEV and Production remain explicitly scoped; enrollment, initial baseline, toolkit changes and exceptional recovery retain independent authorization. The [shared workflows and consumer examples](docs/shared-release-orchestration.md) support conventional .NET applications and applications retaining their own CI.
 
 An unexpected OS reboot during physical replacement may leave mixed files and require manual recovery. Pending state does not prevent IIS activation after reboot or an external start; there is no startup interception or unattended activation fence. After replacement begins, failures attempt a bounded stop and retain recovery material. Recovery requires an explicit operator choice, compatible approved material and proven helper exit; file restoration never establishes database rollback safety.
 
@@ -20,7 +20,7 @@ The repository, PowerShell toolkit and ASP.NET Core companion source are license
 
 ## Consumers and operators
 
-Start with the [Deployment Setup Guide](docs/setup-guide.md) for a new application/target: configure GitHub and Windows/IIS, install and enroll the toolkit, then verify prerequisites before separately authorized deployment and acceptance.
+Start with the authoritative ten-section [CLC Deployment Setup Guide](docs/setup-guide.md) for a new application/target: configure native GitHub actor/tag controls and Release immutability, adopt the tag-driven configuration-v2 workflow, then prepare/install/enroll the host, complete an independently approved baseline, establish standing authority and verify acceptance. Routine operation is selecting a commit and creating/pushing its version tag. Canonical application publication requires API Boolean `immutable=true`; publication failure blocks dependent deployment.
 
 | Guide | Purpose |
 | --- | --- |
@@ -41,4 +41,4 @@ Start with the [Deployment Setup Guide](docs/setup-guide.md) for a new applicati
 | [Testing](docs/testing.md) | Pinned verification tools and coverage limits |
 | [Releasing](docs/releasing.md) | Shared versions, verified artifacts and protected tag publication |
 
-The read-only commissioning [deployment prerequisite checker](docs/deployment-prerequisites.md) separately reports GitHub configuration and explicitly authorized read-only host observations. Its [consumer workflow template](docs/examples/deployment-readiness.yml) keeps privileged inspection outside ordinary PR CI; diagnostic results never authorize deployment. A verified empty target can be READY before its first deployment; routine deployments do not require this checker.
+The optional [GitHub setup checker](docs/github-setup-check.md) reports GitHub configuration areas as CONFIGURED, NEEDS CONFIGURATION or CHECK MANUALLY. Its [small manual workflow example](docs/examples/check-github-setup.yml) runs on GitHub-hosted infrastructure. API visibility limits are explicit; it does not inspect hosts, analyze deployment workflows, require activation or authorize deployment.

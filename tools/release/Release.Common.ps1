@@ -5,6 +5,13 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '../../src/CLC.Deployment/Private/Contracts.ps1')
 . (Join-Path $PSScriptRoot '../../src/CLC.Deployment/Private/Automation.ps1')
 . (Join-Path $PSScriptRoot '../SharedReleasePublisher.Common.ps1')
+. (Join-Path $PSScriptRoot '../Probe.Metadata.ps1')
+
+function Assert-ClcCompiledApplicationIdentity {
+    param($Metadata,[string] $ApplicationId,[string] $ReleaseId,[string] $SourceCommit)
+    if ($Metadata['Clc.ApplicationId'] -cne $ApplicationId -or $Metadata['Clc.ReleaseId'] -cne $ReleaseId -or
+        $Metadata['Clc.SourceCommit'] -cne $SourceCommit -or $Metadata['Clc.IdentityKind'] -cne 'Release') { throw 'Compiled application identity differs from the tagged release.' }
+}
 
 function Read-ClcConsumerConfiguration {
     [CmdletBinding(DefaultParameterSetName='Path')]
@@ -17,27 +24,20 @@ function Read-ClcConsumerConfiguration {
     if ($bytes.Length -gt 65536) { throw 'Consumer configuration exceeds its bound.' }
     $document=[Text.Json.JsonDocument]::Parse([ReadOnlyMemory[byte]]$bytes)
     try { $c=ConvertFrom-ClcJsonElement $document.RootElement } finally { $document.Dispose() }
-    $keys=@('contractVersion','applicationId','repository','integrationBranch','sourcePolicy','producer','trustedFiles','requiredToolkitContractVersion')
+    $keys=@('contractVersion','applicationId','repository','integrationBranch','producer','requiredToolkitContractVersion')
     if ($c.Contains('project')) { $keys+='project' }
-    foreach ($optional in @('testProject','orchestration','targets','hooks')) { if ($c.Contains($optional)) { $keys+=$optional } }
+    foreach ($optional in @('testProject','orchestration','hooks')) { if ($c.Contains($optional)) { $keys+=$optional } }
     Assert-ClcObject $c $keys
-    Assert-ClcInteger $c.contractVersion 1 1
+    Assert-ClcInteger $c.contractVersion 2 2
     Assert-ClcId $c.applicationId; Assert-ClcRepository $c.repository
     Assert-ClcText $c.integrationBranch 100 '^[A-Za-z0-9][A-Za-z0-9_/-]*$'
-    Assert-ClcObject $c.sourcePolicy @('allowUnmergedDevTags','allowSnapshots')
-    foreach ($key in @('allowUnmergedDevTags','allowSnapshots')) { Assert-ClcBoolean $c.sourcePolicy[$key] }
+    # Both conventional routes must fit the existing host identifier contract.
+    Assert-ClcId ($c.applicationId+'-dev'); Assert-ClcId ($c.applicationId+'-production')
     $producerKeys=@('workflowPath','job'); if ($c.producer.Contains('jobName')) {$producerKeys+='jobName'}
     Assert-ClcObject $c.producer $producerKeys
     Assert-ClcWorkflow $c.producer.workflowPath; Assert-ClcCode $c.producer.job
     if ($c.producer.Contains('jobName')) { Assert-ClcText $c.producer.jobName 128 '^[A-Za-z0-9][A-Za-z0-9 /_,.-]*$' }
     Assert-ClcInteger $c.requiredToolkitContractVersion 2 2
-    if ($c.trustedFiles -isnot [array] -or $c.trustedFiles.Count -lt 2 -or $c.trustedFiles.Count -gt 32) { throw 'A bounded trusted file set is required.' }
-    $names=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($name in $c.trustedFiles) {
-        Assert-ClcText $name 240 '^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$'
-        if ($name.Split('/') -contains '..' -or -not $names.Add($name)) { throw 'Trusted file path is invalid.' }
-    }
-    if ($c.trustedFiles -cnotcontains $c.producer.workflowPath -or $c.trustedFiles -cnotcontains '.clc/release.json') { throw 'Trusted files must include the producer workflow and .clc/release.json.' }
     foreach ($projectKey in @('project','testProject')) {
         if ($c.Contains($projectKey)) {
             Assert-ClcText $c[$projectKey] 240 '^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\.csproj$'
@@ -45,25 +45,8 @@ function Read-ClcConsumerConfiguration {
         }
     }
     if ($c.Contains('orchestration')) {
-        Assert-ClcObject $c.orchestration @('sharedRevision','deploymentWorkflowPath')
+        Assert-ClcObject $c.orchestration @('sharedRevision')
         Assert-ClcCommit $c.orchestration.sharedRevision
-        Assert-ClcWorkflow $c.orchestration.deploymentWorkflowPath
-        if ($c.trustedFiles -cnotcontains $c.orchestration.deploymentWorkflowPath) { throw 'Trusted files must include the deployment workflow.' }
-    }
-    if ($c.Contains('targets')) {
-        if ($c.targets -isnot [array] -or $c.targets.Count -gt 2) { throw 'Targets must be a bounded array.' }
-        $channels=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach ($target in $c.targets) {
-            Assert-ClcObject $target @('channel','targetId','environment','runnerGroup','runnerLabels','standingAuthorizationId','enabled','runnerAdmissionReady')
-            Assert-ClcEnum $target.channel @('DEV','Production')
-            if (-not $channels.Add($target.channel)) { throw 'A channel may route to only one target.' }
-            Assert-ClcId $target.targetId; Assert-ClcId $target.standingAuthorizationId
-            foreach ($name in @('environment','runnerGroup')) { Assert-ClcText $target[$name] 128 '^[A-Za-z0-9][A-Za-z0-9 _.-]*$' }
-            Assert-ClcBoolean $target.enabled; Assert-ClcBoolean $target.runnerAdmissionReady
-            if ($target.runnerLabels -isnot [array] -or $target.runnerLabels.Count -lt 3 -or $target.runnerLabels.Count -gt 8) { throw 'Explicit Windows runner labels are required.' }
-            foreach ($label in $target.runnerLabels) { Assert-ClcText $label 64 '^[A-Za-z0-9][A-Za-z0-9_.-]*$' }
-            foreach ($label in @('self-hosted','Windows','X64')) { if ($target.runnerLabels -inotcontains $label) { throw 'Explicit Windows/x64 self-hosted labels are required.' } }
-        }
     }
     if ($c.Contains('hooks')) {
         Assert-ClcObject $c.hooks @('contractVersion','stages','planningEntryPoint')
@@ -110,36 +93,27 @@ function Get-ClcVerifiedSource {
     $branch=& $Api GET ($base+'/branches/'+[Uri]::EscapeDataString($c.integrationBranch)) $null
     if ($branch.protected -isnot [bool] -or -not $branch.protected) { throw 'The integration branch must be protected.' }
     $integration=$branch.commit.sha; Assert-ClcCommit $integration
-    $sourceClass='IntegrationTag'; $kind='tag'; $ordering='SemVer'; $superseded=$false
-    if ($Reference -ceq ('refs/heads/'+$c.integrationBranch)) {
-        if (-not $c.sourcePolicy.allowSnapshots) { throw 'Protected branch snapshots are disabled.' }
-        $kind='snapshot'; $ordering='Snapshot'; $sourceClass='ProtectedBranch'
-        $tag=$null; $releaseId='dev-'+$ProducerRunId+'-'+$SourceCommit.Substring(0,12); $channel='DEV'; $sequence=$ProducerRunId
-        $superseded=$integration -cne $SourceCommit
-    } else {
-        $identity=Get-ClcApplicationTag $Reference
-        $tag=$identity.tag; $releaseId=$identity.releaseId; $channel=$identity.channel; $sequence=$identity.sequence
-        $ref=& $Api GET ($base+'/git/ref/tags/'+[Uri]::EscapeDataString($Reference)) $null
-        for ($depth=0;$ref.object.type -ceq 'tag' -and $depth -lt 5;$depth++) { $ref=& $Api GET ($base+'/git/tags/'+$ref.object.sha) $null }
-        if ($ref.object.type -cne 'commit' -or $ref.object.sha -cne $SourceCommit) { throw 'The tag moved or names another source commit.' }
-    }
+    $identity=Get-ClcApplicationTag $Reference
+    $tag=$identity.tag; $releaseId=$identity.releaseId; $channel=$identity.channel; $sequence=$identity.sequence
+    $ref=& $Api GET ($base+'/git/ref/tags/'+[Uri]::EscapeDataString($tag)) $null
+    for ($depth=0;$ref.object.type -ceq 'tag' -and $depth -lt 5;$depth++) { $ref=& $Api GET ($base+'/git/tags/'+$ref.object.sha) $null }
+    if ($ref.object.type -cne 'commit' -or $ref.object.sha -cne $SourceCommit) { throw 'The tag moved or names another source commit.' }
     $comparison=& $Api GET ($base+'/compare/'+$SourceCommit+'...'+$integration) $null
-    $witness=$comparison.merge_base_commit.sha; Assert-ClcCommit $witness
-    if ($comparison.status -cnotin @('ahead','identical')) {
-        if ($kind -cne 'tag' -or $channel -cne 'DEV' -or -not $c.sourcePolicy.allowUnmergedDevTags) { throw 'Source is outside the protected integration history.' }
-        # Repository permissions and deliberate tag creation authorize DEV source.
-        # PR state, reviews and branch lifetime are not release authority.
-        $sourceClass='UnmergedDevTag'
+    # GitHub returns 404 for comparisons without a common ancestor. The peeled
+    # tag already proves repository membership; DEV needs no ancestry gate.
+    $witness=$integration; $integrated=$false
+    if ($null -ne $comparison) {
+        $witness=$comparison.merge_base_commit.sha; Assert-ClcCommit $witness
+        if ($comparison.status -cnotin @('ahead','identical','behind','diverged')) { throw 'Source ancestry is unavailable.' }
+        $integrated=$comparison.status -cin @('ahead','identical') -and $witness -ceq $SourceCommit
     }
-    # Executable orchestration and its policy must agree with protected code even
-    # for tag-authorized unmerged DEV source. No artifact supplies these bytes.
-    foreach ($path in $c.trustedFiles) {
-        $encoded=($path.Split('/') | ForEach-Object {[Uri]::EscapeDataString($_)}) -join '/'
-        $trusted=& $Api GET ($base+'/contents/'+$encoded+'?ref='+$integration) $null
-        $candidate=& $Api GET ($base+'/contents/'+$encoded+'?ref='+$SourceCommit) $null
-        if ($trusted.type -cne 'file' -or $candidate.type -cne 'file' -or $trusted.sha -cne $candidate.sha) { throw 'Source changes trusted release workflow, policy or supporting code.' }
-    }
-    return @{identity=[ordered]@{contractVersion=1L;kind=$kind;sourceClass=$sourceClass;repository=$c.repository;sourceCommit=$SourceCommit;reference=$Reference;releaseId=$releaseId;channel=$channel;orderingKind=$ordering;sequence=$sequence;tag=$tag;integrationBranch=$c.integrationBranch;integrationCommit=$witness};superseded=$superseded}
+    if ($channel -ceq 'Production' -and -not $integrated) { throw 'Source is outside the protected integration history.' }
+    # Native repository actor/tag policies authorize this exact commit, including
+    # its workflows and configuration. No PR or master file-equality gate.
+    # Artifact-only evidence has its own workflow classification. It is never
+    # serialized as installed-host source authority, even when integrated.
+    $sourceClass=if ($channel -ceq 'ArtifactOnly') {'ArtifactOnlyTag'} elseif ($integrated) {'IntegrationTag'} else {'UnmergedDevTag'}
+    return @{identity=[ordered]@{contractVersion=1L;kind='tag';sourceClass=$sourceClass;repository=$c.repository;sourceCommit=$SourceCommit;reference=$tag;releaseId=$releaseId;channel=$channel;orderingKind='SemVer';sequence=$sequence;tag=$tag;integrationBranch=$c.integrationBranch;integrationCommit=$witness};superseded=$false}
 }
 
 function Get-ClcVerifiedProducer {
@@ -147,14 +121,15 @@ function Get-ClcVerifiedProducer {
     $c=$Configuration; $s=$Source.identity; $base='/repos/'+$c.repository
     foreach ($number in @($RunId,$RunAttempt,$ArtifactId)) { Assert-ClcInteger $number 1 }
     $run=& $Api GET ($base+'/actions/runs/'+$RunId+'/attempts/'+$RunAttempt) $null
-    if ($run.id -ne $RunId -or $run.run_attempt -ne $RunAttempt -or $run.status -cne 'completed' -or $run.conclusion -cne 'success' -or
-        $run.head_sha -cne $s.sourceCommit -or $run.repository.full_name -cne $c.repository -or $run.head_repository.full_name -cne $c.repository -or $run.path -cne $c.producer.workflowPath -or $run.event -cnotin @('push','workflow_dispatch')) { throw 'Producer run identity or qualification does not match.' }
-    $expectedBranch=if ($s.kind -ceq 'snapshot') {$c.integrationBranch} else {$s.tag}
-    if ($run.head_branch -cne $expectedBranch) { throw 'Producer run reference does not match.' }
+    if ($run.id -ne $RunId -or $run.run_attempt -ne $RunAttempt -or $run.status -cnotin @('in_progress','completed') -or
+        ($run.status -ceq 'completed' -and $run.conclusion -cne 'success') -or ($run.status -ceq 'in_progress' -and $null -ne $run.conclusion) -or
+        $run.head_sha -cne $s.sourceCommit -or $run.repository.full_name -cne $c.repository -or $run.head_repository.full_name -cne $c.repository -or $run.path -cne $c.producer.workflowPath -or $run.event -cne 'push') { throw 'Producer run identity or qualification does not match.' }
+    if ($run.head_branch -cne $s.tag) { throw 'Producer run reference does not match.' }
     $jobs=Get-ClcGitHubCollection $Api ($base+'/actions/runs/'+$RunId+'/attempts/'+$RunAttempt+'/jobs') jobs
     $jobName=if ($c.producer.Contains('jobName')) {$c.producer.jobName} else {$c.producer.job}
-    $matches=@($jobs | Where-Object {$_.name -ceq $jobName})
-    if ($matches.Count -ne 1 -or $matches[0].status -cne 'completed' -or $matches[0].conclusion -cne 'success' -or $matches[0].run_id -ne $RunId) { throw 'Exact successful producer job is missing.' }
+    $producerJobs=@($jobs | Where-Object {$_.name -ceq $jobName})
+    if ($producerJobs.Count -ne 1 -or $producerJobs[0].status -cne 'completed' -or $producerJobs[0].conclusion -cne 'success' -or $producerJobs[0].run_id -ne $RunId -or
+        $producerJobs[0].head_sha -cne $s.sourceCommit) { throw 'Exact successful producer job is missing.' }
     $artifact=& $Api GET ($base+'/actions/artifacts/'+$ArtifactId) $null
     $expectedName='clc-package-'+$s.sourceCommit+'-'+$RunId+'-'+$RunAttempt
     if ($artifact.id -ne $ArtifactId -or $artifact.expired -isnot [bool] -or $artifact.expired -or $artifact.name -cne $expectedName -or
@@ -162,7 +137,8 @@ function Get-ClcVerifiedProducer {
     # Artifacts are run-scoped; the attempt-suffixed name plus timestamp window
     # prevents a stale attempt from being substituted for the qualified attempt.
     $created=[DateTimeOffset]::Parse($artifact.created_at)
-    if ($created -lt [DateTimeOffset]::Parse($run.run_started_at) -or $created -gt [DateTimeOffset]::Parse($run.updated_at)) { throw 'Artifact was not produced during the selected run attempt.' }
+    $started=[DateTimeOffset]::Parse($producerJobs[0].started_at); $completed=[DateTimeOffset]::Parse($producerJobs[0].completed_at)
+    if ($started -lt [DateTimeOffset]::Parse($run.run_started_at) -or $completed -lt $started -or $created -lt $started -or $created -gt $completed) { throw 'Artifact was not produced during the selected producer job attempt.' }
     return @{workflowPath=$c.producer.workflowPath;runId=$RunId;runAttempt=$RunAttempt;buildJob=$c.producer.job;artifactId=$ArtifactId;transportSha256=$artifact.digest.Substring(7);artifactName=$expectedName}
 }
 
@@ -216,19 +192,38 @@ function Save-ClcVerifiedArtifact {
     } finally { $zip.Dispose(); $stream.Dispose() }
 }
 
-function New-ClcVerifiedPackageIdentity {
-    param($Configuration,$Source,$Provenance,[string] $ArchivePath,[string] $TargetId)
-    $inspection=Test-ClcRelease -ArchivePath $ArchivePath
-    if ($inspection.packageContractVersion -ne 2) { throw 'Shared routine orchestration requires package contract version 2.' }
-    $stream=[IO.File]::OpenRead($ArchivePath); $zip=[IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Read,$false)
+function Get-ClcVerifiedPackage {
+    param($Configuration,$Source,$Provenance,[string] $ArchivePath)
+    $stream=[IO.File]::Open($ArchivePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+    $zip=$null
     try {
+        $inspection=Test-ClcRelease -ArchivePath $ArchivePath
+        if ($inspection.packageContractVersion -ne 2) { throw 'Shared routine orchestration requires package contract version 2.' }
+        $zip=[IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Read,$true)
         $input=$zip.GetEntry('manifest.json').Open(); $reader=[IO.StreamReader]::new($input,[Text.UTF8Encoding]::new($false,$true))
         try { $manifest=$reader.ReadToEnd() | ConvertFrom-Json -AsHashtable -DateKind String } finally { $reader.Dispose() }
-    } finally { $zip.Dispose(); $stream.Dispose() }
+        $entry=$zip.GetEntry('application/'+$manifest.validation.entryPoint)
+        if ($null -eq $entry -or $entry.Length -gt 268435456) { throw 'Compiled application identity is unavailable or exceeds its bound.' }
+        $input=$entry.Open(); $assembly=[IO.MemoryStream]::new()
+        try {
+            $input.CopyTo($assembly); $assembly.Position=0
+            $embedded=[Clc.Probe.Metadata]::Read($assembly)
+            Assert-ClcCompiledApplicationIdentity $embedded $Configuration.applicationId $Source.identity.releaseId $Source.identity.sourceCommit
+        } finally { $input.Dispose(); $assembly.Dispose() }
+    } finally { if ($null -ne $zip) { $zip.Dispose() }; $stream.Dispose() }
     $s=$Source.identity; $p=$Provenance
     if ($inspection.applicationId -cne $Configuration.applicationId -or $inspection.releaseId -cne $s.releaseId -or $inspection.sourceCommit -cne $s.sourceCommit -or
         $manifest.source.repository -cne $s.repository -or $manifest.build.workflowPath -cne $p.workflowPath -or $manifest.build.runId -ne $p.runId -or $manifest.build.runAttempt -ne $p.runAttempt -or $manifest.build.job -cne $p.buildJob) { throw 'Package bytes do not bind the qualified source and producer.' }
     if (-not $Configuration.Contains('orchestration') -or $manifest.builder.sourceCommit -cne $Configuration.orchestration.sharedRevision) { throw 'Package builder revision differs from protected orchestration.sharedRevision.' }
+    return $inspection
+}
+
+function New-ClcVerifiedPackageIdentity {
+    param($Configuration,$Source,$Provenance,[string] $ArchivePath,[string] $TargetId)
+    if ($Source.identity.channel -ceq 'ArtifactOnly') { throw 'Artifact-only evidence cannot create a host verified-release identity.' }
+    Assert-ClcSourceIdentity $Source.identity
+    $inspection=Get-ClcVerifiedPackage $Configuration $Source $Provenance $ArchivePath
+    $s=$Source.identity; $p=$Provenance
     $provenance=[ordered]@{}; foreach ($field in @('workflowPath','runId','runAttempt','buildJob','artifactId','transportSha256')) { $provenance[$field]=$p[$field] }
     return [ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=2L;recordKind='verified-release';targetId=$TargetId;applicationId=$Configuration.applicationId;
         releaseId=$s.releaseId;tag=$s.reference;sourceRepository=$s.repository;sourceCommit=$s.sourceCommit;releaseZipSha256=$inspection.archiveSha256;manifestSha256=$inspection.manifestSha256;provenance=$provenance;sourceIdentity=$s}
@@ -240,7 +235,7 @@ function Invoke-ClcApplicationPublication {
     $tag=Get-ClcApplicationTag $Identity.tag
     if ($tag.releaseId -cne $Identity.releaseId -or $tag.channel -cne $Identity.channel) { throw 'Publication identity is inconsistent.' }
     $sharedIdentity=@{repository=$Identity.repository;tag=$Identity.tag;sourceCommit=$Identity.sourceCommit;prerelease=($Identity.channel -cne 'Production')}
-    return Invoke-SharedReleaseGitHubPublication $sharedIdentity $Assets $Api $AssetHash $Upload
+    return Invoke-SharedReleaseGitHubPublication $sharedIdentity $Assets $Api $AssetHash $Upload -RequireImmutable
 }
 function Send-ClcApplicationReleaseAsset {
     param([string] $Repository,$Release,$Asset)

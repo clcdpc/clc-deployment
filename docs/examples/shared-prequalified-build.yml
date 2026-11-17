@@ -7,14 +7,14 @@
 # otherwise V2 metadata/manifest record dependencyLockSha256: null. Existing CI
 # owns qualification and its restore convention; the shared conventional builder
 # separately retains its required locked restore.
-name: Application release build
+name: Application release
 on:
   push:
-    branches: [master]
     tags: ['v*']
-  workflow_dispatch:
 permissions:
   contents: read
+  actions: read
+  id-token: write
 jobs:
   package:
     runs-on: windows-2022
@@ -46,3 +46,23 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+  publication:
+    needs: package
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    uses: clcdpc/clc-deployment/.github/workflows/application-release.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    with:
+      reference: ${{ github.ref_name }}
+      source-commit: ${{ github.sha }}
+      producer-run-id: ${{ fromJSON(github.run_id) }}
+      producer-run-attempt: ${{ fromJSON(github.run_attempt) }}
+  deployment:
+    needs: publication
+    uses: clcdpc/clc-deployment/.github/workflows/application-deploy.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    with:
+      reference: ${{ github.ref_name }}
+      source-commit: ${{ github.sha }}
+      producer-run-id: ${{ fromJSON(github.run_id) }}
+      producer-run-attempt: ${{ fromJSON(github.run_attempt) }}

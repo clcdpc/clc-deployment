@@ -1,13 +1,12 @@
-# Consumer .github/workflows/build.yml. Replace the synthetic 40-character pin
-# with one reviewed immutable clc-deployment revision; use it in release.json too.
-name: Application release build
+# Consumer .github/workflows/build.yml. Replace every synthetic SHA with the
+# same reviewed immutable revision and set orchestration.sharedRevision to it.
+name: Application release
 on:
   push:
-    branches: [master]
     tags: ['v*']
-  workflow_dispatch:
 permissions:
   contents: read
+  actions: read
   id-token: write
 jobs:
   package:
@@ -15,3 +14,23 @@ jobs:
     with:
       reference: ${{ github.ref_name }}
       source-commit: ${{ github.sha }}
+  publication:
+    needs: package
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    uses: clcdpc/clc-deployment/.github/workflows/application-release.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    with:
+      reference: ${{ github.ref_name }}
+      source-commit: ${{ github.sha }}
+      producer-run-id: ${{ fromJSON(github.run_id) }}
+      producer-run-attempt: ${{ fromJSON(github.run_attempt) }}
+  deployment:
+    needs: publication
+    uses: clcdpc/clc-deployment/.github/workflows/application-deploy.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    with:
+      reference: ${{ github.ref_name }}
+      source-commit: ${{ github.sha }}
+      producer-run-id: ${{ fromJSON(github.run_id) }}
+      producer-run-attempt: ${{ fromJSON(github.run_attempt) }}

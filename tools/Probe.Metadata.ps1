@@ -10,8 +10,13 @@ namespace Clc.Probe {
  public static class Metadata {
   public static Dictionary<string,string> Read(string path) {
    using(var file=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)) {
+    return Read(file);
+   }
+  }
+  // Metadata only: never load or execute the inspected application assembly.
+  public static Dictionary<string,string> Read(Stream file) {
     if(file.Length>268435456) throw new IOException("Metadata bound.");
-    using(var pe=new PEReader(file)) {
+    using(var pe=new PEReader(file,PEStreamOptions.LeaveOpen)) {
      var reader=pe.GetMetadataReader(); var result=new Dictionary<string,string>(StringComparer.Ordinal);
      foreach(var handle in reader.GetAssemblyDefinition().GetCustomAttributes()) {
       var attribute=reader.GetCustomAttribute(handle);
@@ -26,7 +31,6 @@ namespace Clc.Probe {
      }
      return result;
     }
-   }
   }
  }
 }
