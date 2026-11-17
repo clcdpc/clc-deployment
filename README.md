@@ -2,16 +2,9 @@
 
 Clc.Deployment provides shared GitHub release orchestration and an independently installed ASP.NET Core/IIS deployment toolkit. It supports Windows Server 2022, PowerShell 7, net10.0/win-x64/in-process hosting, one dedicated site/root application/pool and one worker. Its four exports are `New-ClcRelease`, `Test-ClcRelease`, `Invoke-ClcIisDeployment` and `Restore-ClcIisDeployment`.
 
-**Start with the [Deployment Setup Guide](docs/setup-guide.md).** It is the authoritative ten-section checklist for GitHub configuration, host setup, first deployment and routine operation. Existing applications retain their qualified application-owned workflows; shared examples supply integration patterns.
+**Generic setup starts here → [Deployment Setup Guide](docs/setup-guide.md#setup-roadmap).** Follow its ordered roadmap; it links each supporting procedure when needed.
 
-| Procedure | Responsibility |
-| --- | --- |
-| [Host enrollment](docs/host-enrollment.md) | Prepare host-specific inputs, collect observations, obtain independent approval, Inspect/Plan/Apply |
-| [Installation](docs/installation.md) | Acquire/verify the exact toolkit, provision bootstrap, install/activate, upgrade |
-| [Manual deployment and recovery](docs/deployment.md) | Obtain the first application ZIP, independently approve it, establish/verify baseline, recover explicitly |
-| [Automated deployments](docs/automated-deployments.md) | Configure protected standing authorization after baseline; operate/revoke routine deployment |
-| [GitHub setup reference](docs/github-setup.md) | Inherited policies, tag bypasses, immutable releases and privileged runners |
-| [IIS verification](docs/iis-verification.md) | Separately authorized host/consumer deployment and recovery acceptance |
+**Configuring SSRS Web? Start with [clcdpc/ssrs-web/docs/clc-deployment.md](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md).** That application runbook controls its setup and release workflow, referring to toolkit procedures as needed. Generic shared-workflow examples do not replace it.
 
 Every target owns `%ProgramData%\clc-<target-id>\`, including its protected `Deployment` bootstrap/toolkit/policy/approvals/state. DEV and Production can pin different toolkit versions on one host. Infrastructure owns accounts, components, IIS/TLS/ACLs, protected configuration/keys, toolkit installation and approvals. Applications own builds, configuration/readiness semantics and database/hook compatibility. Deployment replaces managed application files only.
 

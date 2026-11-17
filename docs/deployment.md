@@ -1,10 +1,12 @@
 # IIS deployment and explicit recovery
 
-Use [contracts](contracts.md) for formats and [application hooks](application-hooks.md) for V2 policy/planning. Start with the baseline below; later failures use [explicit recovery](#operator-procedure).
+Prerequisite for baseline: [enrollment Apply](host-enrollment.md#5-inspect-plan-apply-and-verify) and [installed-toolkit verification](installation.md#verification-and-activation). **Next:** standing authorization only after baseline succeeds, then return to [setup verification](setup-guide.md#9-verify-the-setup). Later failures use [explicit recovery](#operator-procedure); [contracts](contracts.md) and [hooks](application-hooks.md) supply technical details.
 
 ## First application deployment
 
 Establish one exact approved baseline per [enrolled target](host-enrollment.md#5-inspect-plan-apply-and-verify), **before standing authorization**. Application owners first qualify configuration/readiness and separately authorized hooks. Deployment requires the admitted elevated administrator token.
+
+**Acquisition/provenance examples below apply to compatible shared-workflow consumers:** `.clc/release.json`, `clc-package-*` artifacts and shared release conventions. SSRS Web uses `.github/workflows/release.yml`, `ssrs-web-release-<run>-<attempt>` and application-owned verification with schema-1 verified release/standing authorization ([fixed adapter](https://github.com/clcdpc/ssrs-web/blob/dddb72c1bafc58db1c8f1ade301a600a269a46bd/scripts/release/AutomaticDeployment.Adapter.ps1)). Use its [release acquisition](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md#immutable-release-production) and [baseline/approval/deployment procedure](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md#initial-cutover-baseline-and-exceptional-recovery).
 
 ### 1. Select and acquire the release
 
@@ -24,7 +26,7 @@ Establish one exact approved baseline per [enrolled target](host-enrollment.md#5
 # setup-example: baseline-acquisition
 Import-Module "$sharedSource\src\Clc.Deployment\Clc.Deployment.psd1"
 . "$sharedSource\tools\release\Workflow.Common.ps1"
-# $repository is the independently selected owner/repository, e.g. EXAMPLE-OWNER/ssrs-web.
+# $repository is the independently selected compatible shared-workflow repository.
 $api = { param($method,$path,$body,[switch]$Bytes)
     Invoke-ClcReleaseApi -Repository $repository -Method $method -Path $path -Body $body -Bytes:$Bytes
 }
@@ -87,7 +89,7 @@ The readers verify transport/package/inventory hashes, source/producer/builder p
 
 ### 3. Independently approve and install
 
-1. **Infrastructure workstation:** choose a new safe `$approvalId` (e.g. `ssrs-web-dev-baseline`) and stable `$lineageId` (e.g. `ssrs-web-dev`) for later standing policy. Build the disabled candidate from verified observations:
+1. **Infrastructure workstation:** choose a new safe `$approvalId` (e.g. `example-app-dev-baseline`) and stable `$lineageId` (e.g. `example-app-dev`) for later standing policy. Build the disabled candidate from verified observations:
 
 ```powershell
 # setup-example: baseline-approval
@@ -112,7 +114,7 @@ Assert-ClcRecord $releaseCandidate release-approval
 %ProgramData%\clc-<target-id>\Deployment\toolkit\policy\approvals\<approvalId>.json
 ```
 
-4. Apply [enrollment's ownership/ancestor protection](host-enrollment.md#1-inspect-and-prepare-the-host), without individual deployment-SID writes. Transfer unchanged reviewed bytes to the target's `Inbox\<approvalId>.zip`; recompare SHA-256 with approval. Inspection/self-declared hashes grant no authority.
+4. Apply [enrollment's ownership/ancestor protection](host-enrollment.md#protect-the-handoff-and-configuration), without individual deployment-SID writes. Transfer unchanged reviewed bytes to the target's `Inbox\<approvalId>.zip`; recompare SHA-256 with approval. Inspection/self-declared hashes grant no authority.
 
 ### Deploy and verify the baseline
 
@@ -132,9 +134,9 @@ $result | ConvertTo-Json -Depth 8
    | Application | Expected-release HTTPS readiness and final complete installed inventory |
    | Protected state under `control/<targetKey>` | `current.json`, `journal.json` and `attempts/<attemptId>/deployment.json` agree on attempt/release/generation; Completed journal/terminal snapshot; verified empty backup/index |
 
-   Derive `targetKey` with `Get-ClcTargetKey $policy.machineIdentity $target.applicationPoolName.ToUpperInvariant()` in trusted preparation. Keep private configuration hashes local. Use the [seven real-IIS checks](iis-verification.md#seven-checks) for observed acceptance.
+   Derive `targetKey` with `Get-ClcTargetKey $policy.machineIdentity $target.applicationPoolName.ToUpperInvariant()` in trusted preparation. Keep private configuration hashes local. Retain the [initial-deployment observations](iis-verification.md#1-initial-deployment); remaining acceptance follows standing setup at [stage 8](setup-guide.md#9-verify-the-setup).
 
-3. Only after successful real baseline, install [standing authorization](automated-deployments.md#configure-standing-authorization). On failure, preserve material and follow recovery below; never fabricate current state or baseline exceptions.
+3. **Next:** only after successful real baseline, install [standing authorization](automated-deployments.md#configure-standing-authorization); if operating manually, return to [setup verification](setup-guide.md#9-verify-the-setup). On failure, preserve material and follow recovery below; never fabricate current state or baseline exceptions.
 
 ## Manual operations after baseline
 

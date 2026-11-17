@@ -2,11 +2,13 @@
 
 Infrastructure enrolls each target using [Get-ClcHostEnrollment.ps1](../tools/host/Get-ClcHostEnrollment.ps1) and [Initialize-ClcHostEnrollment.ps1](../tools/host/Initialize-ClcHostEnrollment.ps1), as implemented at [557192e](https://github.com/clcdpc/clc-deployment/tree/557192eff5eea651d6f1a393eb3b196053a985e5). Release approval remains separate.
 
+Enter from [bootstrap preparation](installation.md#initial-bootstrap-provisioning); section 1 supplies its host prerequisites. Complete sections 1–5 in order. Apply installs/activates the initial runtime toolkit from independently approved bytes; no prior runtime installation is required. **Next:** [installed-toolkit verification](installation.md#verification-and-activation), then first application deployment.
+
 **Ordering:** collect observations first. **Inspect and Plan require independently installed protected authorization**; neither bootstraps authority.
 
 ## 1. Inspect and prepare the host
 
-1. **Infrastructure workstation:** [authenticate format-3 toolkit/source](installation.md#initial-bootstrap-provisioning); set `$reviewedSource` and retain approved version/source/archive digest. The archive cannot authenticate its verifier.
+1. **Infrastructure workstation:** retain the [authenticated format-3 toolkit/source](installation.md#initial-bootstrap-provisioning), version/source/archive digest and `$reviewedSource` from bootstrap preparation. If entering here from installation step 2, continue below; do not restart acquisition. The archive cannot authenticate its verifier.
 2. **Intended host, elevated PowerShell 7 x64:** confirm these externally provisioned prerequisites:
 
    | Prerequisite | Required state |
@@ -46,11 +48,15 @@ clc-<target-id>/
     locks/<targetKey>.lock; control/<targetKey>/...
 ```
 
-4. Create only absent target root, `Deployment`, `Config`, and `Deployment\enrollment` with `authorizations`, `evidence` and an empty regular `enrollment.lock`. [Provision the bootstrap](installation.md), then protect the handoff:
-   - In **Properties > Security > Advanced**, set ownership to **BUILTIN\Administrators**, disable inheritance/remove inherited grants, and grant only **SYSTEM** and **BUILTIN\Administrators** FullControl. Directories apply grants to this folder, subfolders and files.
-   - Check every ancestor's owner and delete-child/delete/DACL/owner rights. Runtime must not replace protected children; TrustedInstaller ancestor ownership/structural rights are recognized.
-   - Never grant the individual deployment SID protected writes. Elevated Administrators membership provides access; independent approval against that administrator remains procedural.
-5. Provision `Config\application.json`: infrastructure owns/writes; deployment/runtime read. Apply can create Application/Inbox/Keys; existing resources must meet [access roles](#provisioning-and-preservation). Verify actual identities' effective access, including groups. No ACL repair; logs/application-specific permissions remain external.
+4. Create only absent target root, `Deployment`, `Config`, and `Deployment\enrollment` with `authorizations`, `evidence` and an empty regular `enrollment.lock`. If bootstrap is not yet prepared, complete [bootstrap steps 3–6](installation.md#initial-bootstrap-provisioning), then continue below.
+
+### Protect the handoff and configuration
+
+- In **Properties > Security > Advanced**, set ownership to **BUILTIN\Administrators**, disable inheritance/remove inherited grants, and grant only **SYSTEM** and **BUILTIN\Administrators** FullControl. Directories apply grants to this folder, subfolders and files.
+- Check every ancestor's owner and delete-child/delete/DACL/owner rights. Runtime must not replace protected children; TrustedInstaller ancestor ownership/structural rights are recognized.
+- Never grant the individual deployment SID protected writes. Elevated Administrators membership provides access; independent approval against that administrator remains procedural.
+
+Provision `Config\application.json`: infrastructure owns/writes; deployment/runtime read. Apply can create Application/Inbox/Keys; existing resources must meet [access roles](#provisioning-and-preservation). Verify actual identities' effective access, including groups. No ACL repair; logs/application-specific permissions remain external.
 
 Before continuing, check:
 
@@ -247,7 +253,7 @@ finally { $draftStream.Dispose() }
 ```
 
 3. Reviewer supplies reference/window, enables approved authority and validates final strict UTF-8 bytes with `Read-HJson`/`Assert-HAuthorization`. Serialization grants no authority; no toolkit approval-writing command exists.
-4. The independently authorized infrastructure process installs those exact bytes with [protected ownership/ancestors](#1-inspect-and-prepare-the-host) at:
+4. The independently authorized infrastructure process installs those exact bytes with [protected ownership/ancestors](#protect-the-handoff-and-configuration) at:
 
 ```text
 %ProgramData%\clc-<target-id>\Deployment\enrollment\authorizations\<authorizationId>.json
@@ -289,7 +295,7 @@ On failure, inspect safe `ErrorRecord.TargetObject` state/actions, performed fla
 | HostState | Action |
 | --- | --- |
 | ToolkitNotInitialized / TargetNotEnrolled | Review and Apply only the independently authorized missing resources |
-| Ready | Continue with [first separately approved application deployment](deployment.md#first-application-deployment) |
+| Ready | Next: [verify installed toolkit](installation.md#verification-and-activation), then first separately approved application deployment |
 | Incomplete / DriftDetected | Preserve resources/evidence; independent reconciliation, no automatic repair |
 | RecoveryRequired | Preserve state; admissible explicit deployment recovery or independent maintenance |
 

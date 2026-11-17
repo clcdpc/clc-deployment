@@ -1,5 +1,7 @@
 # IIS verification
 
+Enter from [setup section 9](setup-guide.md#9-verify-the-setup), after toolkit verification and baseline (plus standing authorization for automated acceptance). Host/application exercises need separate authorization. **Next:** return to [routine operation](setup-guide.md#10-routine-operation) after applicable acceptance; record outstanding gates honestly.
+
 The optional [GitHub setup check](github-setup-check.md) reads settings only; routine deployments do not require it. Host/consumer acceptance and independent-identity qualification need separately scoped enrollment, preflight and deployment/recovery observations.
 
 **Actual Windows Server 2022/IIS qualification remains NOT RUN.** This procedure covers ordinary deployment and recovery. Offline NTFS/process/loopback/DPAPI tests and synthetic IIS/identity observations do not establish live-host acceptance. Reboot, power/storage loss and other disruptive checks need separate scope and evidence.
@@ -55,7 +57,7 @@ Use operator-selected IDs below; the snippets are placeholders, not host authori
 
 ### 1. Initial deployment
 
-Invoke approved A on the authorized empty target; record initial Started/Stopped pool state. Require:
+For an established baseline, verify its retained [first-deployment evidence](deployment.md#deploy-and-verify-the-baseline) as approved A below; do not clear or redeploy the target as empty. If capturing this check during baseline, invoke approved A on the authorized empty target and record initial Started/Stopped pool state. Require:
 
 - Deployed, exact A inventory/readiness, Started/one worker.
 - Verified empty backup, current generation 1 and matching Completed journal/terminal snapshot.

@@ -1,14 +1,42 @@
 # CLC Deployment Setup Guide
 
-Use this checklist for each application and target. GitHub administrators complete sections 1–7; infrastructure completes section 8 under independent host authorization. Application owners participate in verification. Examples use `ssrs-web`; substitute your repository and application values. Detailed procedures live in the linked runbooks.
+This guide controls generic setup for each application and target. **SSRS Web administrators start with the [application deployment guide](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md)** and use toolkit procedures where it directs them. Shared-workflow examples below use `example-app`; substitute compatible consumer values.
+
+## Setup roadmap
+
+Follow this order. Complete each linked procedure, then use its **Next** link to continue; return here for verification and routine operation.
+
+| Stage | Procedure |
+| --- | --- |
+| 1. Configure GitHub | [Sections 1–7](#1-establish-naming-conventions); [GitHub setup](github-setup.md) is supplementary reference |
+| 2. Prepare the host | [Section 8](#8-prepare-deployment-hosts): OS, IIS, accounts, TLS and application configuration |
+| 3. Prepare trusted bootstrap | [Installation: initial bootstrap provisioning](installation.md#initial-bootstrap-provisioning) |
+| 4. Enroll the host | [Enrollment](host-enrollment.md#1-inspect-and-prepare-the-host): deployment.json, observations, independent authorization, Inspect/Plan/Apply, readiness |
+| 5. Verify installed toolkit | [Installation: verification and activation](installation.md#verification-and-activation), after Apply installs/activates it |
+| 6. Deploy first application | [First deployment](deployment.md#first-application-deployment): acquire, independently approve, deploy and verify baseline |
+| 7. Enable routine deployment | [Standing authorization](automated-deployments.md#configure-standing-authorization), only after baseline succeeds |
+| 8. Verify deployment | [Section 9](#9-verify-the-setup) → [separately authorized IIS acceptance](iis-verification.md#rollout-order) |
+| 9. Operate normally | [Section 10: routine tag-driven operation](#10-routine-operation) |
+
+GitHub administrators begin with naming in [section 1](#1-establish-naming-conventions), then GitHub Settings in [sections 2–7](#2-restrict-github-actions). Infrastructure administrators begin at [section 8](#8-prepare-deployment-hosts), then prepare trusted bootstrap. Application owners prepare external configuration and application-specific release/readiness requirements before baseline.
+
+Paths below are relative to `%ProgramData%\clc-<target-id>\`:
+
+| File | Preparation point and owner |
+| --- | --- |
+| `Config/application.json` | Application owner supplies content; infrastructure [provisions/protects it](host-enrollment.md#protect-the-handoff-and-configuration) |
+| `Config/deployment.json` | Infrastructure writes target configuration in [enrollment section 2](host-enrollment.md#2-prepare-configdeploymentjson) |
+| `Deployment/enrollment/authorizations/<authorizationId>.json` | Independent infrastructure reviewer approves; authorized process installs [enrollment handoff](host-enrollment.md#4-independently-approve-and-install-the-handoff) |
+| `Deployment/toolkit/policy/host-policy.json` | [Enrollment Apply](host-enrollment.md#5-inspect-plan-apply-and-verify) installs the independently approved initial policy |
+| `Deployment/toolkit/policy/approvals/standing/<standingAuthorizationId>.json` | Infrastructure independently approves/provisions [standing authorization](automated-deployments.md#configure-standing-authorization) after baseline |
 
 ## 1. Establish naming conventions
 
 Choose a stable lowercase `applicationId`, at most 53 letters, digits or hyphens, beginning with a letter or digit. Derive the two identifiers once:
 
 ```text
-DEV:        ssrs-web-dev
-Production: ssrs-web-production
+DEV:        example-app-dev
+Production: example-app-production
 ```
 
 Use the corresponding identifier for the target, GitHub environment, runner label, enrollment authorization ID and standing authorization ID. These remain distinct resources. Consumer configuration version 2 derives routing from `applicationId`.
@@ -55,31 +83,32 @@ Success: each label selects its intended runner. Keep ordinary PR/build/test/pac
 
 ## 7. Configure the release workflow
 
-In the application repository:
+**Compatible shared-workflow consumers only:** `.clc/release.json`, `clc-package-*` artifacts and schema-2 verified release/standing authorization apply to this integration. SSRS Web retains `.github/workflows/release.yml`, `ssrs-web-release-<run>-<attempt>` artifacts and application-owned release/verification scripts with schema-1 verified release/standing authorization ([fixed source](https://github.com/clcdpc/ssrs-web/tree/dddb72c1bafc58db1c8f1ade301a600a269a46bd/scripts/release)). Follow its [application guide](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md#immutable-release-production); no schema migration is required.
+
+In a compatible application repository:
 
 1. Keep a working application-owned release workflow. For new integration, adapt the [conventional example](examples/shared-conventional-build.yml), or add the [prequalified packaging tail](examples/shared-prequalified-build.yml) after existing application qualification.
 2. Configure `push.tags: ['v*']` and preserve `package -> publication -> deployment` through success-dependent `needs`.
 3. Set [`.clc/release.json`](examples/shared-release.json) to contract version **2**: actual application/repository, `integrationBranch=master`, producer workflow path/job and optional exact REST job display name. Keep `requiredToolkitContractVersion=2` and application project paths where applicable.
 4. Replace synthetic shared SHAs in workflow calls, packaging and `orchestration.sharedRevision` with the same reviewed full immutable revision. Allow `contents: read`, `actions: read`, `id-token: write`; grant `contents: write` to publication only. Preserve application-specific build permissions.
 
-Success: eligible tags produce a qualified `release.zip`, publish it immutably, then attempt deployment. Failed publication blocks deployment. Generic examples describe integration; they are not replacement instructions for an existing application workflow. See [orchestration reference](shared-release-orchestration.md).
+Success: eligible tags produce a qualified `release.zip`, publish it immutably, then attempt deployment. Failed publication blocks deployment. Next: [prepare the host](#8-prepare-deployment-hosts). See [orchestration reference](shared-release-orchestration.md) for details.
 
 ## 8. Prepare deployment hosts
 
-On each intended Windows Server 2022 host, infrastructure:
+After GitHub configuration, infrastructure provisions each intended Windows Server 2022 host: PowerShell 7, IIS/.NET 10/ANCM, accounts, TLS and application-owned configuration/keys. Application owners supply configuration content and qualify release/readiness requirements; the toolkit does not generate application configuration.
 
-1. Provisions PowerShell 7, IIS/.NET 10/ANCM, identities, TLS and application-owned configuration/keys.
-2. Follows [installation](installation.md) to authenticate the selected format-3 distribution and provision the protected bootstrap. Published [beta.4](https://github.com/clcdpc/clc-deployment/releases/tag/v0.1.0-beta.4) supplies `Clc.Deployment`; installation still needs independent approval.
-3. Follows [host enrollment](host-enrollment.md) to prepare configuration, collect observations, independently approve/install the exact authorization, then Inspect, Plan and Apply.
-4. Completes the [first exact approved deployment](deployment.md#first-application-deployment), verifies its baseline, then installs [standing authorization](automated-deployments.md#configure-standing-authorization).
-
-Success: enrollment reports `ReadyForDeployment=true`, the baseline has exact readiness and completed state, and standing scope matches the target. Enrollment readiness alone does not establish application readiness.
+Next: [prepare trusted bootstrap](installation.md#initial-bootstrap-provisioning), then follow roadmap stages 4–7 through the linked procedures. Enrollment Apply installs/activates the initial runtime toolkit; it must not already be installed. Return to [section 9](#9-verify-the-setup) after successful baseline and standing setup.
 
 ## 9. Verify the setup
+
+Prerequisite: successful baseline and, when enabling automation, standing authorization.
 
 Optionally run the [read-only GitHub diagnostic](github-setup-check.md) from an administrative workstation or GitHub-hosted runner; resolve NEEDS CONFIGURATION and inspect CHECK MANUALLY items.
 
 Under separately authorized consumer/host scope, follow [IIS verification](iis-verification.md). Retain DEV unmerged-source and Production integrated-source evidence, release identity, readiness, inventory and recovery results. Scope disruptive checks separately. **Actual Windows Server 2022/IIS and independent-identity qualification remain NOT RUN** until observed acceptance is recorded.
+
+Next: [routine operation](#10-routine-operation) after the applicable acceptance checks.
 
 ## 10. Routine operation
 

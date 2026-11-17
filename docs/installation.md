@@ -1,6 +1,6 @@
 # Toolkit installation and activation
 
-Follow [setup](setup-guide.md) for the overall sequence and [host enrollment](host-enrollment.md) for exact authorization. Infrastructure installs each target independently. Build-time `orchestration.sharedRevision` selects packaging/workflow code; it never authorizes host installation or activation.
+Enter from [setup section 8](setup-guide.md#8-prepare-deployment-hosts) after host prerequisites. Initial order: bootstrap preparation → enrollment preparation/authorization → Apply installs/activates toolkit → verification below → first application deployment. Build-time `orchestration.sharedRevision` never authorizes host installation or activation.
 
 Published [v0.1.0-beta.4](https://github.com/clcdpc/clc-deployment/releases/tag/v0.1.0-beta.4), from [557192e](https://github.com/clcdpc/clc-deployment/tree/557192eff5eea651d6f1a393eb3b196053a985e5), includes format-3 `Clc.Deployment-0.1.0-beta.4.zip`. Publication is acquisition evidence, not installation approval. Historical format-1/2 distributions retain `CLC.Deployment` naming and cannot initialize this architecture. See [distribution reference](contracts.md#toolkit-distribution-reference) for format and reproduction details.
 
@@ -19,7 +19,7 @@ Published [v0.1.0-beta.4](https://github.com/clcdpc/clc-deployment/releases/tag/
 
    The ZIP asset's `sha256:` digest is the archive digest; an Actions transport ZIP has a different digest. Independently reconcile asset/source claims with the retained successful `build-test-publish` producer run/job/artifact and [release-manifest](releasing.md#version-identity), then approve the selected bytes. The version/source/digest variables below come from that independent decision, never automatic acceptance of adjacent metadata.
 
-2. **On the intended host**, infrastructure creates/protects the target root, `Deployment`, `Config` and enrollment handoff as described in [enrollment prerequisites](host-enrollment.md#1-inspect-and-prepare-the-host). Use native ProgramData. Keep the authenticated archive and reviewed tools in an infrastructure-protected local preparation directory outside `Deployment`.
+2. **On the intended host**, follow [host preparation steps 1–4](host-enrollment.md#1-inspect-and-prepare-the-host) through namespace creation, then return here for step 3. Keep the authenticated archive and reviewed tools in infrastructure-protected local preparation storage outside `Deployment`.
 3. **In a fresh elevated PowerShell 7 process**, set `$reviewedTools` to that trusted tools directory; `$zip`, `$approvedDigest`, `$approvedSource`, `$approvedVersion` and `$changeReference` come from independent acquisition/installation review. Verify:
 
 ```powershell
@@ -52,21 +52,23 @@ $bootstrapVerified = & "$reviewedTools\Test-ToolkitDistribution.ps1" `
     -InstalledModuleRoot "$bootstrapRoot\Clc.Deployment" -RequireInfrastructureTools
 ```
 
-Success: exact bytes, protected ownership/ancestors and expected four-entry layout. Never execute an arbitrary source checkout as the bootstrap. [Enrollment preparation](host-enrollment.md#3-collect-observations-and-prepare-the-candidate) obtains the separate bootstrap executable inventory.
+Success: exact bytes, protected ownership/ancestors and expected four-entry layout. Never execute an arbitrary source checkout as the bootstrap. **Next:** [protect the enrollment handoff/configuration](host-enrollment.md#protect-the-handoff-and-configuration), then complete enrollment sections 2–5. Return to [verification below](#verification-and-activation) after Apply.
 
 ## First authorized toolkit installation
 
-Complete [enrollment preparation and independent approval](host-enrollment.md#4-independently-approve-and-install-the-handoff) first, including configuration, native observations and the protected exact authorization. Then run Inspect and Plan, review their operations, and invoke the documented `Initialize-ClcHostEnrollment.ps1 -Operation Apply -DistributionPath` command.
+This is [enrollment section 5](host-enrollment.md#5-inspect-plan-apply-and-verify), after sections 1–4 prepare configuration, observations and protected independent authorization. Follow that procedure for Inspect/Plan/Apply; next, perform [verification below](#verification-and-activation).
 
 Apply installs the independently approved immutable version under `Deployment\toolkit\versions\<version>`, creates protected policy/catalog/control/lock resources, activates the initial exact pin and publishes the verified target last. It never upgrades an existing active pin. Do not preinstall a version beneath Deployment before initial enrollment: partial toolkit/control/lock resources require reconciliation.
 
 ## Verification and activation
 
-After Apply, [Get-ClcHostEnrollment](host-enrollment.md#5-inspect-plan-apply-and-verify) must report `Ready` and `ReadyForDeployment=true`. Independently compare protected `Deployment\toolkit\policy\host-policy.json` with the approved policy, including generation and every `activeToolkit` field. Verify the retained ZIP and installed module with `Test-ToolkitDistribution.ps1`, using the same command above and the installed version's paths.
+Prerequisite: enrollment Apply completed and [Get-ClcHostEnrollment](host-enrollment.md#5-inspect-plan-apply-and-verify) reports `Ready` and `ReadyForDeployment=true`. Initial activation already occurred in Apply. Independently compare protected `Deployment\toolkit\policy\host-policy.json` with the approved policy, including generation and every `activeToolkit` field. Verify the retained ZIP and installed module with `Test-ToolkitDistribution.ps1`, using the same command above and the installed version's paths.
 
-Start a fresh `pwsh -NoLogo -NoProfile -NonInteractive` and import **that exact approved manifest** for deployment. Enrollment readiness does not approve a release or establish application readiness. Follow [first deployment](deployment.md#first-application-deployment) separately.
+Start a fresh `pwsh -NoLogo -NoProfile -NonInteractive` and import **that exact approved manifest** for deployment. Enrollment readiness does not approve a release or establish application readiness. **Next:** initial setup → [first application deployment](deployment.md#first-application-deployment), roadmap stage 6; approved upgrade → [routine operation](setup-guide.md#10-routine-operation).
 
 ## Later independently approved upgrades
+
+For an existing installation only, under separate upgrade approval. Afterwards, repeat [verification](#verification-and-activation), then resume [normal operation](setup-guide.md#10-routine-operation).
 
 1. Infrastructure fences deployment/enrollment processes and policy writers. Preserve previous distributions, policy history, approvals, current/journal, attempts and backups; review retained-state/application compatibility.
 2. Authenticate the replacement archive. Extract to a new exact `Deployment\toolkit\versions\<version>` directory; never overwrite an installed version. Verify bytes, owner/DACL/ancestor replacement rights and effective runtime isolation.

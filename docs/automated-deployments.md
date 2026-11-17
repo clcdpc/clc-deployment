@@ -1,6 +1,8 @@
 # Standing authorization and routine deployment
 
-Complete [enrollment](host-enrollment.md) and the [independently approved baseline](deployment.md#first-application-deployment) first. Standing authority admits routine exact releases for that target. It excludes enrollment, baseline/cutover, toolkit changes, downgrades and exceptional recovery. Build-time shared pins remain separate from the active host-toolkit pin.
+Prerequisite: [verified installed toolkit](installation.md#verification-and-activation) and [successful independently approved baseline](deployment.md#deploy-and-verify-the-baseline). Standing authority excludes enrollment, baseline/cutover, toolkit changes, downgrades and exceptional recovery. Build-time shared pins remain separate from the active host-toolkit pin. **Next:** return to [setup section 9](setup-guide.md#9-verify-the-setup) for separately authorized IIS acceptance, then routine operation.
+
+**The schema-2 example below is for compatible shared-workflow consumers** using `.clc/release.json` and `clc-package-*`. SSRS Web retains `.github/workflows/release.yml`, `ssrs-web-release-<run>-<attempt>` and application-owned verification: schema-1 verified release requires matching schema-1 standing authorization ([fixed adapter](https://github.com/clcdpc/ssrs-web/blob/dddb72c1bafc58db1c8f1ade301a600a269a46bd/scripts/release/AutomaticDeployment.Adapter.ps1)). Follow its [authorization/deployment guide](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md#github-and-host-configuration-prerequisites); no schema-2 migration is required.
 
 ## Configure standing authorization
 
@@ -19,16 +21,16 @@ Complete [enrollment](host-enrollment.md) and the [independently approved baseli
   "contractFamily": "clc-file-iis-v1",
   "schemaVersion": 2,
   "recordKind": "standing-authorization",
-  "standingAuthorizationId": "ssrs-web-dev",
+  "standingAuthorizationId": "example-app-dev",
   "enabled": false,
-  "targetId": "ssrs-web-dev",
-  "applicationId": "ssrs-web",
+  "targetId": "example-app-dev",
+  "applicationId": "example-app",
   "environmentName": "DEV",
   "channel": "DEV",
-  "sourceRepository": "EXAMPLE-OWNER/ssrs-web",
+  "sourceRepository": "EXAMPLE-OWNER/example-app",
   "buildWorkflowPath": ".github/workflows/build.yml",
   "buildJob": "package",
-  "lineageId": "ssrs-web-dev",
+  "lineageId": "example-app-dev",
   "authorization": {
     "authoritySid": "S-1-5-21-1-2-3-1002",
     "reference": "replace-with-approved-change",
@@ -49,7 +51,7 @@ Complete [enrollment](host-enrollment.md) and the [independently approved baseli
 %ProgramData%\clc-<target-id>\Deployment\toolkit\policy\approvals\standing\<standingAuthorizationId>.json
 ```
 
-Apply [ownership/ancestor protection](host-enrollment.md#1-inspect-and-prepare-the-host), effective runtime isolation and no direct deployment-SID write ACE. The toolkit never creates/enables standing policy; approval against the elevated administrator remains procedural.
+Apply [ownership/ancestor protection](host-enrollment.md#protect-the-handoff-and-configuration), effective runtime isolation and no direct deployment-SID write ACE. The toolkit never creates/enables standing policy; approval against the elevated administrator remains procedural.
 
 5. **Verify locally:** validate final JSON with `Test-Json -Json (Get-Content -LiteralPath $standingPath -Raw) -SchemaFile $standingSchema`, where `$standingSchema` is the reviewed schema above. Then, in a fresh elevated admitted deployment process importing the exact active manifest, use this infrastructure-only read of the installed protected record:
 
@@ -70,7 +72,7 @@ Apply [ownership/ancestor protection](host-enrollment.md#1-inspect-and-prepare-t
 
 Compare returned enabled scope with baseline/tagged producer configuration. This read does not verify GitHub or authorize a deployment; exercise the next eligible tag only under separately authorized consumer scope.
 
-Repeat independently for Production: its target/standing ID, exact `environmentName`, `channel=Production`, baseline lineage and `allowUnmergedDevTags=false`.
+Repeat independently for Production: its target/standing ID, exact `environmentName`, `channel=Production`, baseline lineage and `allowUnmergedDevTags=false`. **Next:** [setup verification](setup-guide.md#9-verify-the-setup).
 
 ## Routine operation and revocation
 
@@ -117,7 +119,7 @@ Later runs/attempts may admit rebuilt same-tag/source bytes; same-attempt change
 | Matching policy/evidence | Generated approval |
 | --- | --- |
 | Schema 2 | Schema 3, including source identity |
-| Historical schema 1 | Schema 2 |
+| Schema 1 (including SSRS Web) | Schema 2 |
 
 Both bind exact standing bytes and target/source/build/artifact/package. Equivalent evidence formatting preserves first-admitted evidence. Tag/source bindings are immutable per target/lineage; snapshots do not permanently bind branch names. No historical policy registry exists.
 
