@@ -80,8 +80,9 @@ Describe 'Tagged application workflow identity and conventional routing' {
         $script:responses['/repos/clcdpc/example/actions/runs/123/artifacts?per_page=100&page=1'].artifacts+=@{id=457L;name=$name}
         { Get-ClcQualifiedArtifactId $script:configuration $script:caller 123 2 $script:api } | Should -Throw '*One exact qualified artifact*'
     }
-    It 'rejects legacy versions and obsolete or infrastructure-owned fields' -ForEach @(@{Kind='version'},@{Kind='targets'},@{Kind='trustedFiles'},@{Kind='sourcePolicy'},@{Kind='applicationRoot'}) {
-        if ($Kind -ceq 'version') {$script:configuration.contractVersion=1L} else {$script:configuration[$Kind]=@()}
+    It 'rejects legacy versions and obsolete or infrastructure-owned fields' -ForEach @(@{Kind='version'},@{Kind='targets'},@{Kind='trustedFiles'},@{Kind='sourcePolicy'},@{Kind='applicationRoot'},@{Kind='runnerGroup'},@{Kind='runnerLabels'},@{Kind='enabled'},@{Kind='runnerAdmissionReady'},@{Kind='deploymentWorkflowPath'}) {
+        if ($Kind -ceq 'deploymentWorkflowPath') {$script:configuration.orchestration.deploymentWorkflowPath='.github/workflows/deploy.yml'}
+        elseif ($Kind -ceq 'version') {$script:configuration.contractVersion=1L} else {$script:configuration[$Kind]=@()}
         $bytes=[Text.Encoding]::UTF8.GetBytes(($script:configuration | ConvertTo-Json -Depth 12))
         { Read-ClcConsumerConfiguration -Bytes $bytes } | Should -Throw -ErrorId 'Clc.InvalidContract*'
     }

@@ -288,15 +288,15 @@ Add-Category 'Tag protection' '3-protect-release-tags' "$repoUrl/settings/rules"
     Observation -Missing $missing -Manual ($manual + $notes)
 }
 
-Add-Category 'Restrict actors' '2-configure-restrict-actors' "$repoUrl/settings/actions/policies" 'Repository Settings > Actions > Policies > New policy > Restrict actors' 'Repository-wide native Restrict actors policy admits only authorized release developers and trusted automation.' {
+Add-Category 'Restrict actors' '2-restrict-github-actions' "$repoUrl/settings/actions/policies" 'Repository Settings > Actions > Policies > New policy > Restrict actors' 'Active repository-wide native Restrict actors policy covers all workflows, admits authorized release developers and has no event restrictions.' {
     Observation -Manual 'Read-only APIs do not reliably expose this repository-wide policy. Review Restrict actors in GitHub; do not create a second application allowlist.'
 }
 
-Add-Category 'Workflow trigger' '9-verify-tag-deployments' "$repoUrl/tree/$IntegrationBranch/.github/workflows" 'Repository > Code > .github/workflows > application release workflow' 'Version-tag push only; package then publication then deployment using needs; caller runs at the tag, including unmerged DEV commits.' {
+Add-Category 'Workflow trigger' '7-configure-the-release-workflow' "$repoUrl/tree/$IntegrationBranch/.github/workflows" 'Repository > Code > .github/workflows > application release workflow' 'Version-tag push only; package then publication then deployment using needs; caller runs at the tag, including unmerged DEV commits.' {
     Observation -Manual 'Review the tagged consumer workflow and immutable shared pins. No workflow_run or manual release trigger; ordinary build/test jobs use hosted runners. This diagnostic does not analyze workflow code.'
 }
 
-Add-Category 'Environment' '5-create-environments' "$repoUrl/settings/environments" "Repository Settings > Environments > $EnvironmentName > Deployment branches and tags / Deployment protection rules" 'No restriction for deployment branches and tags; no required reviewers or wait timer.' {
+Add-Category 'Environment' '5-create-deployment-environments' "$repoUrl/settings/environments" "Repository Settings > Environments > $EnvironmentName > Deployment branches and tags / Deployment protection rules" 'No restriction for deployment branches and tags; no required reviewers, wait timers or additional deployment approval rules.' {
     $environments = Read-List "$repoPath/environments" 'environments'
     foreach ($item in $environments) { Require-Strings $item @('name') }
     $found = @($environments | Where-Object { $_.name -ieq $EnvironmentName })

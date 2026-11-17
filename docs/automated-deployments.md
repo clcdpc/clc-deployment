@@ -36,9 +36,11 @@ Creating and pushing a valid DEV version tag authorizes that exact release throu
 
 SemVer ordering uses the existing bounded numeric tag sequence; `Test-ClcRelease -ReleaseTag` exposes classification without authority. Snapshots use authenticated producer `runId`, with release ID `dev-<runId>-<first12SourceCommit>`. Their sequence is separate from SemVer: switching ordering kind within an automated lineage refuses. A separately approved manual baseline is required to establish another ordering scheme. Protect integration history against force pushes/deletion; run ordering is not a Git history rollback detector.
 
-The shared routine entry point accepts version tags only; it does not trigger branch snapshots or manual dispatch. Installed snapshot evidence and recovery remain supported for existing integrations.
+The shared routine entry point accepts version tags only; it does not trigger branch snapshots or manual dispatch. Installed snapshot evidence and recovery remain supported for existing integrations. Beta/RC use workflow-only `ArtifactOnlyTag` evidence and package verification; they never produce a host verified-release handoff or request a privileged runner. Consumer application publication requires Boolean `immutable=true` on the canonical GitHub Release before dependent deployment can proceed.
 
 A later run, or later attempt of the same run, can rebuild the same immutable tag/source with new package bytes. Changed bytes for the same run/attempt, moved tags and older builds refuse. A fresh observation that an `UnmergedDevTag` source is now integrated into master can be admitted for the same run only when the exact source/reference/release ID, full provenance, ZIP and manifest bytes match. The workflow/configuration and shared pin are authenticated at the tagged revision; there is no equality requirement with current master files. No historical policy registry is maintained.
+
+Those are installed-host ordering rules, not permission to replace a canonical GitHub archive. Shared publication preserves only byte-identical immutable Releases; rebuilt bytes conflicting with an existing published asset fail publication and block its dependent deployment. Select a new valid version tag for a new canonical release.
 
 ## Admission, interruption and revocation
 

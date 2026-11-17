@@ -58,6 +58,32 @@ Describe 'Shared application source eligibility' {
         $script:responses['/repos/clcdpc/ssrs-web/git/ref/tags/v1.2.3-dev.1'].object.sha='c'*40
         { Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api } | Should -Throw '*tag moved*'
     }
+    It 'returns complete workflow-only evidence for <Tag> with <History> history' -ForEach @(
+        @{Tag='v1.2.3-beta.1';History='integrated'},@{Tag='v1.2.3-rc.1';History='integrated'},
+        @{Tag='v1.2.3-beta.1';History='unmerged'},@{Tag='v1.2.3-rc.1';History='unmerged'},
+        @{Tag='v1.2.3-beta.1';History='unrelated'},@{Tag='v1.2.3-rc.1';History='unrelated'}
+    ) {
+        $base='/repos/clcdpc/ssrs-web'
+        $script:responses[$base+'/git/ref/tags/'+$Tag]=@{object=@{type='commit';sha=$script:sourceCommit}}
+        if ($History -ceq 'unmerged') { Set-UnmergedDevTagFixture }
+        if ($History -ceq 'unrelated') { $script:responses[$base+'/compare/'+$script:sourceCommit+'...'+$script:integrationCommit]=$null }
+        $source=Get-ClcVerifiedSource $script:configuration $Tag $script:sourceCommit 123 $script:api
+        $source.identity.sourceClass | Should -BeExactly ArtifactOnlyTag
+        $source.identity.channel | Should -BeExactly ArtifactOnly
+        $source.identity.tag | Should -BeExactly $Tag
+        $source.identity.releaseId | Should -BeExactly $Tag.Replace('.','-')
+        foreach ($value in $source.identity.Values) { $value | Should -Not -BeNullOrEmpty }
+        { New-ClcVerifiedPackageIdentity $script:configuration $source @{} 'unused.zip' 'ssrs-web-dev' } | Should -Throw '*cannot create a host*'
+        # Installed source policy is deliberately unchanged and rejects this class.
+        { Assert-ClcSourceIdentity $source.identity } | Should -Throw -ErrorId 'Clc.InvalidContract*'
+    }
+    It 'rejects annotated tag chains beyond five objects without unbounded API calls' {
+        $base='/repos/clcdpc/ssrs-web'; $object='c'*40
+        $script:responses[$base+'/git/ref/tags/v1.2.3-dev.1']=@{object=@{type='tag';sha=$object}}
+        $script:responses[$base+'/git/tags/'+$object]=@{object=@{type='tag';sha=$object}}
+        { Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api } | Should -Throw '*tag moved*'
+        @($script:requests | Where-Object {$_ -like '*/git/tags/*'}).Count | Should -Be 5
+    }
     It 'peels bounded annotated tag objects to their exact commit' {
         $base='/repos/clcdpc/ssrs-web'
         $script:responses[$base+'/git/ref/tags/v1.2.3-dev.1']=@{object=@{type='tag';sha=('c'*40)}}
@@ -206,7 +232,7 @@ Describe 'Application release publication preserves completed bytes' {
         $script:assetPath=Join-Path $TestDrive 'release.zip'; [IO.File]::WriteAllText($script:assetPath,'verified')
         $script:asset=@{name='release.zip';path=$script:assetPath;length=(Get-Item $script:assetPath).Length;sha256=(Get-FileHash $script:assetPath).Hash.ToLowerInvariant()}
         $script:identity=@{kind='tag';tag='v1.2.3-dev.1';releaseId='v1-2-3-dev-1';channel='DEV';repository='clcdpc/ssrs-web';sourceCommit=('a'*40)}
-        $script:release=@{id=42;tag_name='v1.2.3-dev.1';target_commitish=('a'*40);prerelease=$true;draft=$false;assets=@(@{id=9;name='release.zip';size=$script:asset.length})}
+        $script:release=@{id=42;tag_name='v1.2.3-dev.1';target_commitish=('a'*40);prerelease=$true;draft=$false;immutable=$true;assets=@(@{id=9;name='release.zip';size=$script:asset.length})}
         $script:writes=0
         $script:publishApi={param($method,$path,$body) if ($method -cne 'GET') {$script:writes++; throw 'Unexpected write'}; return $script:release}
         $script:assetHash={param($asset) return $script:asset.sha256}
@@ -216,8 +242,59 @@ Describe 'Application release publication preserves completed bytes' {
         $result=Invoke-ClcApplicationPublication $script:identity @($script:asset) $script:publishApi $script:assetHash $script:upload
         $result.status | Should -BeExactly 'Preserved'; $script:writes | Should -Be 0
     }
+    It 'rejects a published release with <Field> immutability without any writes' -ForEach @(
+        @{Field='false';Value=$false},@{Field='null';Value=$null},@{Field='missing';Value=$null},
+        @{Field='string true';Value='true'},@{Field='string false';Value='false'},@{Field='number';Value=1},
+        @{Field='array';Value=@($true)},@{Field='empty array';Value=@()},@{Field='object';Value=@{value=$true}}
+    ) {
+        if ($Field -ceq 'missing') {$script:release.Remove('immutable')} else {$script:release.immutable=$Value}
+        { Invoke-ClcApplicationPublication $script:identity @($script:asset) $script:publishApi $script:assetHash $script:upload } | Should -Throw '*Boolean immutable=true*'
+        $script:writes | Should -Be 0
+        $script:release.assets[0].id | Should -Be 9
+    }
+    It 'keeps the shared toolkit publisher opt-in behavior for releases without immutability evidence' {
+        $script:release.Remove('immutable')
+        $shared=@{repository=$script:identity.repository;tag=$script:identity.tag;sourceCommit=$script:identity.sourceCommit;prerelease=$true}
+        (Invoke-SharedReleaseGitHubPublication $shared @($script:asset) $script:publishApi $script:assetHash $script:upload).status | Should -BeExactly Preserved
+        $script:writes | Should -Be 0
+    }
+    It 'verifies new final publication with immutable=<Immutable> and preserves the observed assets' -ForEach @(@{Immutable=$true},@{Immutable=$false}) {
+        $script:release=$null; $script:finalImmutable=$Immutable
+        $script:operations=[Collections.Generic.List[string]]::new()
+        $api={
+            param($method,$path,$body)
+            $script:operations.Add($method+' '+$path)
+            if ($method -ceq 'POST') {
+                $body.draft | Should -BeTrue
+                $script:release=@{id=42;tag_name=$body.tag_name;target_commitish=$body.target_commitish;prerelease=$body.prerelease;draft=$true;immutable=$false;assets=@()}
+            }
+            if ($method -ceq 'PATCH') { $script:release.draft=$false; $script:release.immutable=$script:finalImmutable }
+            if ($path.Contains('/releases?')) {return @()}
+            return $script:release
+        }
+        $upload={param($release,$asset) $release.draft | Should -BeTrue; $script:release.assets=@(@{id=9;name=$asset.name;size=$asset.length})}
+        if ($Immutable) {
+            (Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $upload).status | Should -BeExactly Published
+            # A repeat of the same tag verifies and preserves the canonical bytes.
+            (Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $script:upload).status | Should -BeExactly Preserved
+        } else {
+            { Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $upload } | Should -Throw '*Boolean immutable=true*'
+        }
+        $script:release.draft | Should -BeFalse
+        $script:release.assets[0].id | Should -Be 9
+        @($script:operations | Where-Object {$_ -like 'DELETE *'}).Count | Should -Be 0
+        @($script:operations | Where-Object {$_ -like 'PATCH *'}).Count | Should -Be 1
+        $script:operations | Should -Contain 'GET /repos/clcdpc/ssrs-web/releases/42'
+    }
     It 'rejects conflicting completed release bytes without mutation' {
         { Invoke-ClcApplicationPublication $script:identity @($script:asset) $script:publishApi {param($a) 'f'*64} $script:upload } | Should -Throw '*assets conflict*'
+        $script:writes | Should -Be 0
+    }
+    It 'rejects an immutable completed release with conflicting <Field> without mutation' -ForEach @(
+        @{Field='tag_name';Value='v1.2.3-dev.2'},@{Field='target_commitish';Value=('b'*40)},@{Field='prerelease';Value=$false}
+    ) {
+        $script:release[$Field]=$Value
+        { Invoke-ClcApplicationPublication $script:identity @($script:asset) $script:publishApi $script:assetHash $script:upload } | Should -Throw '*source or classification conflicts*'
         $script:writes | Should -Be 0
     }
     It 'refuses to repair a completed release missing assets' {
@@ -231,7 +308,8 @@ Describe 'Application release publication preserves completed bytes' {
         $upload={param($release,$asset) $script:release.assets=@(@{id=9;name='release.zip';size=$asset.length}); throw 'Duplicate race'}
         (Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $upload).status | Should -BeExactly 'Published'
     }
-    It 'preserves a matching completed release that wins a creation race' {
+    It 'revalidates immutable=<Immutable> on a matching completed creation-race winner' -ForEach @(@{Immutable=$true},@{Immutable=$false}) {
+        $script:release.immutable=$Immutable
         $script:created=$false
         $api={
             param($method,$path,$body)
@@ -240,7 +318,50 @@ Describe 'Application release publication preserves completed bytes' {
             if ($script:created) {return $script:release}
             return $null
         }
-        (Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $script:upload).status | Should -BeExactly 'Preserved'
+        if ($Immutable) {
+            (Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $script:upload).status | Should -BeExactly 'Preserved'
+        } else {
+            { Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $script:upload } | Should -Throw '*Boolean immutable=true*'
+        }
+        $script:writes | Should -Be 0
+    }
+    It 'resumes a compatible complete draft and rechecks the final API object rather than the PATCH claim' {
+        $script:release.draft=$true; $script:release.immutable=$false
+        $api={
+            param($method,$path,$body)
+            if ($method -ceq 'PATCH') {
+                $script:writes++; $script:release.draft=$false
+                $claim=$script:release.Clone(); $claim.immutable=$true; return $claim
+            }
+            return $script:release
+        }
+        { Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $script:upload } | Should -Throw '*Boolean immutable=true*'
+        $script:writes | Should -Be 1
+        $script:release.assets[0].id | Should -Be 9
+    }
+    It 'publishes a resumed complete draft without uploading or replacing canonical assets' {
+        $script:release.draft=$true; $script:release.immutable=$false
+        $api={param($method,$path,$body) if ($method -ceq 'PATCH') {$script:writes++; $script:release.draft=$false; $script:release.immutable=$true}; return $script:release}
+        (Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $script:upload).status | Should -BeExactly Published
+        $script:writes | Should -Be 1
+        $script:release.assets[0].id | Should -Be 9
+    }
+    It 'retains a resumed draft when final publication fails without a published race winner' {
+        $script:release.draft=$true; $script:release.immutable=$false
+        $api={param($method,$path,$body) if ($method -ceq 'PATCH') {throw 'Publication failed'}; return $script:release}
+        { Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $script:upload } | Should -Throw '*publication failed; compatible draft retained*'
+        $script:release.draft | Should -BeTrue
+        $script:release.assets[0].id | Should -Be 9
+        $script:writes | Should -Be 0
+    }
+    It 'revalidates immutable=<Immutable> after a competing publisher wins the final PATCH' -ForEach @(@{Immutable=$true},@{Immutable=$false}) {
+        $script:release.draft=$true; $script:release.immutable=$Immutable
+        $api={param($method,$path,$body) if ($method -ceq 'PATCH') {$script:release.draft=$false; throw 'Publication race'}; return $script:release}
+        if ($Immutable) {
+            (Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $script:upload).status | Should -BeExactly Published
+        } else {
+            { Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $script:upload } | Should -Throw '*Boolean immutable=true*'
+        }
         $script:writes | Should -Be 0
     }
     It 'stops uploading as soon as a racing publisher completes the full verified release' {
@@ -256,6 +377,18 @@ Describe 'Application release publication preserves completed bytes' {
         }
         (Invoke-ClcApplicationPublication $script:identity @($script:asset,$other) $api $script:assetHash $upload).status | Should -BeExactly 'Preserved'
         $script:uploads | Should -Be 1
+    }
+    It 'rejects a mutable completed asset-upload race winner without further writes' {
+        $script:release.draft=$true; $script:release.assets=@(); $script:uploads=0
+        $api={param($method,$path,$body) if ($method -cne 'GET') {throw 'Unexpected write'}; return $script:release}
+        $upload={
+            param($release,$asset)
+            $script:uploads++; $script:release.draft=$false; $script:release.immutable=$false
+            $script:release.assets=@(@{id=9;name=$asset.name;size=$asset.length})
+            throw 'Upload race'
+        }
+        { Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $upload } | Should -Throw '*Boolean immutable=true*'
+        $script:uploads | Should -Be 1; $script:writes | Should -Be 0
     }
     It 'never publishes protected-branch snapshots' {
         $script:identity.kind='snapshot'

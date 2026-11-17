@@ -58,11 +58,11 @@ if ($Action -ceq 'Deploy') {
 $archive=Save-ClcVerifiedArtifact $Repository $producer (Join-Path $OutputDirectory 'artifact') $api
 if ($Action -ceq 'Release') {
     Import-Module (Join-Path $PSScriptRoot '../../src/CLC.Deployment/CLC.Deployment.psd1') -Force
-    $verified=New-ClcVerifiedPackageIdentity $c $source $producer $archive $c.applicationId
+    $verified=Get-ClcVerifiedPackage $c $source $producer $archive
     # Reobserve mutable eligibility after the download and before publication.
     $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
     if (($again.source.identity | ConvertTo-Json -Compress) -cne ($source.identity | ConvertTo-Json -Compress)) { throw 'Release source changed during verification.' }
-    $asset=@{name='release.zip';path=$archive;length=[long](Get-Item -LiteralPath $archive).Length;sha256=$verified.releaseZipSha256}
+    $asset=@{name='release.zip';path=$archive;length=[long](Get-Item -LiteralPath $archive).Length;sha256=$verified.archiveSha256}
     $hash={param($asset) $bytes=Invoke-ClcReleaseApi $Repository GET ('/repos/'+$Repository+'/releases/assets/'+$asset.id) -Bytes; return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([byte[]]$bytes)).ToLowerInvariant()}
     $upload={param($release,$asset) Send-ClcApplicationReleaseAsset $Repository $release $asset}
     return Invoke-ClcApplicationPublication $source.identity @($asset) $api $hash $upload

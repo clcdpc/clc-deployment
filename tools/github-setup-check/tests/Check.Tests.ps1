@@ -368,6 +368,6 @@ Describe 'Workflow and guide contract' {
         $guide=Get-Content -LiteralPath (Join-Path $repositoryRoot 'docs/setup-guide.md') -Raw
         $anchors=@([regex]::Matches($guide,'(?m)^#{1,6} (.+?)\r?$') | ForEach-Object { ($_.Groups[1].Value.ToLowerInvariant() -replace '[^a-z0-9 -]','') -replace ' ','-' })
         foreach ($match in [regex]::Matches($source,"Add-Category '[^']+' '([^']+)'")) { $match.Groups[1].Value | Should -BeIn $anchors }
-        foreach ($text in @('Prepare and enroll IIS hosts','standing authorization','Verify tag deployments')) { $guide | Should -Match ([regex]::Escape($text)) }
+        foreach ($text in @('Prepare deployment hosts','standing authorization','Verify the setup','Routine operation')) { $guide | Should -Match ([regex]::Escape($text)) }
     }
 }

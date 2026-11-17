@@ -110,7 +110,9 @@ function Get-ClcVerifiedSource {
     if ($channel -ceq 'Production' -and -not $integrated) { throw 'Source is outside the protected integration history.' }
     # Native repository actor/tag policies authorize this exact commit, including
     # its workflows and configuration. No PR or master file-equality gate.
-    $sourceClass=if ($integrated) {'IntegrationTag'} elseif ($channel -ceq 'DEV') {'UnmergedDevTag'} else {$null}
+    # Artifact-only evidence has its own workflow classification. It is never
+    # serialized as installed-host source authority, even when integrated.
+    $sourceClass=if ($channel -ceq 'ArtifactOnly') {'ArtifactOnlyTag'} elseif ($integrated) {'IntegrationTag'} else {'UnmergedDevTag'}
     return @{identity=[ordered]@{contractVersion=1L;kind='tag';sourceClass=$sourceClass;repository=$c.repository;sourceCommit=$SourceCommit;reference=$tag;releaseId=$releaseId;channel=$channel;orderingKind='SemVer';sequence=$sequence;tag=$tag;integrationBranch=$c.integrationBranch;integrationCommit=$witness};superseded=$false}
 }
 
@@ -190,8 +192,8 @@ function Save-ClcVerifiedArtifact {
     } finally { $zip.Dispose(); $stream.Dispose() }
 }
 
-function New-ClcVerifiedPackageIdentity {
-    param($Configuration,$Source,$Provenance,[string] $ArchivePath,[string] $TargetId)
+function Get-ClcVerifiedPackage {
+    param($Configuration,$Source,$Provenance,[string] $ArchivePath)
     $stream=[IO.File]::Open($ArchivePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
     $zip=$null
     try {
@@ -213,6 +215,15 @@ function New-ClcVerifiedPackageIdentity {
     if ($inspection.applicationId -cne $Configuration.applicationId -or $inspection.releaseId -cne $s.releaseId -or $inspection.sourceCommit -cne $s.sourceCommit -or
         $manifest.source.repository -cne $s.repository -or $manifest.build.workflowPath -cne $p.workflowPath -or $manifest.build.runId -ne $p.runId -or $manifest.build.runAttempt -ne $p.runAttempt -or $manifest.build.job -cne $p.buildJob) { throw 'Package bytes do not bind the qualified source and producer.' }
     if (-not $Configuration.Contains('orchestration') -or $manifest.builder.sourceCommit -cne $Configuration.orchestration.sharedRevision) { throw 'Package builder revision differs from protected orchestration.sharedRevision.' }
+    return $inspection
+}
+
+function New-ClcVerifiedPackageIdentity {
+    param($Configuration,$Source,$Provenance,[string] $ArchivePath,[string] $TargetId)
+    if ($Source.identity.channel -ceq 'ArtifactOnly') { throw 'Artifact-only evidence cannot create a host verified-release identity.' }
+    Assert-ClcSourceIdentity $Source.identity
+    $inspection=Get-ClcVerifiedPackage $Configuration $Source $Provenance $ArchivePath
+    $s=$Source.identity; $p=$Provenance
     $provenance=[ordered]@{}; foreach ($field in @('workflowPath','runId','runAttempt','buildJob','artifactId','transportSha256')) { $provenance[$field]=$p[$field] }
     return [ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=2L;recordKind='verified-release';targetId=$TargetId;applicationId=$Configuration.applicationId;
         releaseId=$s.releaseId;tag=$s.reference;sourceRepository=$s.repository;sourceCommit=$s.sourceCommit;releaseZipSha256=$inspection.archiveSha256;manifestSha256=$inspection.manifestSha256;provenance=$provenance;sourceIdentity=$s}
@@ -224,7 +235,7 @@ function Invoke-ClcApplicationPublication {
     $tag=Get-ClcApplicationTag $Identity.tag
     if ($tag.releaseId -cne $Identity.releaseId -or $tag.channel -cne $Identity.channel) { throw 'Publication identity is inconsistent.' }
     $sharedIdentity=@{repository=$Identity.repository;tag=$Identity.tag;sourceCommit=$Identity.sourceCommit;prerelease=($Identity.channel -cne 'Production')}
-    return Invoke-SharedReleaseGitHubPublication $sharedIdentity $Assets $Api $AssetHash $Upload
+    return Invoke-SharedReleaseGitHubPublication $sharedIdentity $Assets $Api $AssetHash $Upload -RequireImmutable
 }
 function Send-ClcApplicationReleaseAsset {
     param([string] $Repository,$Release,$Asset)

@@ -304,9 +304,18 @@ function Get-SharedReleaseById {
 }
 
 function Assert-SharedReleaseGitHubAssets {
-    param($Release,$Identity,$Assets,[scriptblock] $AssetHash,[switch] $AllowMissing)
+    param($Release,$Identity,$Assets,[scriptblock] $AssetHash,[switch] $AllowMissing,[switch] $RequireImmutable)
     $prerelease=$Identity.prerelease
     if ($null -eq $Release -or $Release.tag_name -cne $Identity.tag -or $Release.target_commitish -cne $Identity.sourceCommit -or $Release.prerelease -isnot [bool] -or $Release.prerelease -ne $prerelease -or $Release.draft -isnot [bool]) { throw 'Existing release source or classification conflicts.' }
+    # Drafts remain writable until publication. Every published observation,
+    # including a race winner, must carry actual API Boolean evidence.
+    if ($RequireImmutable -and -not $Release.draft) {
+        $immutable=$null
+        if ($Release -is [Collections.IDictionary]) { $immutable=$Release['immutable'] } else {
+            $property=$Release.PSObject.Properties['immutable']; if ($null -ne $property) { $immutable=$property.Value }
+        }
+        if ($immutable -isnot [bool] -or -not $immutable) { throw 'Published application release must report Boolean immutable=true; retain it for operator inspection.' }
+    }
     $expected=@{}; foreach ($asset in $Assets) { if ($expected.ContainsKey($asset.name)) { throw 'Duplicate expected asset.' }; $expected[$asset.name]=$asset }
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($asset in $Release.assets) {
@@ -317,7 +326,7 @@ function Assert-SharedReleaseGitHubAssets {
 }
 
 function Invoke-SharedReleaseGitHubPublication {
-    param($Identity,$Assets,[scriptblock] $Api,[scriptblock] $AssetHash,[scriptblock] $Upload)
+    param($Identity,$Assets,[scriptblock] $Api,[scriptblock] $AssetHash,[scriptblock] $Upload,[switch] $RequireImmutable)
     $repo=$Identity.repository
     if ($repo -cnotmatch '^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$' -or $Identity.sourceCommit -cnotmatch '^[a-f0-9]{40}$' -or $Identity.prerelease -isnot [bool]) { throw 'Publication identity is invalid.' }
     if ($Assets.Count -lt 1 -or $Assets.Count -gt 8) { throw 'Publication requires a bounded asset set.' }
@@ -334,7 +343,7 @@ function Invoke-SharedReleaseGitHubPublication {
         try { $release=& $Api POST ('/repos/'+$repo+'/releases') $body }
         catch { $release=Get-SharedReleaseByTag $repo $Identity.tag $get; if ($null -eq $release) { throw 'Release creation failed; retry after inspecting retained evidence.' } }
     }
-    $missing=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -AllowMissing:$release.draft
+    $missing=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -AllowMissing:$release.draft -RequireImmutable:$RequireImmutable
     if (-not $release.draft) { return @{status='Preserved';releaseId=$release.id} }
     foreach ($asset in $missing) {
         if (-not $release.draft) { return @{status='Preserved';releaseId=$release.id} }
@@ -343,16 +352,23 @@ function Invoke-SharedReleaseGitHubPublication {
             $release=Get-SharedReleaseById $repo $release.id $get
             # A racing upload is accepted only after fetching and hashing the
             # winning asset; a duplicate HTTP response never proves identity.
-            $remaining=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -AllowMissing:$release.draft
+            $remaining=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -AllowMissing:$release.draft -RequireImmutable:$RequireImmutable
             if (@($remaining | Where-Object name -CEQ $asset.name).Count -gt 0) { throw 'Asset upload failed; compatible draft retained.' }
         }
         $release=Get-SharedReleaseById $repo $release.id $get
-        $null=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -AllowMissing:$release.draft
+        $null=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -AllowMissing:$release.draft -RequireImmutable:$RequireImmutable
     }
-    $null=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash
+    $null=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -RequireImmutable:$RequireImmutable
     if ($release.draft) {
-        $release=& $Api PATCH ('/repos/'+$repo+'/releases/'+$release.id) @{draft=$false;prerelease=($Identity.prerelease)}
-        $null=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash
+        try { $release=& $Api PATCH ('/repos/'+$repo+'/releases/'+$release.id) @{draft=$false;prerelease=($Identity.prerelease)} }
+        catch {
+            if (-not $RequireImmutable) { throw }
+            $release=Get-SharedReleaseById $repo $release.id $get
+            if ($null -eq $release -or $release.draft) { throw 'Release publication failed; compatible draft retained.' }
+        }
+        # Re-read the canonical object rather than trusting only a PATCH response.
+        if ($RequireImmutable) { $release=Get-SharedReleaseById $repo $release.id $get }
+        $null=Assert-SharedReleaseGitHubAssets $release $Identity $Assets $AssetHash -RequireImmutable:$RequireImmutable
         if ($release.draft) { throw 'Release publication remains incomplete.' }
     }
     return @{status='Published';releaseId=$release.id}

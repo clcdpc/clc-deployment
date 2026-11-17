@@ -20,7 +20,7 @@ The repository, PowerShell toolkit and ASP.NET Core companion source are license
 
 ## Consumers and operators
 
-Start with the [Deployment Setup Guide](docs/setup-guide.md) for a new application/target: configure GitHub, optionally check those settings, prepare Windows/IIS, install and enroll the toolkit, then perform separately authorized deployment and acceptance.
+Start with the authoritative ten-section [CLC Deployment Setup Guide](docs/setup-guide.md) for a new application/target: configure native GitHub actor/tag controls and Release immutability, adopt the tag-driven configuration-v2 workflow, then prepare/install/enroll the host, complete an independently approved baseline, establish standing authority and verify acceptance. Routine operation is selecting a commit and creating/pushing its version tag. Canonical application publication requires API Boolean `immutable=true`; publication failure blocks dependent deployment.
 
 | Guide | Purpose |
 | --- | --- |

@@ -105,15 +105,18 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
                 return ,$global:ClcWorkflowEntry.transport
             }
             if ($Path -ceq '/repos/clcdpc/example/releases/assets/9') { $Bytes | Should -BeTrue; return ,$global:ClcWorkflowEntry.uploaded }
-            if ($Path -ceq '/repos/clcdpc/example/releases/tags/v1.2.3-dev.1') { return $global:ClcWorkflowEntry.release }
+            if ($Path.StartsWith('/repos/clcdpc/example/releases/tags/',[StringComparison]::Ordinal)) { return $global:ClcWorkflowEntry.release }
             if ($Path -ceq '/repos/clcdpc/example/releases?per_page=100&page=1') { return @() }
             if ($Method -ceq 'POST' -and $Path -ceq '/repos/clcdpc/example/releases') {
                 $Body.target_commitish | Should -BeExactly $global:ClcWorkflowEntry.sourceCommit; $Body.draft | Should -BeTrue
-                $global:ClcWorkflowEntry.release=@{id=42L;tag_name=$Body.tag_name;target_commitish=$Body.target_commitish;prerelease=$Body.prerelease;draft=$true;assets=@()}
+                $global:ClcWorkflowEntry.release=@{id=42L;tag_name=$Body.tag_name;target_commitish=$Body.target_commitish;prerelease=$Body.prerelease;draft=$true;immutable=$false;assets=@()}
                 return $global:ClcWorkflowEntry.release
             }
             if ($Path -ceq '/repos/clcdpc/example/releases/42') {
-                if ($Method -ceq 'PATCH') { $Body.draft | Should -BeFalse; $global:ClcWorkflowEntry.release.draft=$false }
+                if ($Method -ceq 'PATCH') {
+                    $Body.draft | Should -BeFalse; $global:ClcWorkflowEntry.release.draft=$false
+                    $global:ClcWorkflowEntry.release.immutable=-not $global:ClcWorkflowEntry.ContainsKey('mutablePublication')
+                }
                 return $global:ClcWorkflowEntry.release
             }
             if ($Method -cne 'GET' -or -not $global:ClcWorkflowEntry.responses.ContainsKey($Path)) { throw ('Unexpected offline API call: '+$Method+' '+$Path) }
@@ -146,6 +149,35 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw '*Asset upload failed; compatible draft retained*'
         Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
         $global:ClcWorkflowEntry.release.draft | Should -BeTrue
+    }
+    It 'fails mutable publication without a success result or privileged handoff' {
+        $script:parameters.Action='Release'; $global:ClcWorkflowEntry.mutablePublication=$true
+        $script:claims.job_workflow_ref='clcdpc/clc-deployment/.github/workflows/application-release.yml@'+$script:sharedCommit
+        $script:parameters.ClaimsJson=$script:claims | ConvertTo-Json -Compress
+        { & "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters } | Should -Throw '*Boolean immutable=true*'
+        $global:ClcWorkflowEntry.release.draft | Should -BeFalse
+        $global:ClcWorkflowEntry.release.assets[0].id | Should -Be 9
+        [IO.File]::Exists($env:GITHUB_OUTPUT) | Should -BeFalse
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
+    }
+    It 'publishes verified <Reference> from <History> source without creating host evidence' -ForEach @(
+        @{Reference='v1.2.3-beta.1';History='integrated'},@{Reference='v1.2.3-rc.1';History='integrated'},
+        @{Reference='v1.2.3-beta.1';History='unmerged'},@{Reference='v1.2.3-rc.1';History='unmerged'},
+        @{Reference='v1.2.3-beta.1';History='unrelated'},@{Reference='v1.2.3-rc.1';History='unrelated'}
+    ) {
+        Remove-EntrypointFixture; New-EntrypointFixture -Reference $Reference
+        if ($History -ceq 'unmerged') { Set-EntrypointUnmergedSource }
+        if ($History -ceq 'unrelated') { $script:responses['/repos/clcdpc/example/compare/'+$script:sourceCommit+'...'+$script:integration]=$null }
+        $script:parameters.Action='Release'
+        $script:claims.job_workflow_ref='clcdpc/clc-deployment/.github/workflows/application-release.yml@'+$script:sharedCommit
+        $script:parameters.ClaimsJson=$script:claims | ConvertTo-Json -Compress
+        Mock New-ClcVerifiedPackageIdentity { throw 'Artifact publication must not create host evidence.' }
+        $result=& "$script:RepositoryRoot/tools/release/Invoke-ClcApplicationWorkflow.ps1" @script:parameters
+        $result.status | Should -BeExactly Published
+        $global:ClcWorkflowEntry.release.immutable | Should -BeTrue
+        (Get-DistHash $global:ClcWorkflowEntry.uploaded) | Should -BeExactly $script:package.archiveSha256
+        Should -Invoke New-ClcVerifiedPackageIdentity -Times 0 -Exactly
+        Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly
     }
     It 'rejects a different executing tag, workflow revision, run or attempt before downloading or publishing' -ForEach @(@{Mode='tag'},@{Mode='revision'},@{Mode='run'},@{Mode='attempt'}) {
         switch ($Mode) {
