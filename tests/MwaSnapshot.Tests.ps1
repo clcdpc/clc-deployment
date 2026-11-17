@@ -95,12 +95,16 @@ Describe 'Fresh MWA configuration, state and worker observations without read su
         Test-TestRejection {Invoke-T2Private Get-ClcIisObservation @(@{},$target)} 'Clc.HostPreflightFailed*'
     }
     It 'expands the IIS SystemDrive token from native Windows while ignoring caller environment' {
-        $before=Invoke-T2Private Get-ClcIisPhysicalRoot @($workspace,[Diagnostics.Stopwatch]::StartNew())
+        # TEMP can be on a separate data volume, including on hosted runners.
+        $nativeWindows=[Clc.Foundation.NativePaths]::WindowsDirectory()
+        $before=Invoke-T2Private Get-ClcIisPhysicalRoot @($nativeWindows,[Diagnostics.Stopwatch]::StartNew())
         $old=$env:SystemDrive
         try {
             $env:SystemDrive='Z:'
-            $actual=Invoke-T2Private Get-ClcIisPhysicalRoot @(('%SystemDrive%'+$workspace.Substring(2)),[Diagnostics.Stopwatch]::StartNew())
+            $actual=Invoke-T2Private Get-ClcIisPhysicalRoot @(('%SystemDrive%'+$nativeWindows.Substring(2)),[Diagnostics.Stopwatch]::StartNew())
             $actual.physicalPath | Should -BeExactly $before.physicalPath
+            $actual.volumeId | Should -BeExactly $before.volumeId
+            $actual.fileId | Should -BeExactly $before.fileId
         } finally {$env:SystemDrive=$old}
     }
     It 'fails closed for unknown environment or network IIS roots without opening network paths' -ForEach @(@{Path='%CALLER_SELECTED_ROOT%\app'},@{Path='\\server\share\app'}) {

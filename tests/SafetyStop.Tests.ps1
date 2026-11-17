@@ -43,7 +43,12 @@ Describe 'Bounded safety stop after a late foreign IIS root conflict' {
         # Preserve the real bounded MWA adapter and native physical-root checks.
         Mock -ModuleName Clc.Deployment Get-ClcIisObservation {
             param($Context,$Target,[switch] $SafetyStop)
-            return & $global:ClcSafetyActualIis $Context $Target -SafetyStop:$SafetyStop
+            $iis=& $global:ClcSafetyActualIis $Context $Target -SafetyStop:$SafetyStop
+            # Platform/runtime and host settings are synthetic. Hosted runners
+            # have machine DOTNET_* tooling flags that correctly fail production
+            # admission; they are not this fixture's managed application settings.
+            $iis.environment=$global:ClcTestFixture.iis.environment
+            return $iis
         }
         $context=$null;$lock=$null
     }
@@ -63,7 +68,7 @@ Describe 'Bounded safety stop after a late foreign IIS root conflict' {
             return $result
         }
         Test-TestRejection {Invoke-ClcIisDeployment example $approval.record.approvalId} 'Clc.HostPreflightFailed*'
-        $global:ClcSafetyConflictInjected | Should -BeTrue
+        $global:ClcSafetyConflictInjected | Should -BeTrue -Because ('the synthetic candidate must reach readiness; observed lifecycle operations: '+($global:ClcLifecycle.operations -join ', '))
         Should -Invoke -ModuleName Clc.Deployment Start-ClcIisHelper -Times 1 -Exactly -ParameterFilter {$Operation -ceq 'Stop' -and $Lock.identity.snapshot.applicationPoolName -ceq $global:ClcTestFixture.target.applicationPoolName.ToUpperInvariant()}
         Should -Invoke -ModuleName Clc.Deployment Start-ClcIisHelper -Times 0 -Exactly -ParameterFilter {$Lock.identity.snapshot.applicationPoolName -ieq 'OtherPool'}
         $fixture.iis.poolState | Should -BeExactly Stopped;$fixture.iis.workers.Count | Should -Be 0
