@@ -83,7 +83,7 @@ Success: each label selects its intended runner. Keep ordinary PR/build/test/pac
 
 ## 7. Configure the release workflow
 
-**Compatible shared-workflow consumers only:** `.clc/release.json`, `clc-package-*` artifacts and schema-2 verified release/standing authorization apply to this integration. SSRS Web retains `.github/workflows/release.yml`, `ssrs-web-release-<run>-<attempt>` artifacts and application-owned release/verification scripts with schema-1 verified release/standing authorization ([fixed source](https://github.com/clcdpc/ssrs-web/tree/dddb72c1bafc58db1c8f1ade301a600a269a46bd/scripts/release)). Follow its [application guide](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md#immutable-release-production); no schema migration is required.
+**Compatible shared-workflow consumers only:** `.clc/release.json`, `clc-package-*` artifacts and schema-2 verified release/standing authorization apply to this integration. SSRS Web retains `.github/workflows/release.yml`, `ssrs-web-release-<run>-<attempt>` artifacts and application-owned release/verification scripts with schema-1 verified release/standing authorization ([fixed source](https://github.com/clcdpc/ssrs-web/tree/dddb72c1bafc58db1c8f1ade301a600a269a46bd/scripts/release)). Follow its [application guide](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md); no schema migration is required.
 
 In a compatible application repository:
 

@@ -22,7 +22,7 @@ Enter from [bootstrap preparation](installation.md#initial-bootstrap-provisionin
 3. Derive the canonical namespace with the reviewed native path logic:
 
 ```powershell
-$targetId = 'ssrs-web-dev'
+$targetId = 'example-app-dev' # Replace with the selected application's actual target ID.
 # $approvedVersion is the independently selected full toolkit version.
 . "$reviewedSource\src\Clc.Deployment\Private\Contracts.ps1"
 . "$reviewedSource\src\Clc.Deployment\Private\Paths.ps1"
@@ -66,27 +66,27 @@ Before continuing, check:
 
 ## 2. Prepare Config/deployment.json
 
-Write UTF-8 JSON at `$hostDeploymentJson` using [the strict schema](../schemas/deployment-configuration.schema.json). Substitute actual native paths, account and readiness DNS name; this example grants no authority:
+Write UTF-8 JSON at `$hostDeploymentJson` using [the strict schema](../schemas/deployment-configuration.schema.json). The IDs, site/pool names, runtime account/SID and readiness hostname below are illustrative; replace them with application/infrastructure selections and actual host observations. Derive every path from native ProgramData and the selected target ID; `C:\ProgramData` is illustrative. This example grants no authority:
 
 ```json
 {
   "contractFamily": "clc-host-enrollment-v1",
   "schemaVersion": 1,
   "recordKind": "deployment-configuration",
-  "applicationId": "ssrs-web",
-  "targetId": "ssrs-web-dev",
+  "applicationId": "example-app",
+  "targetId": "example-app-dev",
   "environmentName": "DEV",
   "runtimeEnvironment": "Production",
-  "siteName": "ssrs-web-dev",
-  "applicationPoolName": "ssrs-web-dev",
-  "applicationRoot": "C:\\ProgramData\\clc-ssrs-web-dev\\Application",
-  "operationalConfigPath": "C:\\ProgramData\\clc-ssrs-web-dev\\Config\\application.json",
-  "dataProtectionRoot": "C:\\ProgramData\\clc-ssrs-web-dev\\Keys",
-  "artifactInboxRoot": "C:\\ProgramData\\clc-ssrs-web-dev\\Inbox",
+  "siteName": "example-app-dev",
+  "applicationPoolName": "example-app-dev",
+  "applicationRoot": "C:\\ProgramData\\clc-example-app-dev\\Application",
+  "operationalConfigPath": "C:\\ProgramData\\clc-example-app-dev\\Config\\application.json",
+  "dataProtectionRoot": "C:\\ProgramData\\clc-example-app-dev\\Keys",
+  "artifactInboxRoot": "C:\\ProgramData\\clc-example-app-dev\\Inbox",
   "runtimeIdentitySid": "S-1-5-21-1-2-3-2001",
-  "runtimeAccountName": "EXAMPLE\\svc-ssrs-web",
-  "readinessUri": "https://ssrs-web-dev.example.invalid/health/ready",
-  "enrollmentRoot": "C:\\ProgramData\\clc-ssrs-web-dev\\Deployment"
+  "runtimeAccountName": "EXAMPLE\\svc-example-app",
+  "readinessUri": "https://example-app-dev.example.invalid/health/ready",
+  "enrollmentRoot": "C:\\ProgramData\\clc-example-app-dev\\Deployment"
 }
 ```
 
