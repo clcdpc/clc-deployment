@@ -56,7 +56,7 @@ function Test-ClcValueEqual {
 }
 
 function Get-ClcTargetIdentity {
-    param($Context, $TargetFile)
+    param($Context, $TargetFile, [switch] $SafetyStop)
     Assert-ClcHeldRecordUnchanged $Context $TargetFile 'Clc.HostPreflightFailed'
     $target=$TargetFile.record; $policy=$Context.policyFile.record
     $machine=Get-ClcMachineIdentity $policy.machineIdentity
@@ -75,8 +75,9 @@ function Get-ClcTargetIdentity {
     foreach ($name in @('applicationRoot','operationalConfigPath','dataProtectionRoot','controlRoot','artifactInboxRoot')) { $roots[$name]=ConvertTo-ClcRootIdentity $facts[$name] }
     $snapshot=[ordered]@{ machineIdentity=$machine; siteName=$target.siteName; applicationPoolName=$pool; rootIdentities=$roots }
     Assert-ClcTargetSnapshot $snapshot
-    $iis=Get-ClcIisObservation $Context $target
+    $iis=Get-ClcIisObservation $Context $target -SafetyStop:$SafetyStop
     Assert-ClcIisTargetBinding $target $iis $pool
+    if ($SafetyStop -and $iis.runtimeSid -cne $target.runtimeIdentitySid) {Stop-ClcError Clc.HostPreflightFailed}
     $snapshot.siteName=$iis.siteName
     return @{ targetKey=$key; snapshot=$snapshot; facts=$facts; iis=$iis;
         lockPath=(Join-Path $policy.lockRoot ($key+'.lock')); controlRoot=$facts.controlRoot.CanonicalPath }

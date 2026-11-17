@@ -6,9 +6,9 @@ function Get-ClcManagedPath {
     return $path
 }
 function Assert-ClcLockedTarget {
-    param($Lock)
+    param($Lock, [switch] $SafetyStop)
     Assert-ClcLockOwned $Lock
-    $actual=Get-ClcTargetIdentity $Lock.context $Lock.targetFile
+    $actual=Get-ClcTargetIdentity $Lock.context $Lock.targetFile -SafetyStop:$SafetyStop
     if ($actual.targetKey -cne $Lock.identity.targetKey -or -not (Test-ClcValueEqual $actual.snapshot $Lock.identity.snapshot)) { Stop-ClcError Clc.HostPreflightFailed }
     return $actual
 }

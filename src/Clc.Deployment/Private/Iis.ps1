@@ -117,7 +117,7 @@ function Assert-ClcIisPhysicalIsolation {
 }
 
 function Get-ClcIisObservation {
-    param($Context, $Target)
+    param($Context, $Target, [switch] $SafetyStop)
     Assert-ClcHelperDependencies $Context $Target.runtimeIdentitySid
     $type=Get-ClcAdmittedMwaType $Context
     # MWA reads bounded physical-root associations and selected configuration
@@ -126,7 +126,10 @@ function Get-ClcIisObservation {
     $manager=$null
     try {
         $manager=New-ClcMwaServerManager $type
-        Assert-ClcIisPhysicalIsolation $manager $Target
+        # Failure handling may stop only its still-bound selected pool even when
+        # another pool gained a conflicting root. All selected authority checks
+        # below remain; normal admission/start/recovery retain full isolation.
+        if (-not $SafetyStop) {Assert-ClcIisPhysicalIsolation $manager $Target}
         if ($manager.Sites.Count -gt 4096 -or $manager.ApplicationPools.Count -gt 4096) { Stop-ClcError Clc.HostPreflightFailed }
         $sites=@($manager.Sites | Where-Object { [string]::Equals($_.Name,$Target.siteName,[StringComparison]::OrdinalIgnoreCase) })
         $pools=@($manager.ApplicationPools | Where-Object { [string]::Equals($_.Name,$Target.applicationPoolName,[StringComparison]::OrdinalIgnoreCase) })

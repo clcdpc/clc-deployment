@@ -37,6 +37,8 @@ The toolkit verifies `web.config` integrity and bounded XML structure; applicati
 
 Freeze competing trusted configuration, filesystem and IIS changes throughout deployment and recovery. Fresh IIS root checks do not provide atomic coordination with other applications, acquire their locks or stop/adopt their pools; conflicts require operator reconciliation. A held default-stream handle does not prevent another trusted writer from adding a named stream; fresh checks do not make stream absence atomic. These checks do not contain a compromised administrator or trusted application process.
 
+If a foreign different-pool root conflict appears after live effects, bounded failure handling can still stop the selected pool. That private safety-stop path re-proves the held target, native machine/root identities, selected site/root/pool association, sole selected-pool application and runtime SID; it omits only the foreign-root admission scan. It cannot start a pool, stop another pool, authorize replacement or publish success. Changed selected authority still requires operator intervention. Ordinary retries, Start and explicit recovery retain full physical isolation checks and refuse an unresolved conflict; failure evidence and approved files/backups remain retained.
+
 ## Failure behavior
 
 | Failure boundary | Behavior |
