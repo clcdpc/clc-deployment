@@ -107,15 +107,15 @@ Describe 'Standing-policy admission using real NTFS, lock and lifecycle state' {
         switch ($Mode) {
             absent { Remove-Item -LiteralPath $auto.path }
             revoked { $auto.standing.enabled=$false; Write-TestJson $auto.path $auto.standing }
-            writable { $global:ClcUnsafeStanding=$auto.path; Mock -ModuleName CLC.Deployment Assert-ClcAccess { if ($Path -ceq $global:ClcUnsafeStanding) { throw 'Synthetic runtime write grant' }; return (Invoke-T2Private Get-ClcSecurityObservation @($Path)).sha256 } }
+            writable { $global:ClcUnsafeStanding=$auto.path; Mock -ModuleName Clc.Deployment Assert-ClcAccess { if ($Path -ceq $global:ClcUnsafeStanding) { throw 'Synthetic runtime write grant' }; return (Invoke-T2Private Get-ClcSecurityObservation @($Path)).sha256 } }
         }
         $before=Get-T2TreeHashes $fixture
         Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.StandingAuthorizationRejected*'
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
     }
     It 'requires the independently admitted elevated identity even with matching JSON and policy' -ForEach @(@{Mode='sid'},@{Mode='token'}) {
-        if ($Mode -ceq 'sid') { Mock -ModuleName CLC.Deployment Get-ClcCallerSid { return 'S-1-5-21-1-2-3-9999' } }
-        else { Mock -ModuleName CLC.Deployment Test-ClcAdministratorToken { return $false } }
+        if ($Mode -ceq 'sid') { Mock -ModuleName Clc.Deployment Get-ClcCallerSid { return 'S-1-5-21-1-2-3-9999' } }
+        else { Mock -ModuleName Clc.Deployment Test-ClcAdministratorToken { return $false } }
         $before=Get-T2TreeHashes $fixture
         Test-TestRejection { Invoke-Automation $fixture $auto }
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
@@ -220,7 +220,7 @@ Describe 'Standing-policy admission using real NTFS, lock and lifecycle state' {
         $global:ClcLifecycle.operations.Count | Should -Be 0
     }
     It 'retains interrupted admission intent and refuses repair' {
-        Mock -ModuleName CLC.Deployment Publish-ClcAutomatedApproval { throw 'Synthetic interruption before atomic approval publication' }
+        Mock -ModuleName Clc.Deployment Publish-ClcAutomatedApproval { throw 'Synthetic interruption before atomic approval publication' }
         try { Invoke-Automation $fixture $auto; throw 'Expected admission failure.' }
         catch {
             $_.FullyQualifiedErrorId | Should -BeLike 'Clc.AdmissionIncomplete*'
@@ -252,7 +252,7 @@ Describe 'Standing-policy admission using real NTFS, lock and lifecycle state' {
     It 'rejects unsafe or unprotected inputs before new authority' -ForEach @(@{Mode='outside'},@{Mode='writable'},@{Mode='hardlink'}) {
         switch ($Mode) {
             outside { $outside=Join-Path $fixture.workspace 'outside.json'; Copy-Item -LiteralPath $auto.evidence -Destination $outside; $auto.evidence=$outside }
-            writable { $global:ClcUnsafeInput=$auto.evidence; Mock -ModuleName CLC.Deployment Assert-ClcAccess { throw 'Synthetic runtime write grant' } -ParameterFilter { $Path -ceq $global:ClcUnsafeInput } }
+            writable { $global:ClcUnsafeInput=$auto.evidence; Mock -ModuleName Clc.Deployment Assert-ClcAccess { throw 'Synthetic runtime write grant' } -ParameterFilter { $Path -ceq $global:ClcUnsafeInput } }
             hardlink { $null=New-Item -ItemType HardLink -Path (Join-Path $fixture.target.artifactInboxRoot 'alias.json') -Target $auto.evidence }
         }
         $before=Get-T2TreeHashes $fixture
@@ -283,7 +283,7 @@ Describe 'Standing-policy admission using real NTFS, lock and lifecycle state' {
     }
     It 'retains backups and requires explicit recovery after replacement/readiness failure' {
         $global:ClcLifecycle.ready=$false
-        Mock -ModuleName CLC.Deployment Get-ClcReadinessElapsed { return 120 }
+        Mock -ModuleName Clc.Deployment Get-ClcReadinessElapsed { return 120 }
         Test-TestRejection { Invoke-Automation $fixture $auto } 'Clc.ReadinessFailed*'
         $j=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'journal.json') -Raw | ConvertFrom-Json
         $j.phase | Should -Be RecoveryRequired; $fixture.iis.poolState | Should -Be Stopped

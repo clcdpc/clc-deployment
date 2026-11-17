@@ -48,7 +48,7 @@ $version=& $toolkitModule { Get-ClcToolkitVersion }
 if ($version -cne $ToolkitVersion) { throw 'Imported toolkit identity differs from the verified distribution.' }
 $metadata=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=1;recordKind='release-metadata';applicationId='clc-qualification-probe';releaseId=$ReleaseId;
     source=@{repository='clcdpc/clc-deployment';commit=$SourceCommit};build=@{workflowPath='.github/workflows/build-test-publish.yaml';runId=$RunId;runAttempt=$RunAttempt;job=$BuildJob;sdkVersion=$sdk;dependencyLockSha256=(Get-FileHash -LiteralPath (Join-Path ([IO.Path]::GetDirectoryName((Join-Path $repository $project))) 'packages.lock.json')).Hash.ToLowerInvariant()};
-    builder=@{module='CLC.Deployment';version=$version;sourceCommit=$ToolkitSourceCommit;distributionSha256=$ToolkitDistributionSha256};
+    builder=@{module='Clc.Deployment';version=$version;sourceCommit=$ToolkitSourceCommit;distributionSha256=$ToolkitDistributionSha256};
     runtime=@{framework='net10.0';rid='win-x64';architecture='x64';hostingModel='inprocess';workerLimit=1};changeKind='files-only';validation=@{contractVersion=1;entryPoint='ClcQualificationProbe.dll'};readinessContractVersion=1}
 $inputRoot=Join-Path $OutputRoot 'input'; $packageRoot=Join-Path $OutputRoot 'output'
 $null=[IO.Directory]::CreateDirectory($inputRoot); $null=[IO.Directory]::CreateDirectory($packageRoot)

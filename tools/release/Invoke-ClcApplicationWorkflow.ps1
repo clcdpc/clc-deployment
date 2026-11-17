@@ -34,7 +34,7 @@ if ($Action -ceq 'Admit') {
     $route=Get-ClcDeploymentRoute $c $source
     if ($route.admitted) {
         $archive=Save-ClcVerifiedArtifact $Repository $producer (Join-Path $OutputDirectory 'artifact') $api
-        Import-Module (Join-Path $PSScriptRoot '../../src/CLC.Deployment/CLC.Deployment.psd1') -Force
+        Import-Module (Join-Path $PSScriptRoot '../../src/Clc.Deployment/Clc.Deployment.psd1') -Force
         $null=New-ClcVerifiedPackageIdentity $c $source $producer $archive $route.target.targetId
         $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
         $route=Get-ClcDeploymentRoute $c $again.source
@@ -57,7 +57,7 @@ if ($Action -ceq 'Deploy') {
 }
 $archive=Save-ClcVerifiedArtifact $Repository $producer (Join-Path $OutputDirectory 'artifact') $api
 if ($Action -ceq 'Release') {
-    Import-Module (Join-Path $PSScriptRoot '../../src/CLC.Deployment/CLC.Deployment.psd1') -Force
+    Import-Module (Join-Path $PSScriptRoot '../../src/Clc.Deployment/Clc.Deployment.psd1') -Force
     $verified=Get-ClcVerifiedPackage $c $source $producer $archive
     # Reobserve mutable eligibility after the download and before publication.
     $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
@@ -70,17 +70,17 @@ if ($Action -ceq 'Release') {
 
 # This fixed policy location is infrastructure-owned. No artifact/config input
 # can choose an installed toolkit, target root, inbox, or approval catalog.
-$toolkit=Open-ClcWorkflowToolkit
+$toolkit=Open-ClcWorkflowToolkit -TargetId $route.target.targetId
 try {
 $policy=$toolkit.policy
 $verified=New-ClcVerifiedPackageIdentity $c $source $producer $archive $route.target.targetId
 $baseName='workflow-'+$RunId+'-'+$RunAttempt+'-'+[guid]::NewGuid().ToString('N')
 $bytes=[Text.Encoding]::UTF8.GetBytes(($verified | ConvertTo-Json -Depth 12 -Compress))
-$handoff=& (Get-Module CLC.Deployment) {
+$handoff=& (Get-Module Clc.Deployment) {
     param($TargetId,$ApplicationId,$Archive,$BaseName,$Bytes)
     $context=$null
     try {
-        $context=Open-ClcTrustedContext
+        $context=Open-ClcTrustedContext -TargetId $TargetId
         $file=Read-ClcProtectedTarget $context $TargetId; $target=$file.record
         if ($target.applicationId -cne $ApplicationId) { Stop-ClcError Clc.ApprovalMismatch }
         $null=Add-ClcProtectedPathPin $context $target.artifactInboxRoot -Directory -Mutable -RuntimeSid $target.runtimeIdentitySid

@@ -10,7 +10,7 @@ $null=Read-QOwnership $configuration
 Import-QVerifiedToolkit $configuration
 Initialize-DistNativePaths
 $infra=Get-QInfrastructureSids $configuration; $runtime=$configuration.runtimeSid
-$layout=Invoke-QPrivate Get-ClcInstalledLayout
+$layout=Invoke-QPrivate Get-ClcInstalledLayout @($configuration.targetId)
 $handles=[Collections.Generic.List[IDisposable]]::new()
 $protectedRecords=[Collections.Generic.List[object]]::new()
 try {
@@ -19,7 +19,7 @@ try {
     $policy=$policyFile.record
     Assert-QAccessPolicy $configuration $layout $policy $infra
     Invoke-QPrivate Assert-ClcRuntimeIdentity @(@{policyFile=@{record=$policy}},$runtime)
-    foreach ($id in @($configuration.targetId,$configuration.alternateTargetId)) {
+    foreach ($id in @($configuration.targetId)) {
         $file=Invoke-QPrivate Read-ClcHeldRecord @((Join-Path $layout.targetCatalogRoot ($id+'.json')),'target',$handles)
         $protectedRecords.Add($file)
         foreach ($name in @('applicationRoot','operationalConfigPath','dataProtectionRoot','artifactInboxRoot','siteName','readinessUri','runtimeEnvironment')) {

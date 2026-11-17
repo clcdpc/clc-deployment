@@ -24,7 +24,7 @@ function New-ClcRelease {
         $metadataStream = Open-ClcReadFile $MetadataPath $metadataFacts $handles
         $metadataDigest = Read-ClcStream $metadataStream $script:ClcLimits.Json $clock -Capture
         $metadata = Read-ClcJson $metadataDigest.bytes 'release-metadata' ([int] $script:ClcLimits.Json)
-        if ($metadata.builder.module -cne 'CLC.Deployment' -or $metadata.builder.version -cne (Get-ClcToolkitVersion)) { Stop-ClcError Clc.InvalidContract }
+        if ($metadata.builder.module -cne 'Clc.Deployment' -or $metadata.builder.version -cne (Get-ClcToolkitVersion)) { Stop-ClcError Clc.InvalidContract }
         $hookRootFacts=$null; $hookFiles=@()
         if ($metadata.Contains('hooks')) {
             if (-not $PSBoundParameters.ContainsKey('HookRoot')) { Stop-ClcError Clc.InvalidContract }

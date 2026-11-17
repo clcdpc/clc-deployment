@@ -1,12 +1,12 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:RepositoryRoot = Split-Path $PSScriptRoot -Parent
-$script:ModulePath = Join-Path $script:RepositoryRoot 'src/CLC.Deployment/CLC.Deployment.psd1'
+$script:ModulePath = Join-Path $script:RepositoryRoot 'src/Clc.Deployment/Clc.Deployment.psd1'
 $script:FixtureRoot = Join-Path $PSScriptRoot 'Fixtures'
 Import-Module $script:ModulePath -Force
 
 function New-TestWorkspace {
-    $path = Join-Path ([IO.Path]::GetTempPath()) ('clc-' + [guid]::NewGuid().ToString('N'))
+    $path = Join-Path ([IO.Path]::GetTempPath()) ('clc-' + [guid]::NewGuid().ToString('N').Substring(0,16))
     [void] [IO.Directory]::CreateDirectory($path)
     return $path
 }
@@ -14,7 +14,7 @@ function Remove-TestWorkspace {
     param([string] $Path)
     $resolved = [IO.Path]::GetFullPath($Path)
     $parent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
-    if ([IO.Path]::GetDirectoryName($resolved) -cne $parent -or [IO.Path]::GetFileName($resolved) -cnotmatch '^clc-[a-f0-9]{32}$') { throw 'Unsafe fixture cleanup.' }
+    if ([IO.Path]::GetDirectoryName($resolved) -cne $parent -or [IO.Path]::GetFileName($resolved) -cnotmatch '^clc-[a-f0-9]{16}$') { throw 'Unsafe fixture cleanup.' }
     Remove-Item -LiteralPath $resolved -Recurse -Force
 }
 function Get-TestMetadata {
@@ -100,5 +100,5 @@ function Test-TestRejection {
 }
 function Invoke-TestRecord {
     param([byte[]] $Bytes, [string] $Kind)
-    return & (Get-Module CLC.Deployment) { param($Data,$RecordKind) Read-ClcJson $Data $RecordKind } $Bytes $Kind
+    return & (Get-Module Clc.Deployment) { param($Data,$RecordKind) Read-ClcJson $Data $RecordKind } $Bytes $Kind
 }

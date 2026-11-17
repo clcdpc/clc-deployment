@@ -1,9 +1,9 @@
 . "$PSScriptRoot/Qualification.Common.ps1"
 function Get-QAccessPathObservation([string] $Path,$Handles,[bool] $Directory) {
-    & (Get-Module CLC.Deployment) { param($p,$h,$d) Get-ClcPathObservation $p $h -Directory:$d } $Path $Handles $Directory
+    & (Get-Module Clc.Deployment) { param($p,$h,$d) Get-ClcPathObservation $p $h -Directory:$d } $Path $Handles $Directory
 }
 function Read-QAccessFile([string] $Path,$Handles) {
-    & (Get-Module CLC.Deployment) { param($p,$h) Read-ClcHeldFile $p $h 1073741824 -NoCapture } $Path $Handles
+    & (Get-Module Clc.Deployment) { param($p,$h) Read-ClcHeldFile $p $h 1073741824 -NoCapture } $Path $Handles
 }
 function Get-QNativeAccess([string] $Path,[bool] $Directory,[uint32] $Mask) {
     [Clc.Distribution.Paths]::ProbeAccess($Path,$Directory,$Mask)

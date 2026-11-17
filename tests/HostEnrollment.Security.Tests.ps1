@@ -29,7 +29,7 @@ Describe 'Enrollment schemas, output and fixed installation boundary' {
         $result.PSObject.Properties.Name | Should -Not -Contain IisPreStateSha256
     }
     It 'refuses a second installation root even with a matching independently-shaped config and policy' {
-        $different=Join-Path $fixture.workspace 'other';$newLayout=Get-HLayout $different '0.1.0-dev.1'
+        $different=Join-Path $fixture.workspace 'other';$newLayout=Get-HLayout 'other' '0.1.0-dev.1'
         $fixture.configuration.enrollmentRoot=$different;$fixture.authorization.enrollmentRoot=$different
         foreach ($name in @('targetCatalogRoot','approvalCatalogRoot','controlStateRoot','lockRoot')) {$fixture.policy[$name]=$newLayout[$name]}
         $fixture.policy.activeToolkit.moduleManifestPath=$newLayout.manifestPath
@@ -37,6 +37,19 @@ Describe 'Enrollment schemas, output and fixed installation boundary' {
         $fixture.authorization.deploymentConfigurationSha256=(Get-FileHash -LiteralPath $fixture.configurationPath).Hash.ToLowerInvariant();Save-HTestAuthorization $fixture
         {Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply} | Should -Throw
         Test-Path -LiteralPath $different | Should -BeFalse
+    }
+    It 'refuses approved configuration bytes copied outside the selected canonical Config directory' {
+        $other=Join-Path $fixture.workspace 'clc-other\Config\deployment.json'
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($other));[IO.File]::Copy($fixture.configurationPath,$other)
+        $before=Get-TestTreeHashes $fixture.workspace
+        {Open-HSession $other synthetic-enroll} | Should -Throw -ErrorId 'Clc.EnrollmentAuthorizationMismatch*'
+        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
+    }
+    It 'rejects a foreign bootstrap namespace before selecting or reading its authorization' {
+        Mock Assert-HBootstrapProtection {Stop-ClcError Clc.EnrollmentBootstrapMismatch}
+        Mock Get-HAuthorityRoot {throw 'Foreign authority lookup occurred.'}
+        {Open-HSession $fixture.configurationPath synthetic-enroll} | Should -Throw -ErrorId 'Clc.EnrollmentBootstrapMismatch*'
+        Should -Invoke Get-HAuthorityRoot -Times 0 -Exactly
     }
     It 'rejects a prospective physical alias before initialization intent or filesystem effects' {
         $global:HProspectiveApp=$fixture.target.applicationRoot
@@ -70,11 +83,11 @@ Describe 'Enrollment schemas, output and fixed installation boundary' {
         Test-Path -LiteralPath $publish.OutputPath | Should -BeFalse
     }
     It 'admits only dedicated ProgramData namespaces without modifying ProgramData' {
-        $programData=[Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
-        foreach ($suffix in @('CLC\Deployment\host-authorizations','clc-example-app\Config\application.json')) {
+        $programData=Get-ClcProgramDataRoot
+        foreach ($suffix in @('clc-example-app-dev\Config\application.json')) {
             {Assert-ClcProtectedPath (Join-Path $programData $suffix)} | Should -Not -Throw
         }
-        foreach ($path in @($programData,(Join-Path $programData 'Microsoft\config'),(Join-Path $programData 'CLCOther\config'),(Join-Path $programData 'clc-\config'))) {
+        foreach ($path in @($programData,(Join-Path $programData 'Microsoft\config'),(Join-Path $programData 'CLCOther\config'),(Join-Path $programData 'clc-\config'),(Join-Path $programData 'CLC\Deployment'))) {
             {Assert-ClcProtectedPath $path} | Should -Throw
         }
     }
@@ -84,7 +97,7 @@ Describe 'Enrollment schemas, output and fixed installation boundary' {
         try {
             $null=$ps.AddScript({param($manifest)
                 Import-Module $manifest -Force
-                & (Get-Module CLC.Deployment) {
+                & (Get-Module Clc.Deployment) {
                     function Get-ClcEffectiveAccess {param($Descriptor,$Sid) 1L}
                     Assert-ClcRuntimeIdentity @{policyFile=@{record=@{infrastructureOwnerSids=@('S-1-5-18','S-1-5-32-544');deploymentSids=@('S-1-5-19')}}} 'S-1-5-20'
                 }

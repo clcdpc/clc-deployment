@@ -35,9 +35,10 @@ function Open-HIisManager($Session) {
     Assert-ClcMwaAssemblyIdentity $file $observation
     New-ClcMwaServerManager $observation.type
 }
-function Get-HIisSnapshot($Session) {
+function Get-HIisSnapshot($Session,[switch] $SelectedStateOnly) {
     $manager=Open-HIisManager $Session
     try {
+        if (-not $SelectedStateOnly) {Assert-ClcIisPhysicalIsolation $manager $Session.target}
         if ($manager.Sites.Count -gt 4096 -or $manager.ApplicationPools.Count -gt 4096) { Stop-ClcError Clc.HostPreflightFailed }
         $target=$Session.target; $site=$manager.Sites[$target.siteName]; $pool=$manager.ApplicationPools[$target.applicationPoolName]
         $applications=@(); $allBindings=@(); $count=0;$bindingCount=0
@@ -223,7 +224,9 @@ function Assert-HIisReady($Session) {
     if ($plan.operations.Count -or -not $plan.snapshot.siteExists -or -not $plan.snapshot.poolExists) { Stop-ClcError Clc.EnrollmentConfigurationDrift }
 }
 function Assert-HCutoverStopped($Session) {
-    $snapshot=Get-HIisSnapshot $Session
+    # Full physical-root isolation is checked at cutover phase gates. Inner
+    # file operations retain the existing selected stopped/zero-worker check.
+    $snapshot=Get-HIisSnapshot $Session -SelectedStateOnly
     if (-not $snapshot.siteExists -or -not $snapshot.poolExists -or $snapshot.pool.state -cne 'Stopped' -or $snapshot.pool.workers.Count -ne 0 -or $snapshot.applications.Count -ne 1) { Stop-ClcError Clc.EnrollmentMaintenanceRequired }
     $app=$snapshot.applications[0]
     if ($app.physicalPath -cne $Session.target.applicationRoot -or $app.poolName -ine $Session.target.applicationPoolName -or $app.siteName -ine $Session.target.siteName -or $app.path -cne '/') { Stop-ClcError Clc.EnrollmentIisConflict }

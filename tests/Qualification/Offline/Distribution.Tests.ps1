@@ -8,7 +8,7 @@ BeforeAll {
         $dash=$Version.IndexOf('-')
         $base=if ($dash -ge 0) {$Version.Substring(0,$dash)} else {$Version}
         $prerelease=if ($dash -ge 0) {$Version.Substring($dash+1)} else {$null}
-        $manifestPath=Join-Path $ModuleRoot 'CLC.Deployment.psd1'
+        $manifestPath=Join-Path $ModuleRoot 'Clc.Deployment.psd1'
         $text=[IO.File]::ReadAllText($manifestPath)
         $moduleVersionPattern=[regex]::new("(?m)(^\s*ModuleVersion\s*=\s*)'[^']+'")
         if (-not $moduleVersionPattern.IsMatch($text)) { throw 'Fixture module version declaration is missing.' }
@@ -28,17 +28,22 @@ BeforeAll {
     function New-DistributionFixture([string] $Version) {
         if (-not $Version) { $Version=Get-DistVersionFromBytes ([IO.File]::ReadAllBytes((Join-Path $script:RepositoryRoot 'VERSION'))) }
         $workspace=New-TestWorkspace; $repository=Join-Path $workspace 'repo'; $null=[IO.Directory]::CreateDirectory((Join-Path $repository 'src'))
-        Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'src/CLC.Deployment') -Destination (Join-Path $repository 'src') -Recurse
-        Set-DistributionFixtureVersion (Join-Path $repository 'src/CLC.Deployment') $Version
+        Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'src/Clc.Deployment') -Destination (Join-Path $repository 'src') -Recurse
+        foreach ($name in Get-DistInfrastructureNames) {
+            $destination=Join-Path $repository $name; [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination)); [IO.File]::Copy((Join-Path $script:RepositoryRoot $name),$destination)
+        }
+        Set-DistributionFixtureVersion (Join-Path $repository 'src/Clc.Deployment') $Version
         [IO.File]::WriteAllText((Join-Path $repository 'VERSION'),$Version,[Text.UTF8Encoding]::new($false))
         $null=Get-DistGit $repository @('init','--initial-branch=codex/fixture')
         $null=Get-DistGit $repository @('config','user.name','CLC Qualification Fixture')
         $null=Get-DistGit $repository @('config','user.email','qualification@example.invalid')
         $null=Get-DistGit $repository @('config','core.autocrlf','false')
-        $null=Get-DistGit $repository @('add','src','VERSION'); $null=Get-DistGit $repository @('commit','-m','Synthetic immutable distribution fixture')
+        $null=Get-DistGit $repository @('add','.'); $null=Get-DistGit $repository @('commit','-m','Synthetic immutable distribution fixture')
         $commit=Get-DistGit $repository @('rev-parse','HEAD'); $archive=Join-Path $workspace 'candidate.zip'
         $identity=& $script:DistributionBuilder -RepositoryRoot $repository -SourceCommit $commit -OutputPath $archive
-        @{workspace=$workspace;repository=$repository;commit=$commit;archive=$archive;identity=$identity;version=$Version;module=(Join-Path $repository 'src/CLC.Deployment')}
+        $versions=Join-Path $workspace 'installation\versions';[void][IO.Directory]::CreateDirectory($versions)
+        $expanded=& (Join-Path $script:RepositoryRoot 'tools/Expand-ToolkitDistribution.ps1') -ArchivePath $archive -ExpectedSha256 $identity.distributionSha256 -ExpectedSourceCommit $commit -ExpectedVersion $Version -VersionRoot (Join-Path $versions $Version) -OperatorApprovalReference offline-fixture
+        @{workspace=$workspace;repository=$repository;commit=$commit;archive=$archive;identity=$identity;version=$Version;module=([IO.Path]::GetDirectoryName($expanded.moduleManifestPath))}
     }
     function Test-DistributionFixture($Fixture,[string] $InstalledRoot='') {
         & $script:DistributionVerifier -ArchivePath $Fixture.archive -ExpectedSha256 $Fixture.identity.distributionSha256 -ExpectedSourceCommit $Fixture.commit -ExpectedVersion $Fixture.version -InstalledModuleRoot $InstalledRoot
@@ -81,7 +86,7 @@ Describe 'Independent immutable distribution verification' {
         $result.integrityVerified | Should -BeTrue
         $result.authenticatedByThisCheck | Should -BeFalse
         $result.sourceCommit | Should -BeExactly $fixture.commit
-        (Get-Module CLC.Deployment).ModuleBase | Should -BeExactly (Join-Path $script:RepositoryRoot 'src/CLC.Deployment')
+        (Get-Module Clc.Deployment).ModuleBase | Should -BeExactly (Join-Path $script:RepositoryRoot 'src/Clc.Deployment')
     }
     It 'round-trips stable and prerelease distributions through verification and inactive extraction' {
         foreach ($version in @('1.2.3','2.0.0-beta.1')) {
@@ -94,7 +99,7 @@ Describe 'Independent immutable distribution verification' {
                 $expanded=& (Join-Path $script:RepositoryRoot 'tools/Expand-ToolkitDistribution.ps1') -ArchivePath $fixture.archive -ExpectedSha256 $fixture.identity.distributionSha256 -ExpectedSourceCommit $fixture.commit -ExpectedVersion $version -VersionRoot (Join-Path $versions $version) -OperatorApprovalReference 'offline-integrity-test'
                 $expanded.identity.moduleVersion | Should -BeExactly $version
                 $expanded.activated | Should -BeFalse
-                $installed=Test-DistributionFixture $fixture (Join-Path $versions ($version+'\CLC.Deployment'))
+                $installed=Test-DistributionFixture $fixture (Join-Path $versions ($version+'\Clc.Deployment'))
                 $installed.moduleVersion | Should -BeExactly $version
                 (Get-DistModuleVersion ([IO.File]::ReadAllText($expanded.moduleManifestPath))) | Should -BeExactly $version
             } finally { Remove-TestWorkspace $fixture.workspace }
@@ -142,7 +147,7 @@ Describe 'Independent immutable distribution verification' {
     }
     It 'rejects module bytes changed inside an archive even when its outer digest is updated' {
         $rewritten=Join-Path $fixture.workspace 'wrong-module.zip'
-        $digest=New-DistributionWithChangedEntry $fixture $rewritten 'CLC.Deployment/Private/ToolkitIdentity.ps1' ([Text.Encoding]::UTF8.GetBytes('function Get-ClcToolkitVersion { }'))
+        $digest=New-DistributionWithChangedEntry $fixture $rewritten 'Clc.Deployment/Private/ToolkitIdentity.ps1' ([Text.Encoding]::UTF8.GetBytes('function Get-ClcToolkitVersion { }'))
         { & $script:DistributionVerifier -ArchivePath $rewritten -ExpectedSha256 $digest -ExpectedSourceCommit $fixture.commit -ExpectedVersion $fixture.version } | Should -Throw '*Module bytes differ*'
     }
     It 'rejects modified, missing and unexpected installed files' {

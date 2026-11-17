@@ -2,7 +2,13 @@
 function Assert-HPathSeparation($Session) {
     $paths=@($Session.target.applicationRoot,[IO.Path]::GetDirectoryName($Session.target.operationalConfigPath),$Session.target.dataProtectionRoot,$Session.target.artifactInboxRoot,
         $Session.layout.root,$Session.layout.controlStateRoot,$Session.layout.lockRoot,$Session.authorityRoot)
-    if ($null -ne $Session.authorization.cutover) { $paths += $Session.authorization.cutover.backupRoot }
+    if ($null -ne $Session.authorization.cutover) {
+        $expected=Join-Path $Session.controlRoot ('legacy-cutover-'+$Session.authorization.authorizationId)
+        if ($Session.authorization.cutover.backupRoot -cne $expected) { Stop-ClcError Clc.UnsafePath }
+        foreach ($file in $Session.authorization.cutover.files) {
+            Assert-ClcPathSpelling (Join-Path $expected ('original\'+$file.path.Replace('/','\')))
+        }
+    }
     for ($i=0;$i -lt $paths.Count;$i++) {
         Assert-ClcPathSpelling $paths[$i]
         for ($j=$i+1;$j -lt $paths.Count;$j++) {
@@ -31,7 +37,7 @@ function Get-HBootstrapInventory {
     # Exact executable bootstrap dependencies, all from the independently
     # authenticated directory. Unknown files in these namespaces also change it.
     $files=[Collections.Generic.List[object]]::new();$count=0;$total=0L;$clock=[Diagnostics.Stopwatch]::StartNew()
-    foreach ($root in @(@{path=$script:HModuleRoot;prefix='CLC.Deployment/'},@{path=$PSScriptRoot;prefix='tools/host/'})) {
+    foreach ($root in @(@{path=$script:HModuleRoot;prefix='Clc.Deployment/'},@{path=$PSScriptRoot;prefix='tools/host/'})) {
         $queue=[Collections.Generic.Queue[string]]::new();$queue.Enqueue($root.path)
         while ($queue.Count) {
             foreach ($path in [IO.Directory]::EnumerateFileSystemEntries($queue.Dequeue())) {
@@ -51,6 +57,61 @@ function Get-HBootstrapInventory {
         $files.Add(@{path='tools/'+$name;length=[long]([IO.FileInfo]$path).Length;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()})
     }
     Get-DistInventoryHash (Sort-DistFiles $files.ToArray())
+}
+function Assert-HBootstrapProtection($Layout,$Handles) {
+    if ([IO.Path]::GetDirectoryName($script:HModuleRoot) -cne $Layout.bootstrapRoot -or
+        $PSScriptRoot -cne (Join-Path $Layout.bootstrapRoot 'tools\host')) { Stop-ClcError Clc.EnrollmentBootstrapMismatch }
+    $expected=@('Clc.Deployment','tools','source.commit','distribution.zip')
+    $rootCount=0
+    foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Layout.bootstrapRoot)) {
+        $rootCount++
+        if ($rootCount -gt 4 -or [IO.Path]::GetFileName($entry) -cnotin $expected) { Stop-ClcError Clc.EnrollmentBootstrapMismatch }
+    }
+    if ($rootCount -ne 4) { Stop-ClcError Clc.EnrollmentBootstrapMismatch }
+    $toolCount=0
+    foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries((Join-Path $Layout.bootstrapRoot 'tools'))) {
+        $toolCount++
+        if ($toolCount -gt 4 -or [IO.Path]::GetFileName($entry) -cnotin @('host','Distribution.Common.ps1','Test-ToolkitDistribution.ps1','Expand-ToolkitDistribution.ps1')) { Stop-ClcError Clc.EnrollmentBootstrapMismatch }
+    }
+    $allowedDirectories=@('Clc.Deployment','Clc.Deployment\Private','Clc.Deployment\Public','tools','tools\host')
+    $queue=[Collections.Generic.Queue[string]]::new();$queue.Enqueue($Layout.bootstrapRoot);$count=0;$clock=[Diagnostics.Stopwatch]::StartNew()
+    while ($queue.Count) {
+        $root=$queue.Dequeue()
+        $null=Get-ClcPathObservation $root $Handles -Directory -PinnedDirectory
+        Assert-HAuthorityProtection $root $Handles -Directory
+        foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($root)) {
+            Assert-ClcDeadline $clock;$count++;if ($count -gt 20000) {Stop-ClcError Clc.EnrollmentBootstrapMismatch}
+            $directory=([IO.File]::GetAttributes($entry) -band [IO.FileAttributes]::Directory) -ne 0
+            if ($directory -and $entry.Substring($Layout.bootstrapRoot.Length+1) -cnotin $allowedDirectories) { Stop-ClcError Clc.EnrollmentBootstrapMismatch }
+            Assert-HAuthorityProtection $entry $Handles -Directory:$directory
+            if ($directory) {$queue.Enqueue($entry)} else {
+                # Metadata handles alone do not lease executable bytes. Keep a
+                # real default-stream read handle denying write/delete sharing.
+                $limit=if ($entry -ceq (Join-Path $Layout.bootstrapRoot 'distribution.zip')) {1073741824L} else {268435456L}
+                $null=Read-ClcHeldFile $entry $Handles $limit -NoCapture -Clock $clock
+            }
+        }
+    }
+    $archive=Join-Path $Layout.bootstrapRoot 'distribution.zip'
+    $version=Get-DistModuleVersion ([IO.File]::ReadAllText((Join-Path $script:HModuleRoot 'Clc.Deployment.psd1')))
+    # Structural archive/installed-tree coherence only. This observed digest
+    # never authorizes code; the independent approval supplies executable
+    # inventory/source authority after every bootstrap stream has been pinned.
+    $null=& "$PSScriptRoot/../Test-ToolkitDistribution.ps1" -ArchivePath $archive -ExpectedSha256 (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() `
+        -ExpectedSourceCommit (Get-HBootstrapSourceCommit) -ExpectedVersion $version -InstalledModuleRoot $script:HModuleRoot -RequireInfrastructureTools
+}
+function Assert-HInitialDeploymentContents($Session) {
+    # Bootstrap and the independently provisioned handoff are the only normal
+    # pre-install contents. Toolkit/control/locks remain partial effects.
+    foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Session.configuration.enrollmentRoot)) {
+        if ([IO.Path]::GetFileName($entry) -cnotin @('bootstrap','enrollment')) { Stop-ClcError Clc.EnrollmentPartialInitialization }
+    }
+    foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Session.authorityRoot)) {
+        if ([IO.Path]::GetFileName($entry) -cnotin @('authorizations','evidence','enrollment.lock')) { Stop-ClcError Clc.EnrollmentPriorEvidence }
+    }
+    foreach ($pair in @(@('authorizations',$true),@('evidence',$true),@('enrollment.lock',$false))) {
+        Assert-HAuthorityProtection (Join-Path $Session.authorityRoot $pair[0]) $Session.handles -Directory:$pair[1]
+    }
 }
 function Get-HBootstrapSourceCommit {
     $path=Join-Path ([IO.Path]::GetDirectoryName($script:HModuleRoot)) 'source.commit'
@@ -76,8 +137,9 @@ function Assert-HNoPriorIntent($Session) {
         Assert-ClcToolkit $intent.toolkit -Active;Assert-ClcEnum $intent.originalPoolState @('Unknown','Started','Stopped')
         if ($intent.authorizationId -cne [IO.Path]::GetFileNameWithoutExtension($path) -or $intent.operations -isnot [array] -or $intent.operations.Count -gt 6) {Stop-ClcError Clc.EnrollmentPriorEvidence}
         foreach ($operation in $intent.operations) {Assert-ClcEnum $operation @('install-toolkit','enroll-target','configure-iis','create-site','create-pool','first-cutover')}
-        if ($intent.machineIdentity -ceq $Session.authorization.hostPolicy.machineIdentity -and
-            ($intent.targetKey -ceq $Session.targetKey -or (-not (Test-HExists $Session.layout.policyPath) -and $intent.operations -ccontains 'install-toolkit'))) { Stop-ClcError Clc.EnrollmentPriorEvidence }
+        # This namespace belongs to one target. A new pool/machine binding never
+        # makes retained local intent eligible for fresh initialization.
+        Stop-ClcError Clc.EnrollmentPriorEvidence
     }
 }
 function New-HPreflightContext($Session) {
@@ -157,39 +219,45 @@ function Assert-HInitialResources($Session) {
 }
 function Assert-HTargetCatalog($Session) {
     $context=$Session.context
-    $allowed=@('host-policy.json','targets','approvals','activation-history')
     foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Session.layout.policyRoot)) {
-        if ([IO.Path]::GetFileName($entry) -cnotin $allowed) { Stop-ClcError Clc.EnrollmentConfigurationDrift }
-        if ([IO.Path]::GetFileName($entry) -ceq 'activation-history') {Assert-ClcProtectedDependencyTree $context $entry $Session.target.runtimeIdentitySid}
+        if ([IO.Path]::GetFileName($entry) -cnotin @('host-policy.json','targets','approvals','activation-history')) { Stop-ClcError Clc.EnrollmentConfigurationDrift }
+        if ([IO.Path]::GetFileName($entry) -ceq 'activation-history') { Assert-ClcProtectedDependencyTree $context $entry $Session.target.runtimeIdentitySid }
     }
-    $count=0
+    $targetName=$Session.target.targetId+'.json'
     foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Session.layout.targetCatalogRoot)) {
-        $count++; if ($count -gt 4096 -or [IO.Path]::GetFileName($entry) -cnotmatch '^([a-z0-9][a-z0-9-]{0,63})\.json$') { Stop-ClcError Clc.EnrollmentConfigurationDrift }
-        $id=[IO.Path]::GetFileNameWithoutExtension($entry)
-        $other=Read-ClcHeldRecord $entry target $Session.handles
+        if ([IO.Path]::GetFileName($entry) -cne $targetName) { Stop-ClcError Clc.EnrollmentTargetCollision }
+        $file=Read-ClcHeldRecord $entry target $Session.handles
         Assert-HResourceAccess $Session $entry Protected
-        if ($other.record.targetId -cne $id) { Stop-ClcError Clc.EnrollmentConfigurationDrift }
-        if ($id -ceq $Session.target.targetId) { continue }
-        $target=$other.record
-        if ($target.applicationPoolName -ieq $Session.target.applicationPoolName -or $target.siteName -ieq $Session.target.siteName -or $target.runtimeIdentitySid -ceq $Session.target.runtimeIdentitySid) { Stop-ClcError Clc.EnrollmentTargetCollision }
-        foreach ($left in @($target.applicationRoot,[IO.Path]::GetDirectoryName($target.operationalConfigPath),$target.dataProtectionRoot,$target.artifactInboxRoot)) {
-            $leftFacts=Get-ClcPathObservation $left $Session.handles -Directory
-            foreach ($right in @($Session.target.applicationRoot,[IO.Path]::GetDirectoryName($Session.target.operationalConfigPath),$Session.target.dataProtectionRoot,$Session.target.artifactInboxRoot)) {
-                if ((Test-ClcPathAncestry $left $right) -or (Test-ClcPathAncestry $right $left)) { Stop-ClcError Clc.EnrollmentTargetCollision }
-                if (Test-HExists $right) {$rightPhysical=(Get-ClcPathObservation $right $Session.handles -Directory).PhysicalPath}
-                else {$rightPhysical=Join-Path (Get-ClcPathObservation ([IO.Path]::GetDirectoryName($right)) $Session.handles -Directory).PhysicalPath ([IO.Path]::GetFileName($right))}
-                if ((Test-ClcPathAncestry $leftFacts.PhysicalPath $rightPhysical) -or (Test-ClcPathAncestry $rightPhysical $leftFacts.PhysicalPath)) {Stop-ClcError Clc.EnrollmentTargetCollision}
-            }
+        Assert-ClcTargetPaths $file.record $Session.layout
+    }
+    $targetExists=Test-HExists (Join-Path $Session.layout.targetCatalogRoot $targetName)
+    $roots=@(@{path=$Session.layout.approvalCatalogRoot;kind='release-approval';idField='approvalId'})
+    $directories=@(
+        @{name='standing';kind='standing-authorization';idField='standingAuthorizationId'},
+        @{name='hooks';kind='hook-policy';idField='targetId'},
+        @{name='recovery';kind='persistent-state-approval';idField='approvalId'})
+    foreach ($directory in $directories) {
+        $path=Join-Path $Session.layout.approvalCatalogRoot $directory.name
+        if (Test-HExists $path) {
+            $null=Get-ClcPathObservation $path $Session.handles -Directory
+            Assert-HResourceAccess $Session $path Protected
+            $roots += @{path=$path;kind=$directory.kind;idField=$directory.idField}
         }
     }
-    $count=0
-    foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Session.layout.approvalCatalogRoot)) {
-        $count++; if ($count -gt 20000 -or [IO.Path]::GetFileName($entry) -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}\.json$') { Stop-ClcError Clc.EnrollmentConfigurationDrift }
-        $approval=Read-ClcHeldRecord $entry release-approval $Session.handles
-        Assert-HResourceAccess $Session $entry Protected
-        if ($approval.record.approvalId -cne [IO.Path]::GetFileNameWithoutExtension($entry)) { Stop-ClcError Clc.EnrollmentConfigurationDrift }
-        if ($approval.record.targetId -ceq $Session.target.targetId -and -not (Test-HExists (Join-Path $Session.layout.targetCatalogRoot ($Session.target.targetId+'.json')))) { Stop-ClcError Clc.EnrollmentPriorEvidence }
+    $count=0;$clock=[Diagnostics.Stopwatch]::StartNew()
+    foreach ($root in $roots) {
+        foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($root.path)) {
+            Assert-ClcDeadline $clock;$count++
+            if ($root.kind -ceq 'release-approval' -and [IO.Path]::GetFileName($entry) -cin @('standing','hooks','recovery')) { continue }
+            if ($count -gt 20000 -or [IO.Path]::GetFileName($entry) -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}\.json$') { Stop-ClcError Clc.EnrollmentConfigurationDrift }
+            $file=Read-ClcHeldRecord $entry $root.kind $Session.handles
+            Assert-HResourceAccess $Session $entry Protected
+            $id=$file.record[$root.idField]
+            if ($id -cne [IO.Path]::GetFileNameWithoutExtension($entry) -or $file.record.targetId -cne $Session.target.targetId) { Stop-ClcError Clc.EnrollmentConfigurationDrift }
+            if (-not $targetExists) { Stop-ClcError Clc.EnrollmentPriorEvidence }
+        }
     }
+    Assert-ClcDeadline $clock
 }
 function Open-HReadLock($Session,$TargetFile,$Identity) {
     $stream=$null
@@ -292,12 +360,12 @@ function Install-HToolkit($Session,[string] $DistributionPath) {
 }
 function Invoke-HApply($Session,[string] $DistributionPath) {
     Assert-HOperation $Session enroll-target
-    $lockPath=Join-Path $Session.authorityRoot 'host-enrollment.lock'
+    $lockPath=Join-Path $Session.authorityRoot 'enrollment.lock'
     $lockHandles=[Collections.Generic.List[IDisposable]]::new()
     try { Assert-HAuthorityProtection $lockPath $lockHandles; $lockFacts=Get-ClcPathObservation $lockPath $lockHandles }
     finally { foreach ($handle in $lockHandles) { $handle.Dispose() } }
-    $Session.globalLock=[IO.FileStream]::new($lockPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
-    $opened=[Clc.Foundation.NativePaths]::Observe($Session.globalLock.SafeFileHandle)
+    $Session.enrollmentLock=[IO.FileStream]::new($lockPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    $opened=[Clc.Foundation.NativePaths]::Observe($Session.enrollmentLock.SafeFileHandle)
     if ($opened.VolumeId -cne $lockFacts.VolumeId -or $opened.FileId -cne $lockFacts.FileId -or $opened.LinkCount -ne 1 -or ($opened.Attributes -band 0x410) -ne 0) { Stop-ClcError Clc.UnsafePath }
     Assert-HAuthorityProtection (Join-Path $Session.authorityRoot 'evidence') $Session.handles -Directory
     Assert-HSessionUnchanged $Session -Mutation
@@ -335,13 +403,17 @@ function Invoke-HApply($Session,[string] $DistributionPath) {
     if (Test-HExists $Session.controlRoot) { Stop-ClcError Clc.EnrollmentPriorEvidence }
     Assert-HTargetCatalog $Session
     Assert-HInitialResources $Session
+    $null=Get-HIisSnapshot $Session
     foreach ($pair in @(@('applicationRoot','Application'),@('artifactInboxRoot','Mutable'),@('dataProtectionRoot','Keys'))) {
         if (-not (Test-HExists $Session.target[$pair[0]])) { New-HDirectory $Session $Session.target[$pair[0]] $pair[1] }
     }
     Invoke-HIisApply $Session $plan
-    if ($null -ne $Session.authorization.cutover) { Invoke-HCutover $Session }
+    if ($null -ne $Session.authorization.cutover) {
+        New-HDirectory $Session $Session.controlRoot Control
+        Invoke-HCutover $Session
+    }
     Assert-HIisReady $Session
-    New-HDirectory $Session $Session.controlRoot Control
+    if ($null -eq $Session.authorization.cutover) { New-HDirectory $Session $Session.controlRoot Control }
     $prospective=@{record=$Session.target;stream=[IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes(($Session.target | ConvertTo-Json -Compress)))}
     $Session.handles.Add($prospective.stream); $prospective.sha256=Get-ClcBytesHash $prospective.stream.ToArray()
     $identity=Get-ClcTargetIdentity $Session.context $prospective
@@ -385,6 +457,7 @@ function Assert-HCutoverInventory($Session,$Inventory) {
     }
     if (Test-HExists $cutover.backupRoot) { Stop-ClcError Clc.EnrollmentPartialInitialization }
     $parent=[IO.Path]::GetDirectoryName($cutover.backupRoot)
+    while (-not (Test-HExists $parent)) { $parent=[IO.Path]::GetDirectoryName($parent); if (-not $parent) { Stop-ClcError Clc.UnsafePath } }
     $null=Get-ClcPathObservation $parent $Session.handles -Directory
     Assert-HResourceAccess $Session $parent Protected
 }
@@ -393,6 +466,7 @@ function Invoke-HCutover($Session) {
     Assert-HCutoverStopped $Session
     $cutover=$Session.authorization.cutover; $original=Get-HLegacyInventory $Session.target.applicationRoot
     Assert-HCutoverInventory $Session $original
+    $null=Get-HIisSnapshot $Session
     New-HDirectory $Session $cutover.backupRoot
     $filesRoot=Join-Path $cutover.backupRoot 'original'; New-HDirectory $Session $filesRoot
     $clock=[Diagnostics.Stopwatch]::StartNew()
@@ -423,6 +497,7 @@ function Invoke-HCutover($Session) {
     # Recheck the full original and backup before the first destructive effect.
     $rechecked=Get-HLegacyInventory $Session.target.applicationRoot
     if (-not (Test-ClcValueEqual $rechecked.files $original.files) -or -not (Test-ClcValueEqual $rechecked.rootIdentity $original.rootIdentity)) { Stop-ClcError Clc.EnrollmentResourceMismatch }
+    $null=Get-HIisSnapshot $Session
     foreach ($file in $original.files) {
         Assert-HOperation $Session first-cutover; Assert-HCutoverStopped $Session; Assert-ClcDeadline $clock
         Assert-HCutoverRoot $Session
@@ -440,6 +515,7 @@ function Invoke-HCutover($Session) {
             [IO.File]::Delete($path)
         } finally { if ($null -ne $stream) { $stream.Dispose() } }
     }
+    $null=Get-HIisSnapshot $Session
     foreach ($directory in @($original.directories | Sort-Object Length -Descending)) {
         Assert-HCutoverStopped $Session; Assert-ClcDeadline $clock
         Assert-HCutoverRoot $Session

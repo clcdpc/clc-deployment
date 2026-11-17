@@ -1,7 +1,7 @@
 BeforeAll { . "$PSScriptRoot/Support.ps1" }
 Describe 'Ordinal streamed inventory identity' {
     It 'matches published SHA-256 vectors including an empty file' {
-        & (Get-Module CLC.Deployment) {
+        & (Get-Module Clc.Deployment) {
             Get-ClcBytesHash ([byte[]]::new(0)) | Should -Be 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
             Get-ClcBytesHash ([Text.Encoding]::UTF8.GetBytes('abc')) | Should -Be 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
             Get-ClcInventoryHash @() | Should -Be 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
@@ -16,7 +16,7 @@ Describe 'Ordinal streamed inventory identity' {
         try {
             foreach ($culture in @('en-US','tr-TR','ar-SA')) {
                 [Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo($culture)
-                $digest = & (Get-Module CLC.Deployment) { param($Inventory) Get-ClcInventoryHash $Inventory } $files
+                $digest = & (Get-Module Clc.Deployment) { param($Inventory) Get-ClcInventoryHash $Inventory } $files
                 $digest | Should -Be '1f66dcfbe7c8bef583eb46ffb7d6345f2bf800cb3955e614bdb6343bf63f079a'
             }
         } finally { [Threading.Thread]::CurrentThread.CurrentCulture = $oldCulture }
@@ -48,7 +48,7 @@ Describe 'Ordinal streamed inventory identity' {
         Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes(($backup | ConvertTo-Json -Depth 10))) 'backup-index' }
     }
     It 'enforces actual stream lengths and standard CRC-32 independently of declarations' {
-        & (Get-Module CLC.Deployment) {
+        & (Get-Module Clc.Deployment) {
             $stream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes('123456789'))
             try {
                 $digest = Read-ClcZipPayload $stream 9 ([Diagnostics.Stopwatch]::StartNew())

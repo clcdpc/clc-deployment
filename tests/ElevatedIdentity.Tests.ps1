@@ -13,7 +13,7 @@ Describe 'Elevated V1 deployment admission before effects' {
     It 'admits an authorized SID with an enabled administrator role' {
         $context=Invoke-T2Private Open-ClcTrustedContext
         $context.executingToolkit.sourceCommit | Should -BeExactly ('a'*40)
-        Should -Invoke -ModuleName CLC.Deployment Test-ClcAdministratorToken -Times 1 -Scope It
+        Should -Invoke -ModuleName Clc.Deployment Test-ClcAdministratorToken -Times 1 -Scope It
     }
     It 'refuses <Case> before any native query or control write' -ForEach @(
         @{Case='UAC-filtered administrator';Enabled=$false;Sid='S-1-5-19'},
@@ -21,17 +21,17 @@ Describe 'Elevated V1 deployment admission before effects' {
         @{Case='wrong elevated SID';Enabled=$true;Sid='S-1-5-20'}
     ) {
         $global:IdentityEnabled=$Enabled; $global:IdentitySid=$Sid
-        Mock -ModuleName CLC.Deployment Test-ClcAdministratorToken { return $global:IdentityEnabled }
-        Mock -ModuleName CLC.Deployment Get-ClcCallerSid { return $global:IdentitySid }
+        Mock -ModuleName Clc.Deployment Test-ClcAdministratorToken { return $global:IdentityEnabled }
+        Mock -ModuleName Clc.Deployment Get-ClcCallerSid { return $global:IdentitySid }
         $before=Get-T2TreeHashes $fixture
         Test-TestRejection { Invoke-T2Private Open-ClcTrustedContext } 'Clc.HostPreflightFailed*'
-        Should -Invoke -ModuleName CLC.Deployment Get-ClcIisPoolNames -Times 0 -Exactly
+        Should -Invoke -ModuleName Clc.Deployment Get-ClcIisPoolNames -Times 0 -Exactly
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
         @([IO.Directory]::EnumerateFileSystemEntries($fixture.policy.lockRoot)).Count | Should -Be 0
     }
     It 'rechecks the enabled role at a later authority boundary' {
         $context=Invoke-T2Private Open-ClcTrustedContext
-        Mock -ModuleName CLC.Deployment Test-ClcAdministratorToken { return $false }
+        Mock -ModuleName Clc.Deployment Test-ClcAdministratorToken { return $false }
         Test-TestRejection { Invoke-T2Private Assert-ClcTrustedContextUnchanged @($context) } 'Clc.HostPreflightFailed*'
     }
     It 'uses the actual current Windows enabled role without changing token or membership' {
@@ -42,7 +42,7 @@ Describe 'Elevated V1 deployment admission before effects' {
                 Import-Module $manifest -Force
                 $id=[Security.Principal.WindowsIdentity]::GetCurrent()
                 try { $expected=[Security.Principal.WindowsPrincipal]::new($id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } finally { $id.Dispose() }
-                @{expected=$expected;actual=(& (Get-Module CLC.Deployment) { Test-ClcAdministratorToken })}
+                @{expected=$expected;actual=(& (Get-Module Clc.Deployment) { Test-ClcAdministratorToken })}
             }.ToString()).AddArgument($script:ModulePath)
             $result=$ps.Invoke(); $ps.HadErrors | Should -BeFalse
             $result[0].actual | Should -Be $result[0].expected
@@ -54,10 +54,10 @@ Describe 'Protected structure versus elevated effective authority' {
         $global:IdentitySecurity=New-IdentityDescriptor 'O:SYG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;LS)'
         $global:RuntimeMutation=0L
         $context=@{policyFile=@{record=@{infrastructureOwnerSids=@('S-1-5-18','S-1-5-32-544');deploymentSids=@('S-1-5-19')}};layout=@{root='C:\owned\toolkit'};ancestorPins=@{}}
-        Mock -ModuleName CLC.Deployment Get-ClcCallerSid { return 'S-1-5-19' }
-        Mock -ModuleName CLC.Deployment Test-ClcAdministratorToken { return $true }
-        Mock -ModuleName CLC.Deployment Get-ClcSecurityObservation { return $global:IdentitySecurity }
-        Mock -ModuleName CLC.Deployment Get-ClcEffectiveAccess { if ($Sid -ceq 'S-1-5-19') { return 0x1f01ffL }; return (0x1200a9L -bor $global:RuntimeMutation) }
+        Mock -ModuleName Clc.Deployment Get-ClcCallerSid { return 'S-1-5-19' }
+        Mock -ModuleName Clc.Deployment Test-ClcAdministratorToken { return $true }
+        Mock -ModuleName Clc.Deployment Get-ClcSecurityObservation { return $global:IdentitySecurity }
+        Mock -ModuleName Clc.Deployment Get-ClcEffectiveAccess { if ($Sid -ceq 'S-1-5-19') { return 0x1f01ffL }; return (0x1200a9L -bor $global:RuntimeMutation) }
     }
     It 'accepts inherited Administrators authority while retaining runtime in denied writers' {
         $denied=Invoke-T2Private Get-ClcProtectedDeniedWriters @($context,'S-1-5-20')
@@ -100,14 +100,14 @@ Describe 'Runtime access across actual host resource roles' {
                 targetCatalogRoot='C:\enrolled\toolkit\policy\targets';approvalCatalogRoot='C:\enrolled\toolkit\policy\approvals';lockRoot='C:\enrolled\locks';controlStateRoot='C:\enrolled\control'}}}
         $target=@{applicationRoot='C:\enrolled\app';artifactInboxRoot='C:\enrolled\inbox';operationalConfigPath='C:\enrolled\config\app.json';dataProtectionRoot='C:\enrolled\keys';runtimeIdentitySid='S-1-5-20'}
         $identity=@{controlRoot='C:\enrolled\control\target'}
-        Mock -ModuleName CLC.Deployment Assert-ClcRuntimeIdentity { }
-        Mock -ModuleName CLC.Deployment Get-ClcCallerSid { return 'S-1-5-19' }
-        Mock -ModuleName CLC.Deployment Get-ClcSecurityObservation {
+        Mock -ModuleName Clc.Deployment Assert-ClcRuntimeIdentity { }
+        Mock -ModuleName Clc.Deployment Get-ClcCallerSid { return 'S-1-5-19' }
+        Mock -ModuleName Clc.Deployment Get-ClcSecurityObservation {
             $runtimeRights=if ($Path -ceq $global:IdentityUnsafePath) { '0x'+$global:IdentityUnsafeMask.ToString('x') } elseif ($Path -ceq 'C:\enrolled\keys') { '0x1301bf' } else { 'FRFX' }
             $owner=if ($Path -ceq $global:IdentityUnsafePath -and $global:IdentityUnsafeOwner) { 'S-1-5-20' } else { 'SY' }
             return New-IdentityDescriptor ('O:'+$owner+'G:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;'+$runtimeRights+';;;NS)')
         }
-        Mock -ModuleName CLC.Deployment Get-ClcEffectiveAccess {
+        Mock -ModuleName Clc.Deployment Get-ClcEffectiveAccess {
             if ($Sid -ceq 'S-1-5-19') { return 0x1f01ffL }
             $raw=[Security.AccessControl.RawSecurityDescriptor]::new($Descriptor,0)
             $ace=@($raw.DiscretionaryAcl | Where-Object { $_.SecurityIdentifier.Value -ceq 'S-1-5-20' })[0]
@@ -148,7 +148,7 @@ Describe 'Runtime access across actual host resource roles' {
 Describe 'Runtime identity membership admission' {
     BeforeEach {
         $context=@{policyFile=@{record=@{infrastructureOwnerSids=@('S-1-5-18','S-1-5-32-544','S-1-5-21-1-2-3-1001');deploymentSids=@('S-1-5-21-1-2-3-1002')}}}
-        Mock -ModuleName CLC.Deployment Get-ClcEffectiveAccess { return 0L }
+        Mock -ModuleName Clc.Deployment Get-ClcEffectiveAccess { return 0L }
     }
     It 'accepts the distinct nonadministrator runtime' { { Invoke-T2Private Assert-ClcRuntimeIdentity @($context,'S-1-5-21-1-2-3-1003') } | Should -Not -Throw }
     It 'rejects direct runtime overlap with <Sid>' -ForEach @(@{Sid='S-1-5-32-544'},@{Sid='S-1-5-18'},@{Sid='S-1-5-21-1-2-3-1001'},@{Sid='S-1-5-21-1-2-3-1002'}) {
@@ -158,7 +158,7 @@ Describe 'Runtime identity membership admission' {
         @{Role='Administrators';Trustee='S-1-5-32-544'},@{Role='infrastructure';Trustee='S-1-5-21-1-2-3-1001'},@{Role='deployment';Trustee='S-1-5-21-1-2-3-1002'}
     ) {
         $global:IdentityPrivilegedTrustee=$Trustee
-        Mock -ModuleName CLC.Deployment Get-ClcEffectiveAccess {
+        Mock -ModuleName Clc.Deployment Get-ClcEffectiveAccess {
             $raw=[Security.AccessControl.RawSecurityDescriptor]::new($Descriptor,0)
             if (@($raw.DiscretionaryAcl | Where-Object { $_.SecurityIdentifier.Value -ceq $global:IdentityPrivilegedTrustee }).Count) { return 1L }
             return 0L
@@ -166,7 +166,7 @@ Describe 'Runtime identity membership admission' {
         Test-TestRejection { Invoke-T2Private Assert-ClcRuntimeIdentity @($context,'S-1-5-21-1-2-3-1003') } 'Clc.HostPreflightFailed*'
     }
     It 'refuses unavailable runtime group evidence' {
-        Mock -ModuleName CLC.Deployment Get-ClcEffectiveAccess { Invoke-T2Private Stop-ClcError @('Clc.HostPreflightFailed') }
+        Mock -ModuleName Clc.Deployment Get-ClcEffectiveAccess { Invoke-T2Private Stop-ClcError @('Clc.HostPreflightFailed') }
         Test-TestRejection { Invoke-T2Private Assert-ClcRuntimeIdentity @($context,'S-1-5-21-1-2-3-1003') } 'Clc.HostPreflightFailed*'
     }
 }

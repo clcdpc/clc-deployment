@@ -24,6 +24,7 @@ function Invoke-ClcManagedReplacement {
     } else { $null=Get-ClcTreeInventory $Source $SelectedFiles -DeadlineClock $clock }
     $live=Get-ClcTreeInventory $root $ExistingFiles -Partial:$Partial -OtherFiles $OtherFiles -AllowChanged:$AllowChanged -DeadlineClock $clock
     Assert-ClcPayloadLayout $live.files $SelectedFiles
+    $null=Assert-ClcEffectAuthority $Session -Stopped
     $null=Write-ClcJournalIntent $lock Replace
     $Session.replacementBegun=$true
     $selected=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -34,6 +35,7 @@ function Invoke-ClcManagedReplacement {
         Assert-ClcIisQuiescent $lock
         Remove-ClcPayloadFile (Get-ClcManagedPath $root $file.path)
     }
+    $null=Assert-ClcEffectAuthority $Session -Stopped
     # Keep ANCM configuration present while replacing an existing application.
     # The first installation writes it before any executable application file.
     foreach ($file in @($SelectedFiles | Sort-Object @{Expression={if ($_.path -ceq 'application/web.config') {0} else {1}}},path)) {
@@ -54,6 +56,7 @@ function Invoke-ClcManagedReplacement {
     $oldDirectories=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($file in $SelectedFiles) { foreach ($prefix in Get-ClcNamePrefixes $file.path) { $null=$needed.Add($prefix) } }
     foreach ($file in $live.files) { foreach ($prefix in Get-ClcNamePrefixes $file.path) { $null=$oldDirectories.Add($prefix) } }
+    $null=Assert-ClcEffectAuthority $Session -Stopped
     foreach ($relative in @($oldDirectories | Sort-Object Length -Descending)) {
         if ($relative -ceq 'application' -or $needed.Contains($relative)) { continue }
         Assert-ClcDeadline $clock; Assert-ClcIisQuiescent $lock

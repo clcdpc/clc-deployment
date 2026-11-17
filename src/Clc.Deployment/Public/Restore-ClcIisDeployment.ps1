@@ -12,7 +12,7 @@ function Restore-ClcIisDeployment {
     try {
         if ($AttemptId -eq [guid]::Empty) { Stop-ClcError Clc.InvalidContract }
         $Mode=switch ($Mode) { RestorePrevious {'RestorePrevious'} AcceptCandidate {'AcceptCandidate'} RestoreEmpty {'RestoreEmpty'} }
-        $context=Open-ClcTrustedContext
+        $context=Open-ClcTrustedContext -TargetId $TargetId
         $lock=Enter-ClcDeploymentLock $context $TargetId; $session.lock=$lock
         $session.recoveryApprovalId=$RecoveryApprovalId
         $session.persistentStateApprovalId=$PersistentStateApprovalId

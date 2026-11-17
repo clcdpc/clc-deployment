@@ -16,7 +16,7 @@ try {
     if ($stream.Length -gt 1073741824 -or [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream)).ToLowerInvariant() -cne $ExpectedSha256) { throw 'Independently supplied distribution digest differs.' }
     $stream.Position=0; $zip=[IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Read,$true)
     if ($zip.Entries.Count -gt 20000) { throw 'Distribution entry count exceeds bound.' }
-    $entries=@{}; $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $entries=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal); $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $zip.Entries) {
         Assert-DistName $entry.FullName
         if (-not $seen.Add($entry.FullName) -or $entry.ExternalAttributes -ne 0) { throw 'Unexpected distribution entry.' }
@@ -25,17 +25,19 @@ try {
     if (-not $entries.ContainsKey('distribution.json') -or -not $entries.ContainsKey('source.commit')) { throw 'Missing distribution identity.' }
     $record=Read-DistJson (Read-DistEntry $entries['distribution.json'] 4194304)
     $fields=@('distributionFormat','formatVersion','sourceCommit','moduleVersion','files','inventorySha256','sourceFiles','sourceInventorySha256','toolchain','reproducibility')
-    if ($record.formatVersion -eq 2) { $fields += 'infrastructureFiles','infrastructureInventorySha256' }
+    if ($record.formatVersion -in @(2,3)) { $fields += 'infrastructureFiles','infrastructureInventorySha256' }
     Assert-DistFields $record $fields
     Assert-DistFields $record.toolchain @('powershell','dotnetRuntime','git')
     foreach ($name in @('powershell','dotnetRuntime','git')) { if ($record.toolchain[$name] -isnot [string] -or $record.toolchain[$name].Length -gt 128) { throw 'Invalid recorded toolchain.' } }
     if ($record.files -isnot [array] -or $record.sourceFiles -isnot [array] -or $record.reproducibility -isnot [string] -or $record.reproducibility.Length -gt 1024) { throw 'Invalid distribution field types.' }
-    if ($record.distributionFormat -cne 'clc-toolkit-distribution' -or $record.formatVersion -isnot [long] -and $record.formatVersion -isnot [int] -or $record.formatVersion -notin @(1,2) -or
+    if ($record.distributionFormat -cne 'clc-toolkit-distribution' -or $record.formatVersion -isnot [long] -and $record.formatVersion -isnot [int] -or $record.formatVersion -notin @(1,2,3) -or
         $record.sourceCommit -cne $ExpectedSourceCommit -or $record.moduleVersion -cne $ExpectedVersion -or
         [Text.Encoding]::ASCII.GetString((Read-DistEntry $entries['source.commit'] 40)) -cne $ExpectedSourceCommit) { throw 'Distribution identity differs.' }
     Assert-DistInventory $record.files; Assert-DistInventory $record.sourceFiles
+    # Historical formats retain their exact old names; only format 3 uses the rename.
+    $moduleName=if ($record.formatVersion -eq 3) {'Clc.Deployment'} else {'CLC.Deployment'}
     $infrastructureFiles=@()
-    if ($record.formatVersion -eq 2) {
+    if ($record.formatVersion -in @(2,3)) {
         Assert-DistInventory $record.infrastructureFiles
         $infrastructureFiles=$record.infrastructureFiles
         if ($infrastructureFiles.Count -ne @(Get-DistInfrastructureNames).Count -or (Get-DistInventoryHash $infrastructureFiles) -cne $record.infrastructureInventorySha256) { throw 'Infrastructure inventory differs.' }
@@ -46,21 +48,23 @@ try {
             $sourceFile=@($record.sourceFiles | Where-Object {$_.path -ceq $file.path})
             if ($sourceFile.Count -ne 1 -or $sourceFile[0].length -ne $file.length -or $sourceFile[0].sha256 -cne $file.sha256) { throw 'Infrastructure/source inventory differs.' }
         }
-    } elseif ($RequireInfrastructureTools) { throw 'Host enrollment requires a format-2 distribution with infrastructure tools.' }
+    }
+    if ($RequireInfrastructureTools -and $record.formatVersion -ne 3) { throw 'Target-local host enrollment requires a format-3 distribution.' }
     if ((Get-DistInventoryHash $record.files) -cne $record.inventorySha256 -or (Get-DistInventoryHash $record.sourceFiles) -cne $record.sourceInventorySha256 -or $entries.Count -ne $record.files.Count+$infrastructureFiles.Count+2) { throw 'Distribution inventory differs.' }
     foreach ($file in $record.files) {
-        if ($file.path -cnotmatch '^(CLC\.Deployment\.ps[dm]1|(Private|Public)/[A-Za-z0-9.-]+\.ps1)$') { throw 'Unexpected module runtime file.' }
-        $name='CLC.Deployment/'+$file.path
+        if ($file.path -cnotmatch ('^('+[regex]::Escape($moduleName)+'\.ps[dm]1|(Private|Public)/[A-Za-z0-9.-]+\.ps1)$')) { throw 'Unexpected module runtime file.' }
+        $name=$moduleName+'/'+$file.path
         if (-not $entries.ContainsKey($name)) { throw 'Missing module file.' }
         $bytes=Read-DistEntry $entries[$name]
         if ($bytes.Length -ne $file.length -or (Get-DistHash $bytes) -cne $file.sha256) { throw 'Module bytes differ.' }
         $sourceFile=@($record.sourceFiles | Where-Object { $_.path -ceq ('src/'+$name) })
         # The output manifest is version-stamped; all substantive module files remain source-exact.
-        if ($sourceFile.Count -ne 1 -or ($file.path -cne 'CLC.Deployment.psd1' -and ($sourceFile[0].length -ne $file.length -or $sourceFile[0].sha256 -cne $file.sha256))) { throw 'Module/source inventory differs.' }
+        if ($sourceFile.Count -ne 1 -or ($file.path -cne ($moduleName+'.psd1') -and ($sourceFile[0].length -ne $file.length -or $sourceFile[0].sha256 -cne $file.sha256))) { throw 'Module/source inventory differs.' }
     }
-    $moduleManifest=[Text.UTF8Encoding]::new($false,$true).GetString((Read-DistEntry $entries['CLC.Deployment/CLC.Deployment.psd1']))
+    $moduleManifest=[Text.UTF8Encoding]::new($false,$true).GetString((Read-DistEntry $entries[$moduleName+'/'+$moduleName+'.psd1']))
     if ((Get-DistModuleVersion $moduleManifest) -cne $ExpectedVersion) { throw 'Module manifest version differs from distribution identity.' }
     if ($InstalledModuleRoot) {
+        if ([IO.Path]::GetFileName($InstalledModuleRoot) -cne $moduleName) { throw 'Installed module name differs from distribution format.' }
         $null=Get-DistPathFacts $InstalledModuleRoot -Directory
         $allowedDirectories=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($file in $record.files) {
@@ -105,5 +109,5 @@ try {
         }
     }
     [pscustomobject]@{integrityVerified=$true;authenticatedByThisCheck=$false;sourceCommit=$record.sourceCommit;moduleVersion=$record.moduleVersion;
-        distributionSha256=$ExpectedSha256;inventorySha256=$record.inventorySha256;sourceInventorySha256=$record.sourceInventorySha256;fileCount=$record.files.Count;formatVersion=$record.formatVersion}
+        distributionSha256=$ExpectedSha256;inventorySha256=$record.inventorySha256;sourceInventorySha256=$record.sourceInventorySha256;fileCount=$record.files.Count;formatVersion=$record.formatVersion;moduleName=$moduleName}
 } finally { if ($null -ne $zip) { $zip.Dispose() }; $stream.Dispose() }

@@ -50,7 +50,7 @@ Describe 'Retained qualification assertions against synthetic IIS and real phase
     It 'checks failed-readiness backup preservation and explicit recovery without inbox or historical ZIPs' {
         $null=Invoke-ClcIisDeployment example $initial.record.approvalId
         $global:ClcLifecycle.ready=$false
-        Mock -ModuleName CLC.Deployment Get-ClcReadinessElapsed { 121 }
+        Mock -ModuleName Clc.Deployment Get-ClcReadinessElapsed { 121 }
         Test-TestRejection { Invoke-ClcIisDeployment example $newer.record.approvalId } 'Clc.ReadinessFailed*'
         $failed=Get-QSnapshot $configuration
         $failed.poolState | Should -BeExactly Stopped
@@ -63,7 +63,7 @@ Describe 'Retained qualification assertions against synthetic IIS and real phase
         @(Get-ChildItem -LiteralPath (Join-Path $fixture.controlRoot 'releases') -Filter '*.zip').Count | Should -Be 0
 
         $global:ClcLifecycle.ready=$true
-        Mock -ModuleName CLC.Deployment Get-ClcReadinessElapsed { 0 }
+        Mock -ModuleName Clc.Deployment Get-ClcReadinessElapsed { 0 }
         $result=Restore-ClcIisDeployment example $failed.state.journal.safe.attemptId RestorePrevious incident
         $restored=Get-QSnapshot $configuration
         Assert-QLifecycleResult $configuration @{success=$true;result=$result} $restored RestoredPrevious initial

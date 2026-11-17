@@ -82,7 +82,7 @@ Describe 'Real probe build and read-only validator contracts (no IIS)' {
     It 'emits the exact strict toolkit validation shape under Production and Staging' {
         foreach ($environment in @('Production','Staging')) {
             $actual=Invoke-ProbeValidation -Environment $environment
-            $record=& (Get-Module CLC.Deployment) { param($bytes) Read-ClcJson $bytes application-validation } ([Text.Encoding]::UTF8.GetBytes($actual.text))
+            $record=& (Get-Module Clc.Deployment) { param($bytes) Read-ClcJson $bytes application-validation } ([Text.Encoding]::UTF8.GetBytes($actual.text))
             $record.valid | Should -BeTrue; $record.runtimeEnvironment | Should -BeExactly $environment; $record.errorCodes.Count | Should -Be 0
         }
     }
@@ -136,7 +136,7 @@ Describe 'Real probe build and read-only validator contracts (no IIS)' {
             $text=$server.client.GetStringAsync($server.base+'/health/ready').GetAwaiter().GetResult()
             $manifest=@{applicationId='clc-qualification-probe';releaseId='probe-contract-negative';source=@{commit=$script:probeSource}}
             $configuration=@{runtimeEnvironment='Production';revision='probe-001'}
-            & (Get-Module CLC.Deployment) { param($bytes,$manifest,$config) Test-ClcReadinessIdentity $bytes $manifest $config } ([Text.Encoding]::UTF8.GetBytes($text)) $manifest $configuration | Should -BeFalse
+            & (Get-Module Clc.Deployment) { param($bytes,$manifest,$config) Test-ClcReadinessIdentity $bytes $manifest $config } ([Text.Encoding]::UTF8.GetBytes($text)) $manifest $configuration | Should -BeFalse
         } finally { Stop-ProbeServer $server }
     }
 }
@@ -150,7 +150,7 @@ Describe 'Actual loopback startup/readiness and current-user DPAPI (no IIS or se
                 [int]$response.StatusCode | Should -Be 200; $response.Headers.CacheControl.NoStore | Should -BeTrue
                 $response.Headers.Contains('Set-Cookie') | Should -BeFalse; $response.Headers.Contains('WWW-Authenticate') | Should -BeFalse
                 $text=$response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-                $record=& (Get-Module CLC.Deployment) { param($bytes) Read-ClcJson $bytes readiness } ([Text.Encoding]::UTF8.GetBytes($text))
+                $record=& (Get-Module Clc.Deployment) { param($bytes) Read-ClcJson $bytes readiness } ([Text.Encoding]::UTF8.GetBytes($text))
                 $record.releaseId | Should -BeExactly 'probe-contract-initial'; $text | Should -Not -Match 'CLC_SYNTHETIC_SECRET|C:\\'
             } finally { $response.Dispose() }
         } finally { Stop-ProbeServer $server }

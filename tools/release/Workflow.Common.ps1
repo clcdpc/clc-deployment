@@ -6,16 +6,17 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Release.Common.ps1')
 # These readers are from the independently pinned workflow checkout. Candidate
 # installed code is not imported to authenticate its own first execution.
-foreach ($helper in @('Paths','Inventory','NativeProcess','Trust')) { . (Join-Path $PSScriptRoot ('../../src/CLC.Deployment/Private/'+$helper+'.ps1')) }
+foreach ($helper in @('Paths','Inventory','NativeProcess','Trust')) { . (Join-Path $PSScriptRoot ('../../src/Clc.Deployment/Private/'+$helper+'.ps1')) }
 
-function Get-ClcWorkflowPolicyPath {
-    return Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) 'CLC\Deployment\Enrollment\toolkit\policy\host-policy.json'
+function Get-ClcWorkflowPolicyPath([string] $TargetId) {
+    return (Get-ClcTargetLayout $TargetId '0.0.0').policyPath
 }
 function Open-ClcWorkflowToolkit {
+    param([Parameter(Mandatory)][string] $TargetId)
     $handles=[Collections.Generic.List[IDisposable]]::new()
     $context=$null
     try {
-        $path=Get-ClcWorkflowPolicyPath
+        $path=Get-ClcWorkflowPolicyPath $TargetId
         # Same fixed first-authority rule as host enrollment. Never obtain this
         # first owner/writer allowlist from the policy being authenticated.
         $trusted=[string[]]@('S-1-5-18','S-1-5-32-544')
@@ -35,10 +36,14 @@ function Open-ClcWorkflowToolkit {
             $cursor=[IO.Path]::GetDirectoryName($cursor)
         }
         $file=Read-ClcHeldRecord $path host-policy $handles; $policy=$file.record
+        $layout=Get-ClcTargetLayout $TargetId $policy.activeToolkit.version
+        foreach ($name in @('targetCatalogRoot','approvalCatalogRoot','controlStateRoot','lockRoot')) {
+            if ($policy[$name] -cne $layout[$name]) { Stop-ClcError Clc.ToolkitNotActive }
+        }
         $root=[IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($path))
         $versionRoot=Join-Path $root ('versions\'+$policy.activeToolkit.version)
-        $moduleRoot=Join-Path $versionRoot 'CLC.Deployment'
-        $manifest=Join-Path $moduleRoot 'CLC.Deployment.psd1'
+        $moduleRoot=Join-Path $versionRoot 'Clc.Deployment'
+        $manifest=Join-Path $moduleRoot 'Clc.Deployment.psd1'
         if ($policy.activeToolkit.moduleManifestPath -cne $manifest) { Stop-ClcError Clc.ToolkitNotActive }
         $context=@{policyFile=$file;layout=@{root=$root;moduleRoot=$moduleRoot};handles=$handles;pathPins=@{};ancestorPins=@{};pinGeneration=0L;
             helperRuntimeSids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);closed=$false}

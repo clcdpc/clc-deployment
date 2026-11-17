@@ -15,12 +15,13 @@ try {
     # Hold the original bytes against write/delete throughout verification and
     # extraction, including standalone use outside the enrollment caller.
     $verified=& "$PSScriptRoot/Test-ToolkitDistribution.ps1" -ArchivePath $ArchivePath -ExpectedSha256 $ExpectedSha256 -ExpectedSourceCommit $ExpectedSourceCommit -ExpectedVersion $ExpectedVersion
+    $moduleName=$verified.moduleName
     $null=New-Item -ItemType Directory -Path $VersionRoot -ErrorAction Stop
     $zip=[IO.Compression.ZipArchive]::new($archiveStream,[IO.Compression.ZipArchiveMode]::Read,$true)
     $clock=[Diagnostics.Stopwatch]::StartNew(); $total=0L; $buffer=[byte[]]::new(65536)
     foreach ($entry in $zip.Entries) {
         if ($clock.Elapsed.TotalSeconds -ge 300) { throw 'Distribution extraction deadline exceeded.' }
-        if (-not $entry.FullName.StartsWith('CLC.Deployment/',[StringComparison]::Ordinal) -and $entry.FullName -cnotin (Get-DistInfrastructureNames)) { continue }
+        if (-not $entry.FullName.StartsWith(($moduleName+'/'),[StringComparison]::Ordinal) -and $entry.FullName -cnotin (Get-DistInfrastructureNames)) { continue }
         $path=Join-Path $VersionRoot $entry.FullName.Replace('/','\'); Assert-DistLocalPath $path
         $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
         $inputStream=$entry.Open(); $outputStream=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew)
@@ -49,6 +50,6 @@ try {
     $source=[IO.FileStream]::new((Join-Path $VersionRoot 'source.commit'),[IO.FileMode]::CreateNew)
     try { $source.Write([Text.Encoding]::ASCII.GetBytes($ExpectedSourceCommit));$source.Flush($true) } finally {$source.Dispose()}
 } finally { if ($null -ne $zip) {$zip.Dispose()}; $archiveStream.Dispose() }
-$null=& "$PSScriptRoot/Test-ToolkitDistribution.ps1" -ArchivePath (Join-Path $VersionRoot 'distribution.zip') -ExpectedSha256 $ExpectedSha256 -ExpectedSourceCommit $ExpectedSourceCommit -ExpectedVersion $ExpectedVersion -InstalledModuleRoot (Join-Path $VersionRoot 'CLC.Deployment')
-[pscustomobject]@{extracted=$true;activated=$false;moduleManifestPath=(Join-Path $VersionRoot 'CLC.Deployment\CLC.Deployment.psd1');identity=$verified;operatorApprovalReference=$OperatorApprovalReference;nextAction='Infrastructure must protect ownership/ACLs and independently activate the exact pin before import.'}
+$null=& "$PSScriptRoot/Test-ToolkitDistribution.ps1" -ArchivePath (Join-Path $VersionRoot 'distribution.zip') -ExpectedSha256 $ExpectedSha256 -ExpectedSourceCommit $ExpectedSourceCommit -ExpectedVersion $ExpectedVersion -InstalledModuleRoot (Join-Path $VersionRoot $moduleName)
+[pscustomobject]@{extracted=$true;activated=$false;moduleManifestPath=(Join-Path $VersionRoot ($moduleName+'\'+$moduleName+'.psd1'));identity=$verified;operatorApprovalReference=$OperatorApprovalReference;nextAction='Infrastructure must protect ownership/ACLs and independently activate the exact pin before import.'}
 # A failed extraction is retained as unactivated evidence, never repaired in place.

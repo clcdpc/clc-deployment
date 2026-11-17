@@ -184,7 +184,10 @@ function Assert-ClcPackage {
     # independently qualified build without NuGet lock evidence.
     if ($Value.schemaVersion -ne 2 -or $null -ne $Value.build.dependencyLockSha256) { Assert-ClcHash $Value.build.dependencyLockSha256 }
     Assert-ClcObject $Value.builder @('module','version','sourceCommit','distributionSha256')
-    Assert-ClcEnum $Value.builder.module @('CLC.Deployment')
+    # Published file-only V1 packages retain their original byte identity.
+    # New producers use the canonical name; V2 never accepts the old name.
+    $builderNames=if ($Value.schemaVersion -eq 1) {@('Clc.Deployment','CLC.Deployment')} else {@('Clc.Deployment')}
+    Assert-ClcEnum $Value.builder.module $builderNames
     Assert-ClcVersion $Value.builder.version
     Assert-ClcCommit $Value.builder.sourceCommit
     Assert-ClcHash $Value.builder.distributionSha256

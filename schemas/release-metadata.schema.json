@@ -135,8 +135,12 @@
         },
         "dependencyLockSha256": {
           "anyOf": [
-            { "$ref": "#/$defs/hash" },
-            { "type": "null" }
+            {
+              "$ref": "#/$defs/hash"
+            },
+            {
+              "type": "null"
+            }
           ],
           "$comment": "V2: actual NuGet lock digest when present, explicit null when independently qualified without lock evidence. V1 requires a digest."
         }
@@ -177,7 +181,10 @@
       ],
       "properties": {
         "module": {
-          "const": "CLC.Deployment"
+          "enum": [
+            "Clc.Deployment",
+            "CLC.Deployment"
+          ]
         },
         "version": {
           "$ref": "#/$defs/version"
@@ -337,7 +344,9 @@
           },
           "build": {
             "properties": {
-              "dependencyLockSha256": { "$ref": "#/$defs/hash" }
+              "dependencyLockSha256": {
+                "$ref": "#/$defs/hash"
+              }
             }
           },
           "hooks": false
@@ -347,6 +356,13 @@
         "properties": {
           "changeKind": {
             "const": "application-deployment"
+          },
+          "builder": {
+            "properties": {
+              "module": {
+                "const": "Clc.Deployment"
+              }
+            }
           }
         }
       }

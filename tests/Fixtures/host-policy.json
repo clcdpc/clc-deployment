@@ -9,7 +9,7 @@
     "sourceCommit": "0000000000000000000000000000000000000000",
     "distributionSha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "inventorySha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "moduleManifestPath": "C:\\synthetic\\toolkit\\CLC.Deployment.psd1"
+    "moduleManifestPath": "C:\\synthetic\\toolkit\\Clc.Deployment.psd1"
   },
   "targetCatalogRoot": "C:\\synthetic\\targets",
   "approvalCatalogRoot": "C:\\synthetic\\approvals",

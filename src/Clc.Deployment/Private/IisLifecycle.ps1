@@ -31,8 +31,9 @@ function Assert-ClcIisQuiescent {
 }
 function Invoke-ClcIisLifecycle {
     param($Session,[ValidateSet('Stop','Start')][string] $Operation,[switch] $Safety)
+    if ($Safety -and $Operation -cne 'Stop') {Stop-ClcError Clc.HostPreflightFailed}
     $lock=$Session.lock; $clock=[Diagnostics.Stopwatch]::StartNew()
-    if ($Safety) { $null=Assert-ClcLockedTarget $lock }
+    if ($Safety) { $null=Assert-ClcLockedTarget $lock -SafetyStop }
     else { $null=Assert-ClcEffectAuthority $Session -Stopped:($Operation -ceq 'Start') }
     $expected=if ($Operation -ceq 'Start') {'Started'} else {'Stopped'}
     $pool=Get-ClcLivePool $lock

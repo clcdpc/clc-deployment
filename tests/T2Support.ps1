@@ -1,20 +1,21 @@
 # Synthetic fixtures only. No operational configuration or real authority.
 function Invoke-T2Private {
     param([string] $Name, [object[]] $Arguments=@())
-    return & (Get-Module CLC.Deployment) { param($Name,$Arguments) & $Name @Arguments } $Name $Arguments
+    if ($Name -ceq 'Open-ClcTrustedContext' -and $Arguments.Count -eq 0) { $Arguments=@($global:ClcTestFixture.target.targetId) }
+    return & (Get-Module Clc.Deployment) { param($Name,$Arguments) & $Name @Arguments } $Name $Arguments
 }
 function New-T2Fixture {
     $workspace=New-TestWorkspace
-    $toolkit=Join-Path $workspace 'toolkit'; $version=Join-Path $toolkit 'versions\0.1.0-dev.1'; $module=Join-Path $version 'CLC.Deployment'
-    $layout=@{root=$toolkit;moduleRoot=$module;versionRoot=$version;manifestPath=(Join-Path $module 'CLC.Deployment.psd1');
+    $targetRoot=Join-Path $workspace 'clc-example'; $deploymentRoot=Join-Path $targetRoot 'Deployment'; $toolkit=Join-Path $deploymentRoot 'toolkit'; $version=Join-Path $toolkit 'versions\0.1.0-dev.1'; $module=Join-Path $version 'Clc.Deployment'
+    $layout=@{targetId='example';targetRoot=$targetRoot;deploymentRoot=$deploymentRoot;root=$toolkit;moduleRoot=$module;versionRoot=$version;manifestPath=(Join-Path $module 'Clc.Deployment.psd1');
         policyRoot=(Join-Path $toolkit 'policy');policyPath=(Join-Path $toolkit 'policy\host-policy.json');
         targetCatalogRoot=(Join-Path $toolkit 'policy\targets');approvalCatalogRoot=(Join-Path $toolkit 'policy\approvals');
         sourcePath=(Join-Path $version 'source.commit');distributionPath=(Join-Path $version 'distribution.zip');
-        controlStateRoot=(Join-Path $workspace 'c');lockRoot=(Join-Path $workspace 'locks')}
-    foreach ($path in @($module,$layout.targetCatalogRoot,$layout.approvalCatalogRoot,'application','config','keys','inbox','c','locks','binaries')) {
+        controlStateRoot=(Join-Path $deploymentRoot 'control');lockRoot=(Join-Path $deploymentRoot 'locks')}
+    foreach ($path in @($module,$layout.targetCatalogRoot,$layout.approvalCatalogRoot,$layout.controlStateRoot,$layout.lockRoot,(Join-Path $targetRoot 'Application'),(Join-Path $targetRoot 'Config'),(Join-Path $targetRoot 'Keys'),(Join-Path $targetRoot 'Inbox'),'binaries')) {
         if (-not [IO.Path]::IsPathRooted($path)) { $path=Join-Path $workspace $path }; [void][IO.Directory]::CreateDirectory($path)
     }
-    Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'src\CLC.Deployment') -Destination $version -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'src\Clc.Deployment') -Destination $version -Recurse -Force
     [IO.File]::WriteAllText($layout.sourcePath,('a'*40),[Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($layout.distributionPath,'synthetic distribution; never installed or executed')
     $files=@(Get-ChildItem -LiteralPath $module -Recurse -File | ForEach-Object {
@@ -34,8 +35,8 @@ function New-T2Fixture {
     $policy.activeToolkit.distributionSha256=(Get-FileHash -LiteralPath $layout.distributionPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-TestJson $layout.policyPath $policy
     $target=Get-Content -LiteralPath (Join-Path $script:FixtureRoot 'target.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
-    $target.applicationRoot=Join-Path $workspace 'application'; $target.operationalConfigPath=Join-Path $workspace 'config\application.json'
-    $target.dataProtectionRoot=Join-Path $workspace 'keys'; $target.artifactInboxRoot=Join-Path $workspace 'inbox'
+    $target.applicationRoot=Join-Path $targetRoot 'Application'; $target.operationalConfigPath=Join-Path $targetRoot 'Config\application.json'
+    $target.dataProtectionRoot=Join-Path $targetRoot 'Keys'; $target.artifactInboxRoot=Join-Path $targetRoot 'Inbox'
     [IO.File]::WriteAllText($target.operationalConfigPath,'synthetic external configuration; never executed')
     Write-TestJson (Join-Path $layout.targetCatalogRoot ($target.targetId+'.json')) $target
     $key='385c88656f98beb477be41f46381e9b9bb21cfb2dd8b3fcfd9aabdb69ce42c87' # Independently checked UTF-8 SHA-256 fixture.
@@ -49,19 +50,22 @@ function New-T2Fixture {
 }
 function Set-T2FixtureInModule {
     param($Fixture)
-    & (Get-Module CLC.Deployment) { param($Fixture) $global:ClcTestFixture=$Fixture } $Fixture
+    & (Get-Module Clc.Deployment) { param($Fixture) $global:ClcTestFixture=$Fixture } $Fixture
 }
 function Set-T2Mocks {
-    Mock -ModuleName CLC.Deployment Get-ClcInstalledLayout { return $global:ClcTestFixture.layout }
-    Mock -ModuleName CLC.Deployment Get-ClcCallerSid { return 'S-1-5-19' }
+    Mock -ModuleName Clc.Deployment Get-ClcInstalledLayout {
+        if ($TargetId -cne $global:ClcTestFixture.target.targetId) { Invoke-T2Private Stop-ClcError @('Clc.ToolkitNotActive') }
+        return $global:ClcTestFixture.layout
+    }
+    Mock -ModuleName Clc.Deployment Get-ClcCallerSid { return 'S-1-5-19' }
     # Synthetic host only: no claim about the CI/workstation token or runtime.
-    Mock -ModuleName CLC.Deployment Test-ClcAdministratorToken { return $true }
-    Mock -ModuleName CLC.Deployment Assert-ClcRuntimeIdentity { }
-    Mock -ModuleName CLC.Deployment Assert-ClcAccess { return (Invoke-T2Private Get-ClcSecurityObservation @($Path)).sha256 }
-    Mock -ModuleName CLC.Deployment Assert-ClcTrustAncestors { }
-    Mock -ModuleName CLC.Deployment Get-ClcMachineUuidObservation { return $global:ClcTestFixture.policy.machineIdentity }
-    Mock -ModuleName CLC.Deployment Get-ClcIisPoolNames { return @($global:ClcTestFixture.target.applicationPoolName) }
-    Mock -ModuleName CLC.Deployment Get-ClcIisObservation { return $global:ClcTestFixture.iis }
+    Mock -ModuleName Clc.Deployment Test-ClcAdministratorToken { return $true }
+    Mock -ModuleName Clc.Deployment Assert-ClcRuntimeIdentity { }
+    Mock -ModuleName Clc.Deployment Assert-ClcAccess { return (Invoke-T2Private Get-ClcSecurityObservation @($Path)).sha256 }
+    Mock -ModuleName Clc.Deployment Assert-ClcTrustAncestors { }
+    Mock -ModuleName Clc.Deployment Get-ClcMachineUuidObservation { return $global:ClcTestFixture.policy.machineIdentity }
+    Mock -ModuleName Clc.Deployment Get-ClcIisPoolNames { return @($global:ClcTestFixture.target.applicationPoolName) }
+    Mock -ModuleName Clc.Deployment Get-ClcIisObservation { return $global:ClcTestFixture.iis }
 }
 function Get-T2TreeHashes {
     param($Fixture)

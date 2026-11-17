@@ -12,6 +12,27 @@ namespace Clc.Foundation {
         public uint Attributes, LinkCount;
     }
     public static class NativePaths {
+        [DllImport("shell32.dll", CharSet=CharSet.Unicode), DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        private static extern int SHGetKnownFolderPath(ref Guid id, uint flags, IntPtr token, out IntPtr path);
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode), DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        private static extern uint GetSystemWindowsDirectoryW(StringBuilder path, uint size);
+        public static string WindowsDirectory() {
+            var windows = new StringBuilder(32768);
+            uint length = GetSystemWindowsDirectoryW(windows, (uint)windows.Capacity);
+            if (length == 0 || length >= windows.Capacity) throw new IOException("System directory unavailable.");
+            return windows.ToString();
+        }
+        public static string ProgramData() {
+            string drive = Path.GetPathRoot(WindowsDirectory()).TrimEnd('\\');
+            string inheritedDrive = Environment.GetEnvironmentVariable("SystemDrive") ?? "";
+            if (inheritedDrive.Length != 0 && !String.Equals(inheritedDrive.TrimEnd('\\'), drive, StringComparison.OrdinalIgnoreCase)) throw new IOException("System drive differs.");
+            var id = new Guid("62AB5D82-FDC1-4DC3-A9DD-070D1D495D97"); IntPtr pointer;
+            if (SHGetKnownFolderPath(ref id, 0x4000, IntPtr.Zero, out pointer) != 0) throw new IOException("Known folder unavailable.");
+            string value; try { value = Marshal.PtrToStringUni(pointer); } finally { Marshal.FreeCoTaskMem(pointer); }
+            if (value.StartsWith("%SystemDrive%\\", StringComparison.OrdinalIgnoreCase)) value = drive + value.Substring(13);
+            if (String.IsNullOrEmpty(value) || value.Contains('%') || !Path.IsPathFullyQualified(value)) throw new IOException("Known folder is ambiguous.");
+            return value;
+        }
         [StructLayout(LayoutKind.Sequential)]
         private struct Info {
             public uint Attributes;
@@ -243,10 +264,10 @@ function Assert-ClcProtectedPath {
     # host-local configuration/keys/enrollment. Never admit ProgramData itself or
     # another product's namespace. The ordinary physical/ACL/disjoint checks are
     # still mandatory; this is a path admission rule, never authorization.
-    $programData=[Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+    $programData=Get-ClcProgramDataRoot
     if ($programData -and (Test-ClcPathAncestry $programData $Path)) {
         $relative=$Path.Substring($programData.Length).TrimStart('\')
-        if ($relative -inotmatch '^(CLC|clc-[a-z0-9][a-z0-9-]{0,63})(\\|$)') { Stop-ClcError Clc.UnsafePath }
+        if ($relative -cnotmatch '^clc-[a-z0-9][a-z0-9-]{0,63}(\\|$)') { Stop-ClcError Clc.UnsafePath }
     }
     if ($programData -and $null -ne $Facts) {
         $handle=[Clc.Foundation.NativePaths]::Open($programData)
@@ -254,11 +275,43 @@ function Assert-ClcProtectedPath {
             $programDataFacts=[Clc.Foundation.NativePaths]::Observe($handle)
             if (Test-ClcPathAncestry $programDataFacts.PhysicalPath $Facts.PhysicalPath) {
                 $relative=$Facts.PhysicalPath.Substring($programDataFacts.PhysicalPath.Length).TrimStart('\')
-                if ($relative -inotmatch '^(CLC|clc-[a-z0-9][a-z0-9-]{0,63})(\\|$)') { Stop-ClcError Clc.UnsafePath }
+                if ($relative -cnotmatch '^clc-[a-z0-9][a-z0-9-]{0,63}(\\|$)') { Stop-ClcError Clc.UnsafePath }
             }
         } finally { $handle.Dispose() }
     }
     if ($Path.Substring(3) -imatch '^(\$Recycle\.Bin|System Volume Information|Recovery|Boot)(\\|$)') { Stop-ClcError Clc.UnsafePath }
+}
+
+function Get-ClcProgramDataRoot {
+    try {
+        $path=[Clc.Foundation.NativePaths]::ProgramData()
+        Assert-ClcPathSpelling $path
+        if ($env:ProgramData -and -not $env:ProgramData.Equals($path,[StringComparison]::OrdinalIgnoreCase)) { Stop-ClcError Clc.UnsafePath }
+        return $path
+    } catch { Stop-ClcError Clc.UnsafePath }
+}
+
+function Get-ClcTargetLayout {
+    param([Parameter(Mandatory)][string] $TargetId,[Parameter(Mandatory)][string] $Version)
+    Assert-ClcId $TargetId; Assert-ClcVersion $Version
+    $targetRoot=Join-Path (Get-ClcProgramDataRoot) ('clc-'+$TargetId)
+    $deploymentRoot=Join-Path $targetRoot 'Deployment'
+    $root=Join-Path $deploymentRoot 'toolkit'; $versionRoot=Join-Path $root ('versions\'+$Version)
+    return @{targetId=$TargetId;targetRoot=$targetRoot;deploymentRoot=$deploymentRoot;root=$root;versionRoot=$versionRoot;
+        moduleRoot=(Join-Path $versionRoot 'Clc.Deployment');manifestPath=(Join-Path $versionRoot 'Clc.Deployment\Clc.Deployment.psd1');
+        policyRoot=(Join-Path $root 'policy');policyPath=(Join-Path $root 'policy\host-policy.json');
+        targetCatalogRoot=(Join-Path $root 'policy\targets');approvalCatalogRoot=(Join-Path $root 'policy\approvals');
+        sourcePath=(Join-Path $versionRoot 'source.commit');distributionPath=(Join-Path $versionRoot 'distribution.zip');
+        bootstrapRoot=(Join-Path $deploymentRoot 'bootstrap');enrollmentAuthorityRoot=(Join-Path $deploymentRoot 'enrollment');
+        controlStateRoot=(Join-Path $deploymentRoot 'control');lockRoot=(Join-Path $deploymentRoot 'locks')}
+}
+
+function Assert-ClcTargetPaths {
+    param($Target,$Layout)
+    if ($Target.targetId -cne $Layout.targetId) { Stop-ClcError Clc.HostPreflightFailed }
+    foreach ($pair in @(@('applicationRoot','Application'),@('operationalConfigPath','Config\application.json'),@('dataProtectionRoot','Keys'),@('artifactInboxRoot','Inbox'))) {
+        if ($Target[$pair[0]] -cne (Join-Path $Layout.targetRoot $pair[1])) { Stop-ClcError Clc.UnsafePath }
+    }
 }
 
 function Get-ClcDirectoryCaseFlags {

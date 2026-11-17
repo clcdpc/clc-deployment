@@ -37,7 +37,7 @@ Describe 'Complete raw ZIP validation without extraction' {
         @{Name='application/../parent.txt'},@{Name='application//empty.txt'},@{Name='application/café.txt'},
         @{Name='application/.clc-temporary'},@{Name='application/' + [char]0 + 'nul.txt'},@{Name='application/' + [char]10 + 'control.txt'},
         @{Name='application/' + ('a'*229)},@{Name='application/deployment/adapter.dll'},@{Name='application/appsettings.Development.json'},
-        @{Name='application/toolkit/CLC.Deployment.dll'},@{Name='application/adapter.ps1'}
+        @{Name='application/toolkit/Clc.Deployment.dll'},@{Name='application/adapter.ps1'}
     ) {
         New-TestZip $archivePath ($seedEntries + @{name=$Name;bytes=[byte[]](1);attributes=0})
         Test-TestRejection { Test-ClcRelease $archivePath }
@@ -87,7 +87,7 @@ Describe 'Complete raw ZIP validation without extraction' {
         $paths = [string[]]@($manifest.files | ForEach-Object { $_.path })
         [Array]::Sort($paths,[StringComparer]::Ordinal)
         $manifest.files = @($paths | ForEach-Object { $path = $_; $manifest.files | Where-Object { $_.path -ceq $path } })
-        $manifest.inventorySha256 = & (Get-Module CLC.Deployment) { param($Files) Get-ClcInventoryHash $Files } $manifest.files
+        $manifest.inventorySha256 = & (Get-Module Clc.Deployment) { param($Files) Get-ClcInventoryHash $Files } $manifest.files
         $entries[0].bytes = [Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Depth 10 -Compress))
         New-TestZip $archivePath ($entries + $key)
         Test-TestRejection { Test-ClcRelease $archivePath } 'Clc.UnsafeArchive*'
@@ -104,7 +104,7 @@ Describe 'Complete raw ZIP validation without extraction' {
         $file = $manifest.files | Where-Object { $_.path -ceq 'application/web.config' }
         $file.length = $web.bytes.Length
         $file.sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($web.bytes)).ToLowerInvariant()
-        $manifest.inventorySha256 = & (Get-Module CLC.Deployment) { param($Files) Get-ClcInventoryHash $Files } $manifest.files
+        $manifest.inventorySha256 = & (Get-Module Clc.Deployment) { param($Files) Get-ClcInventoryHash $Files } $manifest.files
         $entries[0].bytes = [Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Depth 10 -Compress))
         New-TestZip $archivePath $entries
         Test-TestRejection { Test-ClcRelease $archivePath } 'Clc.UnsafeArchive*'
@@ -207,8 +207,8 @@ Describe 'Complete raw ZIP validation without extraction' {
         @{Bound='Compressed';Limit=100L},@{Bound='Expanded';Limit=100L},@{Bound='File';Limit=100L},@{Bound='Entries';Limit=4L},@{Bound='Json';Limit=100L}
     ) {
         [IO.File]::WriteAllBytes($archivePath,$seedBytes)
-        $old = & (Get-Module CLC.Deployment) { param($Name,$Limit) $previous=$script:ClcLimits[$Name]; $script:ClcLimits[$Name]=$Limit; $previous } $Bound $Limit
-        try { Test-TestRejection { Test-ClcRelease $archivePath } } finally { & (Get-Module CLC.Deployment) { param($Name,$Limit) $script:ClcLimits[$Name]=$Limit } $Bound $old }
+        $old = & (Get-Module Clc.Deployment) { param($Name,$Limit) $previous=$script:ClcLimits[$Name]; $script:ClcLimits[$Name]=$Limit; $previous } $Bound $Limit
+        try { Test-TestRejection { Test-ClcRelease $archivePath } } finally { & (Get-Module Clc.Deployment) { param($Name,$Limit) $script:ClcLimits[$Name]=$Limit } $Bound $old }
     }
     It 'fails closed when a stream throws midway through a read' {
         [IO.File]::WriteAllBytes($archivePath,$seedBytes)
@@ -217,7 +217,7 @@ Describe 'Complete raw ZIP validation without extraction' {
         }
         $stream = [Clc.Test.InterruptedStream]::new($seedBytes)
         try {
-            { & (Get-Module CLC.Deployment) { param($InputStream) Test-ClcArchiveStream $InputStream ([Diagnostics.Stopwatch]::StartNew()) } $stream } | Should -Throw
+            { & (Get-Module Clc.Deployment) { param($InputStream) Test-ClcArchiveStream $InputStream ([Diagnostics.Stopwatch]::StartNew()) } $stream } | Should -Throw
         } finally { $stream.Dispose() }
     }
 }

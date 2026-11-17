@@ -17,6 +17,24 @@ Describe 'New-ClcRelease safe packaging' {
         @(Get-ChildItem -LiteralPath (Split-Path $publishArgs.OutputPath) -Force).Count | Should -Be 1
         @(Get-ChildItem -LiteralPath $workspace -Recurse -Filter 'executed.marker').Count | Should -Be 0
     }
+    It 'retains the historical V1 builder identity without admitting it into V2 or new production' {
+        $package=New-ClcRelease @publishArgs
+        $entries=@(Get-TestZipEntries $package.archivePath)
+        $entry=$entries | Where-Object name -CEQ manifest.json
+        $manifest=[Text.Encoding]::UTF8.GetString($entry.bytes) | ConvertFrom-Json -AsHashtable
+        $manifest.builder.module='CLC.Deployment'
+        $entry.bytes=[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Depth 32 -Compress))
+        $archive=Join-Path $workspace 'historical-v1.zip';New-TestZip $archive $entries
+        (Test-ClcRelease $archive).integrityVerified | Should -BeTrue
+        Test-Json -Json ([Text.Encoding]::UTF8.GetString($entry.bytes)) -SchemaFile (Join-Path $script:RepositoryRoot 'schemas/release-manifest.schema.json') | Should -BeTrue
+        $manifest.schemaVersion=2L;$manifest.changeKind='application-deployment'
+        $entry.bytes=[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Depth 32 -Compress))
+        $archive=Join-Path $workspace 'incorrect-v2.zip';New-TestZip $archive $entries
+        {Test-ClcRelease $archive} | Should -Throw -ErrorId 'Clc.InvalidContract*'
+        $metadata=Get-TestMetadata;$metadata.builder.module='CLC.Deployment';Write-TestJson $publishArgs.MetadataPath $metadata
+        $publishArgs.OutputPath=Join-Path ([IO.Path]::GetDirectoryName($publishArgs.OutputPath)) 'new-v1.zip'
+        {New-ClcRelease @publishArgs} | Should -Throw -ErrorId 'Clc.InvalidContract*'
+    }
     It 'generates identical bytes with different metadata order and source timestamps' {
         $first = New-ClcRelease @publishArgs
         $metadata = Get-TestMetadata
@@ -63,8 +81,8 @@ Describe 'New-ClcRelease safe packaging' {
     It 'removes only its owned temporary after a bounded build failure' {
         $sentinel = Join-Path (Split-Path $publishArgs.OutputPath) '.clc-build-unowned.tmp'
         [IO.File]::WriteAllText($sentinel,'unowned-sentinel')
-        & (Get-Module CLC.Deployment) { $script:ClcLimits.Compressed = 100 }
-        try { Test-TestRejection { New-ClcRelease @publishArgs } } finally { & (Get-Module CLC.Deployment) { $script:ClcLimits.Compressed = 1073741824L } }
+        & (Get-Module Clc.Deployment) { $script:ClcLimits.Compressed = 100 }
+        try { Test-TestRejection { New-ClcRelease @publishArgs } } finally { & (Get-Module Clc.Deployment) { $script:ClcLimits.Compressed = 1073741824L } }
         [IO.File]::Exists($publishArgs.OutputPath) | Should -BeFalse
         @(Get-ChildItem -LiteralPath (Split-Path $publishArgs.OutputPath) -Force).Count | Should -Be 1
         [IO.File]::ReadAllText($sentinel) | Should -Be 'unowned-sentinel'
@@ -115,8 +133,8 @@ Describe 'New-ClcRelease safe packaging' {
     It 'rejects newly added source files at final observation and deletes its exact owned output' {
         $before = Get-TestTreeHashes $publishArgs.PublishRoot
         $script:TestInventoryCalls=0
-        $script:TestOriginalInventory = & (Get-Module CLC.Deployment) { (Get-Command Get-ClcPublishInventory).ScriptBlock }
-        Mock Get-ClcPublishInventory -ModuleName CLC.Deployment {
+        $script:TestOriginalInventory = & (Get-Module Clc.Deployment) { (Get-Command Get-ClcPublishInventory).ScriptBlock }
+        Mock Get-ClcPublishInventory -ModuleName Clc.Deployment {
             param($Root,$Handles,$Clock)
             $script:TestInventoryCalls++
             if ($script:TestInventoryCalls -eq 3) { [IO.File]::WriteAllText((Join-Path $Root.CanonicalPath 'added.txt'),'source-race-sentinel') }
@@ -132,8 +150,8 @@ Describe 'New-ClcRelease safe packaging' {
     It 'preserves a competing output created at the publication boundary' {
         $expectedOutput = $publishArgs.OutputPath
         $script:TestExpectedOutput = $expectedOutput
-        $script:TestOriginalInspection = & (Get-Module CLC.Deployment) { (Get-Command Test-ClcArchiveStream).ScriptBlock }
-        Mock Test-ClcArchiveStream -ModuleName CLC.Deployment {
+        $script:TestOriginalInspection = & (Get-Module Clc.Deployment) { (Get-Command Test-ClcArchiveStream).ScriptBlock }
+        Mock Test-ClcArchiveStream -ModuleName Clc.Deployment {
             param($Stream,$Clock)
             $result = & $script:TestOriginalInspection $Stream $Clock
             [IO.File]::WriteAllText($script:TestExpectedOutput,'competing-output-sentinel')

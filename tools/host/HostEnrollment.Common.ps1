@@ -4,7 +4,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/../Distribution.Common.ps1"
-$script:HModuleRoot=Join-Path $PSScriptRoot '../../CLC.Deployment'
+$script:HModuleRoot=Join-Path $PSScriptRoot '../../Clc.Deployment'
 if (-not [IO.Directory]::Exists($script:HModuleRoot)) { throw 'Use the independently authenticated packaged bootstrap layout, not a source checkout.' }
 $script:HModuleRoot=[IO.Path]::GetFullPath($script:HModuleRoot)
 foreach ($helper in @('Contracts','Paths','Inventory','Hooks.Package','Archive','NativeProcess','Trust','Policy','Iis','TargetIdentity','Host','Lock','State','Journal','Files','Application','Hooks','IisLifecycle','Replacement','Deployment','Recovery','Automation')) {
@@ -15,23 +15,21 @@ foreach ($helper in @('Contracts','Paths','Inventory','Hooks.Package','Archive',
 
 # These private helpers run in this infrastructure script's scope, never in the
 # public module's session state. Its four exports and fixed layout are unchanged.
-function Get-ClcInstalledLayout { return $script:HLayout }
-function Get-ClcToolkitVersion { return $script:HVersion }
-function Get-HAuthorityRoot {
-    Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) 'CLC\Deployment\host-authorizations'
+function Get-ClcInstalledLayout([string] $TargetId) {
+    if ($TargetId -cne $script:HLayout.targetId) { Stop-ClcError Clc.ToolkitNotActive }
+    return $script:HLayout
 }
-function Get-HCanonicalEnrollmentRoot {
-    Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)) 'CLC\Deployment\Enrollment'
+function Get-ClcToolkitVersion { return $script:HVersion }
+function Get-HAuthorityRoot([string] $TargetId) {
+    (Get-ClcTargetLayout $TargetId '0.0.0').enrollmentAuthorityRoot
+}
+function Get-HCanonicalEnrollmentRoot([string] $TargetId) {
+    (Get-ClcTargetLayout $TargetId '0.0.0').deploymentRoot
 }
 function Get-HNow { [DateTimeOffset]::UtcNow }
 function Test-HExists([string] $Path) { [IO.File]::Exists($Path) -or [IO.Directory]::Exists($Path) }
-function Get-HLayout([string] $EnrollmentRoot,[string] $Version) {
-    $root=Join-Path $EnrollmentRoot 'toolkit'; $versionRoot=Join-Path $root ('versions\'+$Version)
-    @{root=$root;versionRoot=$versionRoot;moduleRoot=(Join-Path $versionRoot 'CLC.Deployment');
-        manifestPath=(Join-Path $versionRoot 'CLC.Deployment\CLC.Deployment.psd1');policyRoot=(Join-Path $root 'policy');policyPath=(Join-Path $root 'policy\host-policy.json');
-        targetCatalogRoot=(Join-Path $root 'policy\targets');approvalCatalogRoot=(Join-Path $root 'policy\approvals');
-        sourcePath=(Join-Path $versionRoot 'source.commit');distributionPath=(Join-Path $versionRoot 'distribution.zip');
-        controlStateRoot=(Join-Path $EnrollmentRoot 'control');lockRoot=(Join-Path $EnrollmentRoot 'locks')}
+function Get-HLayout([string] $TargetId,[string] $Version) {
+    Get-ClcTargetLayout $TargetId $Version
 }
 function Read-HJson([byte[]] $Bytes) {
     if ($Bytes.Length -eq 0 -or $Bytes.Length -gt 4194304) { Stop-ClcError Clc.InvalidContract }
@@ -123,22 +121,34 @@ function Assert-HAuthorityProtection([string] $Path,$Handles,[switch] $Directory
 function Open-HSession([string] $ConfigurationPath,[string] $AuthorizationId) {
     $handles=[Collections.Generic.List[IDisposable]]::new()
     try {
-        $authorityRoot=Get-HAuthorityRoot
+        # This first parse selects only a canonical namespace. The held bytes
+        # acquire authority only after the independent exact approval matches.
+        $configurationFile=Read-ClcHeldFile $ConfigurationPath $handles
+        $configuration=Read-HJson $configurationFile.bytes; Assert-HConfiguration $configuration
+        $canonicalRoot=Get-HCanonicalEnrollmentRoot $configuration.targetId
+        if ($configuration.enrollmentRoot -cne $canonicalRoot) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
+        $configurationPathExpected=Join-Path ([IO.Path]::GetDirectoryName($canonicalRoot)) 'Config\deployment.json'
+        if ($ConfigurationPath -cne $configurationPathExpected) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
+        # Reject a bootstrap for another namespace before reading its authority.
+        # Bootstrap placement is independent of the as-yet unknown active pin.
+        Assert-HBootstrapProtection (Get-HLayout $configuration.targetId '0.0.0') $handles
+        $authorityRoot=Get-HAuthorityRoot $configuration.targetId
         Assert-HAuthorityProtection $authorityRoot $handles -Directory
-        $authorizationPath=Join-Path $authorityRoot ($AuthorizationId+'.json')
+        $authorizationPath=Join-Path $authorityRoot ('authorizations\'+$AuthorizationId+'.json')
         Assert-HAuthorityProtection $authorizationPath $handles
         $authorizationFile=Read-ClcHeldFile $authorizationPath $handles
         $authorization=Read-HJson $authorizationFile.bytes; Assert-HAuthorization $authorization $AuthorizationId
+        if ($configurationFile.sha256 -cne $authorization.deploymentConfigurationSha256) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
+        if ($configuration.targetId -cne $authorization.targetId -or $configuration.enrollmentRoot -cne $authorization.enrollmentRoot -or
+            $configuration.enrollmentRoot -cne $canonicalRoot) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
+        $layout=Get-HLayout $configuration.targetId $authorization.hostPolicy.activeToolkit.version
+        Assert-ClcTargetPaths (Get-HTarget $configuration) $layout
+        # Protected executable read streams are held before the independently
+        # approved inventory/source comparison, through all subsequent use.
         if ((Get-HBootstrapInventory) -cne $authorization.bootstrap.inventorySha256) { Stop-ClcError Clc.EnrollmentBootstrapMismatch }
         if ((Get-HBootstrapSourceCommit) -cne $authorization.bootstrap.sourceCommit) { Stop-ClcError Clc.EnrollmentBootstrapMismatch }
         Assert-ClcDeploymentToken $authorization.hostPolicy
         $null=Get-ClcMachineIdentity $authorization.hostPolicy.machineIdentity
-        $configurationFile=Read-ClcHeldFile $ConfigurationPath $handles
-        if ($configurationFile.sha256 -cne $authorization.deploymentConfigurationSha256) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
-        $configuration=Read-HJson $configurationFile.bytes; Assert-HConfiguration $configuration
-        if ($configuration.targetId -cne $authorization.targetId -or $configuration.enrollmentRoot -cne $authorization.enrollmentRoot -or
-            $configuration.enrollmentRoot -cne (Get-HCanonicalEnrollmentRoot)) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
-        $layout=Get-HLayout $configuration.enrollmentRoot $authorization.hostPolicy.activeToolkit.version
         foreach ($key in @('targetCatalogRoot','approvalCatalogRoot','controlStateRoot','lockRoot')) {
             if ($authorization.hostPolicy[$key] -cne $layout[$key]) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
         }
@@ -148,8 +158,10 @@ function Open-HSession([string] $ConfigurationPath,[string] $AuthorizationId) {
         $key=Get-ClcTargetKey $authorization.hostPolicy.machineIdentity $target.applicationPoolName.ToUpperInvariant()
         $session=@{handles=$handles;authorization=$authorization;authorizationFile=$authorizationFile;configuration=$configuration;configurationFile=$configurationFile;
             layout=$layout;target=$target;targetKey=$key;controlRoot=(Join-Path $layout.controlStateRoot $key);authorityRoot=$authorityRoot;
-            context=$null;poolLock=$null;globalLock=$null;performed=$false;initialPoolState='Unknown';workerCount=$null;plan=$null;policyMatchesAuthorization=$false}
+            context=$null;poolLock=$null;enrollmentLock=$null;performed=$false;initialPoolState='Unknown';workerCount=$null;plan=$null;policyMatchesAuthorization=$false}
         Assert-HPathSeparation $session
+        $null=Get-ClcPathObservation $layout.targetRoot $handles -Directory
+        Assert-HResourceAccess $session $layout.targetRoot Protected
         return $session
     } catch { foreach ($handle in $handles) { $handle.Dispose() }; throw }
 }
@@ -187,18 +199,18 @@ function Open-HInstalledContext($Session) {
     $policyFile=Read-ClcHeldRecord $Session.layout.policyPath host-policy $Session.handles
     $policy=$policyFile.record
     $Session.policyMatchesAuthorization=Test-ClcValueEqual $policy $Session.authorization.hostPolicy
-    # Authorization establishes the fixed shared installation, but is never an
+    # Authorization establishes the fixed target-local installation, but is never an
     # implicit upgrade request. Reuse the actual protected active installation.
     foreach ($name in @('machineIdentity','targetCatalogRoot','approvalCatalogRoot','controlStateRoot','lockRoot','dotnetPath','appcmdPath','infrastructureOwnerSids','deploymentSids')) {
         if (-not (Test-ClcValueEqual $policy[$name] $Session.authorization.hostPolicy[$name])) { Stop-ClcError Clc.EnrollmentConfigurationDrift }
     }
-    $script:HLayout=Get-HLayout $Session.configuration.enrollmentRoot $policy.activeToolkit.version
+    $script:HLayout=Get-HLayout $Session.target.targetId $policy.activeToolkit.version
     $script:HVersion=$policy.activeToolkit.version
     if ($policy.activeToolkit.moduleManifestPath -cne $script:HLayout.manifestPath) { Stop-ClcError Clc.ToolkitNotActive }
     # Verify the entire distribution and installed bytes before any candidate import.
     $null=& "$PSScriptRoot/../Test-ToolkitDistribution.ps1" -ArchivePath $script:HLayout.distributionPath -ExpectedSha256 $policy.activeToolkit.distributionSha256 -ExpectedSourceCommit $policy.activeToolkit.sourceCommit -ExpectedVersion $policy.activeToolkit.version -InstalledModuleRoot $script:HLayout.moduleRoot
     $Session.layout=$script:HLayout
-    $Session.context=Open-ClcTrustedContext
+    $Session.context=Open-ClcTrustedContext -TargetId $Session.target.targetId
     Assert-ClcHelperDependencies $Session.context $Session.target.runtimeIdentitySid
     Assert-HActiveCompatibility $Session
 }
@@ -228,7 +240,7 @@ function Get-HEnrollmentState($Session) {
         if (Test-HExists $Session.configuration.enrollmentRoot) {
             $null=Get-ClcPathObservation $Session.configuration.enrollmentRoot $Session.handles -Directory
             Assert-HResourceAccess $Session $Session.configuration.enrollmentRoot Protected
-            if (@([IO.Directory]::EnumerateFileSystemEntries($Session.configuration.enrollmentRoot)).Count) { return New-HResult $Session Incomplete UnexpectedEnrollmentContents ReconcileRetainedInfrastructure }
+            Assert-HInitialDeploymentContents $Session
         } else {
             $parent=[IO.Path]::GetDirectoryName($Session.configuration.enrollmentRoot)
             $null=Get-ClcPathObservation $parent $Session.handles -Directory
@@ -242,7 +254,11 @@ function Get-HEnrollmentState($Session) {
     Assert-HTargetCatalog $Session
     $targetPath=Join-Path $Session.layout.targetCatalogRoot ($Session.target.targetId+'.json')
     if (-not (Test-HExists $targetPath)) {
-        if ((Test-HExists $Session.controlRoot) -or (Test-HExists (Join-Path $Session.layout.lockRoot ($Session.targetKey+'.lock')))) { return New-HResult $Session RecoveryRequired MissingTargetWithState ReconcileCanonicalPoolState $true }
+        foreach ($root in @($Session.layout.controlStateRoot,$Session.layout.lockRoot)) {
+            foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($root)) {
+                return New-HResult $Session RecoveryRequired MissingTargetWithState ReconcileCanonicalPoolState $true
+            }
+        }
         Assert-HNoPriorIntent $Session
         Assert-HInitialResources $Session
         $Session.plan=Get-HIisPlan $Session
@@ -317,7 +333,7 @@ function Invoke-HEnrollment {
     } finally {
         if ($null -ne $session) {
             if ($null -ne $session.poolLock) { $session.poolLock.Dispose() }
-            if ($null -ne $session.globalLock) { $session.globalLock.Dispose() }
+            if ($null -ne $session.enrollmentLock) { $session.enrollmentLock.Dispose() }
             Close-ClcTrustedContext $session.context
             foreach ($handle in $session.handles) { $handle.Dispose() }
         }

@@ -1,11 +1,16 @@
 function Read-ClcProtectedTarget {
     [CmdletBinding()]
     param($Context, [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $TargetId)
+    if ($TargetId -cne $Context.targetId) { Stop-ClcError Clc.HostPreflightFailed }
     Assert-ClcTrustedContextUnchanged $Context
     $path = Join-Path $Context.layout.targetCatalogRoot ($TargetId + '.json')
     $null = Add-ClcProtectedPathPin $Context $path
     $file = Read-ClcHeldRecord $path 'target' $Context.handles
     if ($file.record.targetId -cne $TargetId) { Stop-ClcError Clc.HostPreflightFailed }
+    Assert-ClcTargetPaths $file.record $Context.layout
+    foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($Context.layout.targetCatalogRoot)) {
+        if ([IO.Path]::GetFileName($entry) -cne ($TargetId+'.json')) { Stop-ClcError Clc.HostPreflightFailed }
+    }
     Assert-ClcRuntimeIdentity $Context $file.record.runtimeIdentitySid
     Assert-ClcHelperDependencies $Context $file.record.runtimeIdentitySid
     return $file
@@ -23,7 +28,7 @@ function Read-ClcProtectedApproval {
         if (-not [IO.File]::Exists($path)) { Stop-ClcError Clc.ApprovalMissing }
         throw
     }
-    if ($file.record.approvalId -cne $ApprovalId -or $Context.policyFile.record.infrastructureOwnerSids -cnotcontains $file.record.authorization.authoritySid) { Stop-ClcError Clc.ApprovalMismatch }
+    if ($file.record.approvalId -cne $ApprovalId -or $file.record.targetId -cne $Context.targetId -or $Context.policyFile.record.infrastructureOwnerSids -cnotcontains $file.record.authorization.authoritySid) { Stop-ClcError Clc.ApprovalMismatch }
     return $file
 }
 

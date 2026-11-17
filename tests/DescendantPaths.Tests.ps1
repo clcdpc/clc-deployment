@@ -54,7 +54,7 @@ Describe 'Held-parent descendant walker preserves physical Windows rejection gua
         }
         $short | Should -Not -BeExactly $leaf
         $alias=Join-Path $nested ([IO.Path]::GetFileName($short))
-        & (Get-Module CLC.Deployment) {
+        & (Get-Module Clc.Deployment) {
             param($ParentPath,$Alias)
             $handles=[Collections.Generic.List[IDisposable]]::new()
             try {
@@ -66,7 +66,7 @@ Describe 'Held-parent descendant walker preserves physical Windows rejection gua
     }
     It 'rejects a descendant whose native case-sensitive-directory observation is nonzero' {
         $global:T3CasePath=$nested
-        Mock -ModuleName CLC.Deployment Get-ClcDirectoryCaseFlags {
+        Mock -ModuleName Clc.Deployment Get-ClcDirectoryCaseFlags {
             if ([Clc.Foundation.NativePaths]::Observe($Handle).CanonicalPath -ceq $global:T3CasePath) { return 1 }; return 0
         }
         Test-TestRejection { Invoke-T2Private Assert-ClcSafeDescendants @($tree) } 'Clc.UnsafePath*'
