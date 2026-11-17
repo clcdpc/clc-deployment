@@ -16,11 +16,14 @@ namespace Clc.Foundation {
         private static extern int SHGetKnownFolderPath(ref Guid id, uint flags, IntPtr token, out IntPtr path);
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode), DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         private static extern uint GetSystemWindowsDirectoryW(StringBuilder path, uint size);
-        public static string ProgramData() {
+        public static string WindowsDirectory() {
             var windows = new StringBuilder(32768);
             uint length = GetSystemWindowsDirectoryW(windows, (uint)windows.Capacity);
             if (length == 0 || length >= windows.Capacity) throw new IOException("System directory unavailable.");
-            string drive = Path.GetPathRoot(windows.ToString()).TrimEnd('\\');
+            return windows.ToString();
+        }
+        public static string ProgramData() {
+            string drive = Path.GetPathRoot(WindowsDirectory()).TrimEnd('\\');
             string inheritedDrive = Environment.GetEnvironmentVariable("SystemDrive") ?? "";
             if (inheritedDrive.Length != 0 && !String.Equals(inheritedDrive.TrimEnd('\\'), drive, StringComparison.OrdinalIgnoreCase)) throw new IOException("System drive differs.");
             var id = new Guid("62AB5D82-FDC1-4DC3-A9DD-070D1D495D97"); IntPtr pointer;

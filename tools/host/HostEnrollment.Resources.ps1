@@ -137,8 +137,9 @@ function Assert-HNoPriorIntent($Session) {
         Assert-ClcToolkit $intent.toolkit -Active;Assert-ClcEnum $intent.originalPoolState @('Unknown','Started','Stopped')
         if ($intent.authorizationId -cne [IO.Path]::GetFileNameWithoutExtension($path) -or $intent.operations -isnot [array] -or $intent.operations.Count -gt 6) {Stop-ClcError Clc.EnrollmentPriorEvidence}
         foreach ($operation in $intent.operations) {Assert-ClcEnum $operation @('install-toolkit','enroll-target','configure-iis','create-site','create-pool','first-cutover')}
-        if ($intent.machineIdentity -ceq $Session.authorization.hostPolicy.machineIdentity -and
-            ($intent.targetKey -ceq $Session.targetKey -or (-not (Test-HExists $Session.layout.policyPath) -and $intent.operations -ccontains 'install-toolkit'))) { Stop-ClcError Clc.EnrollmentPriorEvidence }
+        # This namespace belongs to one target. A new pool/machine binding never
+        # makes retained local intent eligible for fresh initialization.
+        Stop-ClcError Clc.EnrollmentPriorEvidence
     }
 }
 function New-HPreflightContext($Session) {
@@ -402,6 +403,7 @@ function Invoke-HApply($Session,[string] $DistributionPath) {
     if (Test-HExists $Session.controlRoot) { Stop-ClcError Clc.EnrollmentPriorEvidence }
     Assert-HTargetCatalog $Session
     Assert-HInitialResources $Session
+    $null=Get-HIisSnapshot $Session
     foreach ($pair in @(@('applicationRoot','Application'),@('artifactInboxRoot','Mutable'),@('dataProtectionRoot','Keys'))) {
         if (-not (Test-HExists $Session.target[$pair[0]])) { New-HDirectory $Session $Session.target[$pair[0]] $pair[1] }
     }
@@ -464,6 +466,7 @@ function Invoke-HCutover($Session) {
     Assert-HCutoverStopped $Session
     $cutover=$Session.authorization.cutover; $original=Get-HLegacyInventory $Session.target.applicationRoot
     Assert-HCutoverInventory $Session $original
+    $null=Get-HIisSnapshot $Session
     New-HDirectory $Session $cutover.backupRoot
     $filesRoot=Join-Path $cutover.backupRoot 'original'; New-HDirectory $Session $filesRoot
     $clock=[Diagnostics.Stopwatch]::StartNew()
@@ -494,6 +497,7 @@ function Invoke-HCutover($Session) {
     # Recheck the full original and backup before the first destructive effect.
     $rechecked=Get-HLegacyInventory $Session.target.applicationRoot
     if (-not (Test-ClcValueEqual $rechecked.files $original.files) -or -not (Test-ClcValueEqual $rechecked.rootIdentity $original.rootIdentity)) { Stop-ClcError Clc.EnrollmentResourceMismatch }
+    $null=Get-HIisSnapshot $Session
     foreach ($file in $original.files) {
         Assert-HOperation $Session first-cutover; Assert-HCutoverStopped $Session; Assert-ClcDeadline $clock
         Assert-HCutoverRoot $Session
@@ -511,6 +515,7 @@ function Invoke-HCutover($Session) {
             [IO.File]::Delete($path)
         } finally { if ($null -ne $stream) { $stream.Dispose() } }
     }
+    $null=Get-HIisSnapshot $Session
     foreach ($directory in @($original.directories | Sort-Object Length -Descending)) {
         Assert-HCutoverStopped $Session; Assert-ClcDeadline $clock
         Assert-HCutoverRoot $Session

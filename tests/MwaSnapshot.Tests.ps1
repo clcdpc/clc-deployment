@@ -12,6 +12,11 @@ BeforeAll {
         $manager=[pscustomobject]@{Sites=@($site);ApplicationPools=@($pool);WorkerProcesses=@($global:ClcMwaWorkers | ForEach-Object {
             [pscustomobject]@{AppPoolName=$target.applicationPoolName;ProcessId=$_}
         })}
+        $manager.Sites += @($global:ClcMwaForeignSites)
+        if ($global:ClcMwaForeignSites.Count) {
+            $manager.ApplicationPools += [pscustomobject]@{Name='OtherPool';State='Started'}
+            $manager.WorkerProcesses += [pscustomobject]@{AppPoolName='OtherPool';ProcessId=9876L}
+        }
         $manager | Add-Member ScriptMethod GetWebConfiguration { param($Name) return $global:ClcMwaWebConfig }
         $manager | Add-Member ScriptMethod GetApplicationHostConfiguration { return $global:ClcMwaHostConfig }
         $manager | Add-Member ScriptMethod Dispose { $global:ClcMwaDisposed++ }
@@ -24,6 +29,7 @@ Describe 'Fresh MWA configuration, state and worker observations without read su
         $target=@{siteName='Synthetic';applicationPoolName='Dedicated';runtimeIdentitySid='S-1-5-20';applicationRoot=$workspace}
         $global:ClcMwaTarget=$target; $global:ClcMwaRoot=$workspace; $global:ClcMwaState='Stopped'; $global:ClcMwaWorkers=@()
         $global:ClcMwaCreated=0; $global:ClcMwaDisposed=0
+        $global:ClcMwaForeignSites=@();$otherWorkspace=New-TestWorkspace
         $global:ClcMwaWebSection=[pscustomobject]@{}
         $global:ClcMwaWebSection | Add-Member ScriptMethod GetCollection { param($Name) return @() }
         $global:ClcMwaWebConfig=[pscustomobject]@{}
@@ -38,7 +44,7 @@ Describe 'Fresh MWA configuration, state and worker observations without read su
         Mock -ModuleName Clc.Deployment Resolve-ClcAccountSid { return 'S-1-5-20' }
         Mock -ModuleName Clc.Deployment Invoke-ClcIisReadQuery { throw 'Read subprocess is forbidden.' }
     }
-    AfterEach { Remove-TestWorkspace $workspace }
+    AfterEach { Remove-TestWorkspace $workspace;Remove-TestWorkspace $otherWorkspace }
     It 'creates and disposes a fresh manager and observes a restart with its new workers' {
         $first=Invoke-T2Private Get-ClcIisObservation @(@{},$target)
         $first.poolState | Should -Be Stopped; $first.workers.Count | Should -Be 0
@@ -60,5 +66,44 @@ Describe 'Fresh MWA configuration, state and worker observations without read su
         @(Invoke-T2Private Get-ClcIisPoolNames @(@{})) | Should -Be @('Dedicated')
         $global:ClcMwaCreated | Should -Be 1; $global:ClcMwaDisposed | Should -Be 1
         Should -Invoke -ModuleName Clc.Deployment Invoke-ClcIisReadQuery -Times 0 -Exactly
+    }
+    It 'rejects a running unrelated pool sharing the managed tree through <Kind>' -ForEach @(
+        @{Kind='exact-root'},@{Kind='descendant'},@{Kind='ancestor'},@{Kind='virtual-directory'},@{Kind='junction'}
+    ) {
+        $foreignRoot=$workspace
+        if ($Kind -ceq 'descendant') {$foreignRoot=Join-Path $workspace 'nested';[void][IO.Directory]::CreateDirectory($foreignRoot)}
+        elseif ($Kind -ceq 'ancestor') {$foreignRoot=[IO.Path]::GetDirectoryName($workspace)}
+        elseif ($Kind -ceq 'junction') {$foreignRoot=Join-Path $otherWorkspace 'alias';$null=New-Item -ItemType Junction -Path $foreignRoot -Target $workspace}
+        $vdirs=@([pscustomobject]@{Path='/';PhysicalPath=$foreignRoot})
+        if ($Kind -ceq 'virtual-directory') {$vdirs=@([pscustomobject]@{Path='/';PhysicalPath=$otherWorkspace},[pscustomobject]@{Path='/assets';PhysicalPath=$workspace})}
+        $global:ClcMwaForeignSites=@([pscustomobject]@{Name='OtherSite';Applications=@([pscustomobject]@{Path='/';ApplicationPoolName='OtherPool';VirtualDirectories=$vdirs})})
+        try {
+            Test-TestRejection {Invoke-T2Private Get-ClcIisObservation @(@{},$target)} 'Clc.HostPreflightFailed*'
+            $global:ClcMwaDisposed | Should -Be 1
+        } finally {if ($Kind -ceq 'junction') {Remove-Item -LiteralPath $foreignRoot -Force}}
+    }
+    It 'retains a disjoint application and detects a later root conflict on the next observation' {
+        $global:ClcMwaForeignSites=@([pscustomobject]@{Name='OtherSite';Applications=@([pscustomobject]@{Path='/';ApplicationPoolName='OtherPool';VirtualDirectories=@([pscustomobject]@{Path='/';PhysicalPath=$otherWorkspace})})})
+        $first=Invoke-T2Private Get-ClcIisObservation @(@{},$target)
+        $first.poolState | Should -Be Stopped;$first.workers.Count | Should -Be 0
+        Invoke-T2Private Assert-ClcStableIisObservation @($target,$first,'Dedicated')
+        # Foreign-root observation must not retain another application's handle.
+        $moved=$otherWorkspace+'-moved'
+        [IO.Directory]::Move($otherWorkspace,$moved)
+        [IO.Directory]::Move($moved,$otherWorkspace)
+        $global:ClcMwaForeignSites[0].Applications[0].VirtualDirectories[0].PhysicalPath=$workspace
+        Test-TestRejection {Invoke-T2Private Get-ClcIisObservation @(@{},$target)} 'Clc.HostPreflightFailed*'
+    }
+    It 'expands the IIS SystemDrive token from native Windows while ignoring caller environment' {
+        $before=Invoke-T2Private Get-ClcIisPhysicalRoot @($workspace,[Diagnostics.Stopwatch]::StartNew())
+        $old=$env:SystemDrive
+        try {
+            $env:SystemDrive='Z:'
+            $actual=Invoke-T2Private Get-ClcIisPhysicalRoot @(('%SystemDrive%'+$workspace.Substring(2)),[Diagnostics.Stopwatch]::StartNew())
+            $actual.physicalPath | Should -BeExactly $before.physicalPath
+        } finally {$env:SystemDrive=$old}
+    }
+    It 'fails closed for unknown environment or network IIS roots without opening network paths' -ForEach @(@{Path='%CALLER_SELECTED_ROOT%\app'},@{Path='\\server\share\app'}) {
+        Test-TestRejection {Invoke-T2Private Get-ClcIisPhysicalRoot @($Path,[Diagnostics.Stopwatch]::StartNew())}
     }
 }

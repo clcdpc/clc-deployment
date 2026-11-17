@@ -37,6 +37,30 @@ Describe 'Practical deployment failure and recovery boundaries' {
         (Get-TestTreeHashes $fixture.target.applicationRoot) | Should -BeExactly (Get-TestTreeHashes $approval.publish)
         (Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'journal.json') -Raw | ConvertFrom-Json).outcome | Should -BeExactly FailedPreserved
     }
+    It 'rechecks IIS authority after replacement inventory and before the first file effect' {
+        $null=Invoke-ClcIisDeployment example $approval.record.approvalId
+        $newer=New-T3Approval $fixture probe-approval-002 2L
+        $before=Get-TestTreeHashes $fixture.target.applicationRoot
+        $global:ClcOriginalInventory=& (Get-Module Clc.Deployment) {(Get-Command Get-ClcTreeInventory).ScriptBlock}
+        $global:ClcLateIisConflict=$false
+        Mock -ModuleName Clc.Deployment Get-ClcTreeInventory {
+            param($Root,$ExpectedFiles,[switch] $Partial,$OtherFiles=@(),[switch] $AllowChanged,$DeadlineClock=$null,$DeadlineSeconds=300)
+            $result=& $global:ClcOriginalInventory $Root $ExpectedFiles -Partial:$Partial -OtherFiles $OtherFiles -AllowChanged:$AllowChanged -DeadlineClock $DeadlineClock -DeadlineSeconds $DeadlineSeconds
+            if ($Root -ceq $global:ClcTestFixture.target.applicationRoot -and
+                (Get-PSCallStack).Command -contains 'Invoke-ClcManagedReplacement') {
+                $global:ClcLateIisConflict=$true
+                $global:ClcTestFixture.iis.applications[0].physicalPath=$global:ClcTestFixture.target.dataProtectionRoot
+            }
+            return $result
+        }
+        Test-TestRejection {Invoke-ClcIisDeployment example $newer.record.approvalId}
+        $global:ClcLateIisConflict | Should -BeTrue
+        Get-TestTreeHashes $fixture.target.applicationRoot | Should -BeExactly $before
+        $fixture.iis.poolState | Should -BeExactly Stopped
+        $journal=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'journal.json') -Raw | ConvertFrom-Json
+        $journal.backup.verified | Should -BeTrue
+        $journal.intent.operation | Should -Not -BeExactly Replace
+    }
     It 'retains a complete backup after a partial upgrade and explicitly restores it without the inbox ZIP' {
         $null=Invoke-ClcIisDeployment example $approval.record.approvalId
         $newer=New-T3Approval $fixture probe-approval-002 2L

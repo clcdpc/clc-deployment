@@ -1,6 +1,7 @@
 BeforeAll {
     . "$PSScriptRoot/Support.ps1"
     . "$PSScriptRoot/HostEnrollment.Support.ps1"
+    $script:realHPhysicalSnapshot=(Get-Command Get-HIisSnapshot).ScriptBlock
 }
 AfterAll { Remove-TestWorkspace $script:HBootstrapWorkspace }
 Describe 'Host-local configuration and independent enrollment authorization' {
@@ -14,6 +15,18 @@ Describe 'Host-local configuration and independent enrollment authorization' {
         $result.InitializationPerformed | Should -BeFalse
         Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
         Test-Path -LiteralPath $fixture.layout.root | Should -BeFalse
+    }
+    It 'rejects physical root sharing in the actual enrollment IIS adapter through <Kind>' -ForEach @(@{Kind='application'},@{Kind='virtual-directory'}) {
+        $vdirs=@([pscustomobject]@{Path='/';PhysicalPath=$fixture.target.applicationRoot})
+        if ($Kind -ceq 'virtual-directory') {$vdirs=@([pscustomobject]@{Path='/';PhysicalPath=$fixture.configuration.enrollmentRoot},[pscustomobject]@{Path='/files';PhysicalPath=$fixture.target.applicationRoot})}
+        $global:HPhysicalManagerDisposed=0
+        $global:HPhysicalManager=[pscustomobject]@{Sites=@([pscustomobject]@{Name='UnrelatedSite';Applications=@([pscustomobject]@{Path='/';ApplicationPoolName='UnrelatedPool';VirtualDirectories=$vdirs})});ApplicationPools=@([pscustomobject]@{Name='UnrelatedPool';State='Started'});WorkerProcesses=@([pscustomobject]@{AppPoolName='UnrelatedPool';ProcessId=9876L})}
+        $global:HPhysicalManager | Add-Member ScriptMethod Dispose {$global:HPhysicalManagerDisposed++}
+        Mock Open-HIisManager {return $global:HPhysicalManager}
+        $session=Open-HSession $fixture.configurationPath synthetic-enroll
+        {& $script:realHPhysicalSnapshot $session} | Should -Throw -ErrorId 'Clc.HostPreflightFailed*'
+        $global:HPhysicalManagerDisposed | Should -Be 1
+        Should -Invoke Set-HNewResourceAcl -Times 0 -Exactly
     }
     It 'rejects <Case> before any provisioning' -ForEach @(
         @{Case='different host';Field='host'},@{Case='different target';Field='target'},@{Case='different config bytes';Field='configuration'},

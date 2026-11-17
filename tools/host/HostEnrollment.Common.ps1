@@ -254,7 +254,11 @@ function Get-HEnrollmentState($Session) {
     Assert-HTargetCatalog $Session
     $targetPath=Join-Path $Session.layout.targetCatalogRoot ($Session.target.targetId+'.json')
     if (-not (Test-HExists $targetPath)) {
-        if ((Test-HExists $Session.controlRoot) -or (Test-HExists (Join-Path $Session.layout.lockRoot ($Session.targetKey+'.lock')))) { return New-HResult $Session RecoveryRequired MissingTargetWithState ReconcileCanonicalPoolState $true }
+        foreach ($root in @($Session.layout.controlStateRoot,$Session.layout.lockRoot)) {
+            foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($root)) {
+                return New-HResult $Session RecoveryRequired MissingTargetWithState ReconcileCanonicalPoolState $true
+            }
+        }
         Assert-HNoPriorIntent $Session
         Assert-HInitialResources $Session
         $Session.plan=Get-HIisPlan $Session

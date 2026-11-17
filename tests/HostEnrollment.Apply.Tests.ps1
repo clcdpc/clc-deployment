@@ -64,6 +64,27 @@ Describe 'Authorized initialization with real NTFS, distribution and protected-r
         {Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive} | Should -Throw
         Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
     }
+    It 'retains all local evidence when a missing target is retried against another pool' -ForEach @(@{Evidence='lock'},@{Evidence='control'},@{Evidence='intent'},@{Evidence='other-machine-intent'}) {
+        Mock Invoke-HIisApply {throw 'synthetic interrupted enrollment'}
+        {Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive} | Should -Throw
+        $oldKey=Get-ClcTargetKey $fixture.policy.machineIdentity $fixture.target.applicationPoolName.ToUpperInvariant()
+        if ($Evidence -cne 'lock') {[IO.File]::Delete((Join-Path $fixture.layout.lockRoot ($oldKey+'.lock')))}
+        if ($Evidence -ceq 'control') {[void][IO.Directory]::CreateDirectory((Join-Path $fixture.layout.controlStateRoot $oldKey))}
+        if ($Evidence -cnotin @('intent','other-machine-intent')) {[IO.File]::Delete((Join-Path $fixture.authorityRoot 'evidence\synthetic-enroll.json'))}
+        if ($Evidence -ceq 'other-machine-intent') {
+            $path=Join-Path $fixture.authorityRoot 'evidence\synthetic-enroll.json';$intent=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
+            $intent.machineIdentity='22222222-2222-4222-8222-222222222222';Write-TestJson $path $intent
+        }
+        $fixture.configuration.applicationPoolName='DifferentPool';Write-TestJson $fixture.configurationPath $fixture.configuration
+        $fixture.target=Get-HTarget $fixture.configuration
+        $fixture.snapshot.pool.name='DifferentPool';$fixture.snapshot.applications[0].poolName='DifferentPool';$fixture.iis.poolName='DifferentPool';$fixture.iis.applications=$fixture.snapshot.applications
+        $fixture.authorization.authorizationId='second-authority';$fixture.authorizationPath=Join-Path $fixture.authorityRoot 'authorizations\second-authority.json'
+        $fixture.authorization.deploymentConfigurationSha256=(Get-FileHash -LiteralPath $fixture.configurationPath).Hash.ToLowerInvariant();Save-HTestAuthorization $fixture
+        $before=Get-TestTreeHashes $fixture.workspace
+        (Invoke-HEnrollment $fixture.configurationPath second-authority Inspect).HostState | Should -BeExactly RecoveryRequired
+        {Invoke-HEnrollment $fixture.configurationPath second-authority Apply $distribution.archive} | Should -Throw
+        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
+    }
     It 'refuses missing target with historical canonical state, even when empty' {
         $null=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
         [IO.File]::Delete((Join-Path $fixture.layout.targetCatalogRoot ($fixture.target.targetId+'.json')))
@@ -263,6 +284,16 @@ Describe 'Stopped first cutover preserves exact unapproved legacy installation' 
         (Get-Content -LiteralPath (Join-Path $fixture.authorization.cutover.backupRoot 'backup-index.json') -Raw | ConvertFrom-Json).toolkitApprovedRelease | Should -BeFalse
         [IO.File]::ReadAllText($fixture.target.operationalConfigPath) | Should -BeExactly CLC_SYNTHETIC_CONFIG_MUST_REMAIN_UNCHANGED
         [IO.File]::ReadAllText((Join-Path $fixture.target.dataProtectionRoot 'key.xml')) | Should -BeExactly CLC_SYNTHETIC_KEY_MUST_REMAIN_UNCHANGED
+    }
+    It 'rechecks physical IIS isolation after backup verification before the first original deletion' {
+        $before=Get-TestTreeHashes $fixture.target.applicationRoot
+        Mock Get-HIisSnapshot {
+            if (-not $SelectedStateOnly -and [IO.File]::Exists((Join-Path $Session.authorization.cutover.backupRoot 'backup-index.json'))) {Stop-ClcError Clc.EnrollmentIisConflict}
+            return $global:HFixture.snapshot
+        }
+        {Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive} | Should -Throw
+        Get-TestTreeHashes $fixture.target.applicationRoot | Should -BeExactly $before
+        Test-Path -LiteralPath (Join-Path $fixture.authorization.cutover.backupRoot 'backup-index.json') | Should -BeTrue
     }
     It 'refuses an extra file, empty directory, changed inventory or running pool before original removal' -ForEach @(@{Change='extra'},@{Change='empty'},@{Change='bytes'},@{Change='running'}) {
         switch ($Change) {

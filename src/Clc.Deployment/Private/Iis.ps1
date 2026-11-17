@@ -52,15 +52,81 @@ function Get-ClcAdmittedMwaType {
     return $assembly.type
 }
 
+function Get-ClcIisPhysicalRoot {
+    param([string] $Path,[Diagnostics.Stopwatch] $Clock)
+    # Read-only IIS configuration observation, not a selectable deployment root.
+    # Unknown expansion, network paths and physical aliases are uncertain and
+    # refuse. Never expand IIS paths through the caller's environment.
+    $windows=[Clc.Foundation.NativePaths]::WindowsDirectory()
+    $drive=[IO.Path]::GetPathRoot($windows).TrimEnd('\')
+    foreach ($token in [regex]::Matches($Path,'%([^%]+)%')) {
+        if ($token.Groups[1].Value -inotin @('SystemDrive','SystemRoot','windir','ProgramData')) {Stop-ClcError Clc.HostPreflightFailed}
+    }
+    $expanded=[regex]::Replace($Path,'%([^%]+)%',[Text.RegularExpressions.MatchEvaluator]{param($match)
+        switch ($match.Groups[1].Value.ToLowerInvariant()) {
+            systemdrive {return $drive}
+            systemroot {return $windows}
+            windir {return $windows}
+            programdata {return Get-ClcProgramDataRoot}
+            default {Stop-ClcError Clc.HostPreflightFailed}
+        }
+    })
+    if ($expanded.Contains('%')) {Stop-ClcError Clc.HostPreflightFailed}
+    Assert-ClcPathSpelling $expanded
+    $handles=[Collections.Generic.List[IDisposable]]::new()
+    try {
+        $cursor=$expanded;$parts=[Collections.Generic.List[string]]::new()
+        while (-not [IO.Directory]::Exists($cursor)) {
+            Assert-ClcDeadline $Clock 30
+            if ([IO.File]::Exists($cursor) -or $parts.Count -ge 32) {Stop-ClcError Clc.HostPreflightFailed}
+            $existing=[Clc.Foundation.NativePaths]::OpenExistingOrNull($cursor)
+            if ($null -ne $existing) { $existing.Dispose();Stop-ClcError Clc.HostPreflightFailed }
+            $parts.Insert(0,[IO.Path]::GetFileName($cursor));$cursor=[IO.Path]::GetDirectoryName($cursor)
+            if (-not $cursor) {Stop-ClcError Clc.HostPreflightFailed}
+        }
+        # Other IIS directories are read-only observations and can legitimately
+        # be outside CLC namespaces. Native identity/alias/stream checks remain.
+        $facts=Get-ClcPathObservation $cursor $handles -Directory -AllowVolumeRoot
+        $physical=$facts.PhysicalPath
+        foreach ($part in $parts) {$physical=Join-Path $physical $part}
+        return @{physicalPath=$physical;volumeId=$facts.VolumeId;fileId=$(if ($parts.Count -eq 0) {$facts.FileId} else {$null})}
+    } finally {foreach ($handle in $handles) {$handle.Dispose()}}
+}
+
+function Assert-ClcIisPhysicalIsolation {
+    param($Manager,$Target)
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    if ($Manager.Sites.Count -gt 4096 -or $Manager.ApplicationPools.Count -gt 4096) {Stop-ClcError Clc.HostPreflightFailed}
+    $selected=Get-ClcIisPhysicalRoot $Target.applicationRoot $clock
+    $apps=0;$directories=0
+    foreach ($site in $Manager.Sites) {
+        foreach ($app in $site.Applications) {
+            $apps++;if ($apps -gt 4096) {Stop-ClcError Clc.HostPreflightFailed}
+            foreach ($directory in $app.VirtualDirectories) {
+                Assert-ClcDeadline $clock 30
+                $directories++;if ($directories -gt 4096) {Stop-ClcError Clc.HostPreflightFailed}
+                # Only the selected root application/root vdir may use this tree.
+                if ($site.Name -ieq $Target.siteName -and $app.Path -ceq '/' -and $directory.Path -ceq '/' -and $app.ApplicationPoolName -ieq $Target.applicationPoolName) {continue}
+                $other=Get-ClcIisPhysicalRoot ([string]$directory.PhysicalPath) $clock
+                if (($null -ne $selected.fileId -and $null -ne $other.fileId -and $selected.volumeId -ceq $other.volumeId -and $selected.fileId -ceq $other.fileId) -or
+                    (Test-ClcPathAncestry $selected.physicalPath $other.physicalPath) -or (Test-ClcPathAncestry $other.physicalPath $selected.physicalPath)) {Stop-ClcError Clc.HostPreflightFailed}
+            }
+        }
+    }
+    Assert-ClcDeadline $clock 30
+}
+
 function Get-ClcIisObservation {
     param($Context, $Target)
     Assert-ClcHelperDependencies $Context $Target.runtimeIdentitySid
     $type=Get-ClcAdmittedMwaType $Context
-    # MWA reads selected configuration properties only. Never read ProcessModel.Password,
-    # dump a configuration section, or import WebAdministration into PowerShell 7.
+    # MWA reads bounded physical-root associations and selected configuration
+    # properties. Never read ProcessModel.Password, dump a configuration section,
+    # or import WebAdministration into PowerShell 7.
     $manager=$null
     try {
         $manager=New-ClcMwaServerManager $type
+        Assert-ClcIisPhysicalIsolation $manager $Target
         if ($manager.Sites.Count -gt 4096 -or $manager.ApplicationPools.Count -gt 4096) { Stop-ClcError Clc.HostPreflightFailed }
         $sites=@($manager.Sites | Where-Object { [string]::Equals($_.Name,$Target.siteName,[StringComparison]::OrdinalIgnoreCase) })
         $pools=@($manager.ApplicationPools | Where-Object { [string]::Equals($_.Name,$Target.applicationPoolName,[StringComparison]::OrdinalIgnoreCase) })
