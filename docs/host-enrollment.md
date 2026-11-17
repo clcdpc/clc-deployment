@@ -195,7 +195,17 @@ Obtain independent exact approval of this complete record. Do not approve empty/
 
 **Independent infrastructure approval process:** review the complete candidate, final deployment.json bytes, acquisition evidence, host/account/path/ACL/IIS observations and permitted operations. Confirm machine UUID, actual SID membership, selected toolkit identity, helper paths, TLS and maintenance scope against independent sources. `dotnetPath`/`appcmdPath` above are conventional installed paths; confirm those exact existing protected x64 files rather than resolving executables from PATH. Use `Get-Acl -LiteralPath <actual-path>` on helpers, their ancestors and protected resources to compare actual owners/writable trustees with the approved infrastructure list; resolve names using `Resolve-ClcAccountSid`. The candidate includes SYSTEM, Administrators, the resolved TrustedInstaller service SID for protected Windows components, and the actual approving account. Do not admit arbitrary observed writers to make checks pass. Approving `authoritySid` must be admitted in `infrastructureOwnerSids` and absent from `deploymentSids`; keep the list distinct and duplicate-free. Handoff/bootstrap protection still permits only SYSTEM/Administrators writers.
 
-The reviewer supplies the actual approval/reference/window and enables only the approved record. Use strict UTF-8 JSON with the schema's exact fields. To serialize the **untrusted draft** locally, an infrastructure operator can use `$candidate | ConvertTo-Json -Depth 24` and a protected preparation file outside the handoff; this neither signs nor installs an approval. Review final bytes with `Read-HJson`/`Assert-HAuthorization` before provisioning. The toolkit has no approval-writing command.
+The reviewer supplies the actual approval/reference/window and enables only the approved record. Use strict UTF-8 JSON with the schema's exact fields. To save the **untrusted draft** without printing private facts, select an absent `$privateDraftPath` in an infrastructure-protected preparation directory **outside the handoff**:
+
+```powershell
+$draftBytes = [Text.UTF8Encoding]::new($false).GetBytes(($candidate | ConvertTo-Json -Depth 24))
+$draftStream = [IO.File]::Open($privateDraftPath, [IO.FileMode]::CreateNew,
+    [IO.FileAccess]::Write, [IO.FileShare]::None)
+try { $draftStream.Write($draftBytes); $draftStream.Flush($true) }
+finally { $draftStream.Dispose() }
+```
+
+This neither signs nor installs an approval. Review final bytes with `Read-HJson`/`Assert-HAuthorization` before provisioning. The toolkit has no approval-writing command.
 
 The independently authorized infrastructure process installs the final record, with the handoff protection from step 1, at exactly:
 
