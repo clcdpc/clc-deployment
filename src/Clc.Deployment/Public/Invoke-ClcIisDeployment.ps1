@@ -17,7 +17,7 @@ function Invoke-ClcIisDeployment {
     $context=$null; $lock=$null; $session=@{operation=$Operation}
     try {
         if (($AllowDowngrade -and -not $Reason) -or ($Reason -and -not $AllowDowngrade)) { Stop-ClcError Clc.DowngradeRejected }
-        $context=Open-ClcTrustedContext
+        $context=Open-ClcTrustedContext -TargetId $TargetId
         $lock=Enter-ClcDeploymentLock $context $TargetId; $session.lock=$lock
         $pending=Join-Path $context.layout.approvalCatalogRoot ('standing\'+$TargetId+'.pending')
         if ([IO.File]::Exists($pending) -or [IO.Directory]::Exists($pending)) { Stop-ClcError Clc.AdmissionIncomplete }

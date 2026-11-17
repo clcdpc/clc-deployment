@@ -1,7 +1,7 @@
 . "$PSScriptRoot/Qualification.Process.ps1"
 $script:QContext=$null; $script:QTarget=$null
 function Open-QObservationContext($Configuration) {
-    $script:QContext=Invoke-QPrivate Open-ClcTrustedContext
+    $script:QContext=Invoke-QPrivate Open-ClcTrustedContext @($Configuration.targetId)
     try { $file=Invoke-QPrivate Read-ClcProtectedTarget @($script:QContext,$Configuration.targetId); $script:QTarget=$file.record }
     catch { Close-QObservationContext; throw }
 }

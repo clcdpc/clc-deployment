@@ -7,7 +7,7 @@ BeforeAll {
     $script:machineryWorkspace=New-TestWorkspace
     $script:machinery=Join-Path $script:machineryWorkspace 'repo'
     $null=[IO.Directory]::CreateDirectory((Join-Path $script:machinery 'src'))
-    Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'src/CLC.Deployment') -Destination (Join-Path $script:machinery 'src') -Recurse
+    Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'src/Clc.Deployment') -Destination (Join-Path $script:machinery 'src') -Recurse
     Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'tools') -Destination $script:machinery -Recurse
     Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'VERSION') -Destination $script:machinery
     foreach ($arguments in @(
@@ -82,10 +82,10 @@ BeforeAll {
         $env:GITHUB_OUTPUT=$script:oldOutput; $env:GITHUB_STEP_SUMMARY=$script:oldSummary
         # Package tests import the exact committed fixture module. Restore the
         # checkout module before removing that fixture and running other tests.
-        Get-Module CLC.Deployment | Remove-Module -Force
+        Get-Module Clc.Deployment | Remove-Module -Force
         Import-Module $script:ModulePath -Force
-        @(Get-Module CLC.Deployment).Count | Should -Be 1
-        (Get-Module CLC.Deployment).ModuleBase | Should -BeExactly (Split-Path $script:ModulePath -Parent)
+        @(Get-Module Clc.Deployment).Count | Should -Be 1
+        (Get-Module Clc.Deployment).ModuleBase | Should -BeExactly (Split-Path $script:ModulePath -Parent)
         Remove-TestWorkspace $script:workspace
         Remove-Variable -Name ClcWorkflowEntry -Scope Global
     }
@@ -282,7 +282,7 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         $script:heldToolkit=[IO.MemoryStream]::new(); $global:ClcWorkflowEntry.heldToolkit=$script:heldToolkit
         Mock Open-ClcWorkflowToolkit { return @{policy=@{};handles=@($global:ClcWorkflowEntry.heldToolkit)} }
         if ($Action -ceq 'Deploy') {
-            Mock Open-ClcTrustedContext { throw 'Unexpected host admission.' } -ModuleName CLC.Deployment
+            Mock Open-ClcTrustedContext { throw 'Unexpected host admission.' } -ModuleName Clc.Deployment
             Mock Invoke-ClcIisDeployment { throw 'Unexpected deployment.' }
         }
         try {
@@ -291,7 +291,7 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
             Should -Invoke Send-ClcApplicationReleaseAsset -Times 0 -Exactly
             $global:ClcWorkflowEntry.release | Should -BeNullOrEmpty
             if ($Action -ceq 'Deploy') {
-                Should -Invoke Open-ClcTrustedContext -Times 0 -Exactly -ModuleName CLC.Deployment
+                Should -Invoke Open-ClcTrustedContext -Times 0 -Exactly -ModuleName Clc.Deployment
                 Should -Invoke Invoke-ClcIisDeployment -Times 0 -Exactly
                 $script:heldToolkit.CanRead | Should -BeFalse
             } else { Should -Invoke Open-ClcWorkflowToolkit -Times 0 -Exactly }
@@ -355,10 +355,10 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         $script:heldToolkit=[IO.MemoryStream]::new()
         $global:ClcWorkflowEntry.inbox=$script:inbox; $global:ClcWorkflowEntry.heldToolkit=$script:heldToolkit
         Mock Open-ClcWorkflowToolkit { return @{policy=@{};handles=@($global:ClcWorkflowEntry.heldToolkit)} }
-        Mock Open-ClcTrustedContext -ModuleName CLC.Deployment { return @{} }
-        Mock Read-ClcProtectedTarget -ModuleName CLC.Deployment { return @{record=@{targetId='probe-dev';applicationId='probe';artifactInboxRoot=$global:ClcWorkflowEntry.inbox;runtimeIdentitySid='S-1-5-21-1-2-3-2001'}} }
-        Mock Add-ClcProtectedPathPin -ModuleName CLC.Deployment {}
-        Mock Close-ClcTrustedContext -ModuleName CLC.Deployment {}
+        Mock Open-ClcTrustedContext -ModuleName Clc.Deployment { return @{} }
+        Mock Read-ClcProtectedTarget -ModuleName Clc.Deployment { return @{record=@{targetId='probe-dev';applicationId='probe';artifactInboxRoot=$global:ClcWorkflowEntry.inbox;runtimeIdentitySid='S-1-5-21-1-2-3-2001'}} }
+        Mock Add-ClcProtectedPathPin -ModuleName Clc.Deployment {}
+        Mock Close-ClcTrustedContext -ModuleName Clc.Deployment {}
         Mock Invoke-ClcIisDeployment {
             param($TargetId,$StandingAuthorizationId,$ReleaseTag,$ArchivePath,$VerifiedReleasePath,$Operation)
             $TargetId | Should -BeExactly probe-dev; $StandingAuthorizationId | Should -BeExactly probe-dev

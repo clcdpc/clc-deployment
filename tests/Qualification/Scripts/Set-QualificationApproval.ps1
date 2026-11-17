@@ -3,7 +3,7 @@ param([Parameter(Mandatory)][string] $ConfigurationPath,[ValidateSet('Inspect','
     [Parameter(Mandatory)][ValidateSet('initial','newer')][string] $ReleaseSlot,[string] $AuthorizationPath,[string] $ApprovalRecordPath,[string] $OriginalApprovalPath)
 . "$PSScriptRoot/Qualification.Common.ps1"
 $configuration=Read-QConfiguration $ConfigurationPath; $release=$configuration.probeReleases[$ReleaseSlot]
-$catalog=Join-Path $configuration.ownedRoot 'toolkit\policy\approvals'; $destination=Join-Path $catalog ($release.approvalId+'.json')
+$catalog=Join-Path $configuration.ownedRoot 'Deployment\toolkit\policy\approvals'; $destination=Join-Path $catalog ($release.approvalId+'.json')
 if ($Operation -ceq 'Inspect') { [pscustomobject]@{operation='Inspect';mutations=$false;approvalId=$release.approvalId;catalogRecordPresent=[IO.File]::Exists($destination)}; return }
 $null=Assert-QAuthorization $configuration $AuthorizationPath @('approve-probe-bytes')
 if ((Get-QCallerSid) -cne $configuration.infrastructureSid) { throw 'Approval changes require the independent infrastructure token.' }
@@ -14,7 +14,7 @@ if ($Operation -ceq 'Approve') {
     Assert-DistLocalPath $ApprovalRecordPath; $record=Read-DistJson ([IO.File]::ReadAllBytes($ApprovalRecordPath))
 } else {
     $originalBytes=[IO.File]::ReadAllBytes($destination); $record=Read-DistJson $originalBytes
-    $history=Join-Path $configuration.ownedRoot 'toolkit\policy\approval-history'; $null=[IO.Directory]::CreateDirectory($history)
+    $history=Join-Path $configuration.ownedRoot 'Deployment\toolkit\policy\approval-history'; $null=[IO.Directory]::CreateDirectory($history)
     $historyPath=Join-Path $history ($release.approvalId+'-'+(Get-DistHash $originalBytes)+'.json')
     if (-not [IO.File]::Exists($historyPath)) { [IO.File]::WriteAllBytes($historyPath,$originalBytes) }
     if ($Operation -ceq 'Disable') { if (-not $record.enabled) { throw 'Approval is already disabled.' }; $record.enabled=$false }

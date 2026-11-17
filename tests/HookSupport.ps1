@@ -49,8 +49,8 @@ function New-HookPolicy {
 function Set-HookMocks {
     Set-T3Mocks
     $global:ClcHooks=@{mode='Success';failStage='';native=$false;calls=[Collections.Generic.List[string]]::new();observations=[Collections.Generic.List[object]]::new()}
-    $global:ClcNativeHook=& (Get-Module CLC.Deployment) { (Get-Command Start-ClcHookHelper).ScriptBlock }
-    Mock -ModuleName CLC.Deployment Start-ClcHookHelper {
+    $global:ClcNativeHook=& (Get-Module Clc.Deployment) { (Get-Command Start-ClcHookHelper).ScriptBlock }
+    Mock -ModuleName Clc.Deployment Start-ClcHookHelper {
         $context=Get-Content -LiteralPath $ContextPath -Raw | ConvertFrom-Json -AsHashtable
         $stage=$context.stage; $j=(Invoke-T2Private Read-ClcStateFile @($Session.lock,'journal')).record
         $j.nativeCall.operation | Should -BeExactly Hook; $j.nativeCall.launchState | Should -BeExactly Intent

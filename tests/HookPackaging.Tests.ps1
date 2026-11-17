@@ -122,14 +122,14 @@ Describe 'Version-two application packages with separate verified hook inputs' {
     It 'extracts verified hooks beside the managed application tree' {
         $built=New-ClcRelease @arguments; $entries=@(Get-TestZipEntries $built.archivePath)
         $manifest=[Text.Encoding]::UTF8.GetString($entries[0].bytes) | ConvertFrom-Json -AsHashtable
-        Mock -ModuleName CLC.Deployment Assert-ClcApprovedReleaseUnchanged { }
-        Mock -ModuleName CLC.Deployment New-ClcOwnedDirectory { $null=[IO.Directory]::CreateDirectory($Path) }
-        Mock -ModuleName CLC.Deployment Assert-ClcSafeDescendants { }
-        Mock -ModuleName CLC.Deployment Assert-ClcPathAccess { }
-        Mock -ModuleName CLC.Deployment Assert-ClcControlAncestorAccess { }
+        Mock -ModuleName Clc.Deployment Assert-ClcApprovedReleaseUnchanged { }
+        Mock -ModuleName Clc.Deployment New-ClcOwnedDirectory { $null=[IO.Directory]::CreateDirectory($Path) }
+        Mock -ModuleName Clc.Deployment Assert-ClcSafeDescendants { }
+        Mock -ModuleName Clc.Deployment Assert-ClcPathAccess { }
+        Mock -ModuleName Clc.Deployment Assert-ClcControlAncestorAccess { }
         $stage=Join-Path $workspace 'stage'; $archive=[IO.File]::OpenRead($built.archivePath)
         try {
-            $result=& (Get-Module CLC.Deployment) {
+            $result=& (Get-Module Clc.Deployment) {
                 param($Stage,$Archive,$Manifest,$ControlRoot)
                 $lock=@{identity=@{controlRoot=$ControlRoot};context=@{};targetFile=@{record=@{runtimeIdentitySid='S-1-5-21-1-2-3-1001'}}}
                 Expand-ClcApprovedRelease $lock @{manifest=$Manifest;archive=@{stream=$Archive}} $Stage

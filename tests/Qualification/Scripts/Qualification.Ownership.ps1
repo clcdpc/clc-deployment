@@ -51,7 +51,7 @@ function Assert-QIisOwnershipSnapshot($Expected,$Actual) {
 }
 function Get-QOwnedRootIdentities($Configuration) {
     $paths=[ordered]@{applicationRoot=$Configuration.applicationRoot;configurationDirectory=[IO.Path]::GetDirectoryName($Configuration.operationalConfigPath);dataProtectionRoot=$Configuration.dataProtectionRoot;artifactInboxRoot=$Configuration.artifactInboxRoot;
-        controlStateRoot=(Join-Path $Configuration.ownedRoot 'control');lockRoot=(Join-Path $Configuration.ownedRoot 'locks');toolkitRoot=(Join-Path $Configuration.ownedRoot 'toolkit')}
+        controlStateRoot=(Join-Path $Configuration.ownedRoot 'Deployment\control');lockRoot=(Join-Path $Configuration.ownedRoot 'Deployment\locks');toolkitRoot=(Join-Path $Configuration.ownedRoot 'Deployment\toolkit')}
     $result=[ordered]@{}
     foreach ($name in $paths.Keys) { $result[$name]=(Get-DistPathFacts $paths[$name] -Directory).Identity }
     $result

@@ -32,11 +32,11 @@ Describe 'Fresh MWA configuration, state and worker observations without read su
         $global:ClcMwaHostSection | Add-Member ScriptMethod GetCollection { return @(@{name='AspNetCoreModuleV2';image='C:\synthetic\aspnetcorev2.dll'}) }
         $global:ClcMwaHostConfig=[pscustomobject]@{}
         $global:ClcMwaHostConfig | Add-Member ScriptMethod GetSection { param($Name) return $global:ClcMwaHostSection }
-        Mock -ModuleName CLC.Deployment Assert-ClcHelperDependencies { }
-        Mock -ModuleName CLC.Deployment Get-ClcAdmittedMwaType { return [Management.Automation.PSObject] }
-        Mock -ModuleName CLC.Deployment New-ClcMwaServerManager { return New-TestMwaSnapshot }
-        Mock -ModuleName CLC.Deployment Resolve-ClcAccountSid { return 'S-1-5-20' }
-        Mock -ModuleName CLC.Deployment Invoke-ClcIisReadQuery { throw 'Read subprocess is forbidden.' }
+        Mock -ModuleName Clc.Deployment Assert-ClcHelperDependencies { }
+        Mock -ModuleName Clc.Deployment Get-ClcAdmittedMwaType { return [Management.Automation.PSObject] }
+        Mock -ModuleName Clc.Deployment New-ClcMwaServerManager { return New-TestMwaSnapshot }
+        Mock -ModuleName Clc.Deployment Resolve-ClcAccountSid { return 'S-1-5-20' }
+        Mock -ModuleName Clc.Deployment Invoke-ClcIisReadQuery { throw 'Read subprocess is forbidden.' }
     }
     AfterEach { Remove-TestWorkspace $workspace }
     It 'creates and disposes a fresh manager and observes a restart with its new workers' {
@@ -46,7 +46,7 @@ Describe 'Fresh MWA configuration, state and worker observations without read su
         $second=Invoke-T2Private Get-ClcIisObservation @(@{},$target)
         $second.poolState | Should -Be Started; $second.workers[0] | Should -Be 1234
         $global:ClcMwaCreated | Should -Be 2; $global:ClcMwaDisposed | Should -Be 2
-        Should -Invoke -ModuleName CLC.Deployment Invoke-ClcIisReadQuery -Times 0 -Exactly
+        Should -Invoke -ModuleName Clc.Deployment Invoke-ClcIisReadQuery -Times 0 -Exactly
     }
     It 'observes and rejects <Case> before a stable effect' -ForEach @(@{Case='transitional-state'},@{Case='extra-worker'},@{Case='binding-drift'}) {
         if ($Case -ceq 'transitional-state') { $global:ClcMwaState='Starting' }
@@ -59,6 +59,6 @@ Describe 'Fresh MWA configuration, state and worker observations without read su
     It 'reads the current canonical pool names through a disposed manager without appcmd' {
         @(Invoke-T2Private Get-ClcIisPoolNames @(@{})) | Should -Be @('Dedicated')
         $global:ClcMwaCreated | Should -Be 1; $global:ClcMwaDisposed | Should -Be 1
-        Should -Invoke -ModuleName CLC.Deployment Invoke-ClcIisReadQuery -Times 0 -Exactly
+        Should -Invoke -ModuleName Clc.Deployment Invoke-ClcIisReadQuery -Times 0 -Exactly
     }
 }

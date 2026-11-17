@@ -24,7 +24,7 @@ Describe 'Actual Windows NTFS path scope and identity' {
     BeforeEach { $workspace = New-TestWorkspace; $publishArgs = New-TestPublish $workspace }
     AfterEach { Remove-TestWorkspace $workspace }
     It 'observes physical file/volume IDs and allows casing aliases without losing identity' {
-        & (Get-Module CLC.Deployment) {
+        & (Get-Module Clc.Deployment) {
             param($Path)
             $handles = [Collections.Generic.List[IDisposable]]::new()
             try {
@@ -142,7 +142,7 @@ Describe 'Actual Windows NTFS path scope and identity' {
             $short = [Clc.Test.ShortPaths]::Get($file)
         }
         $short | Should -Not -BeExactly $file
-        & (Get-Module CLC.Deployment) {
+        & (Get-Module Clc.Deployment) {
             param($Path)
             $handles = [Collections.Generic.List[IDisposable]]::new()
             try { { Get-ClcPathObservation $Path $handles } | Should -Throw -ErrorId 'Clc.UnsafePath*' }
@@ -151,7 +151,7 @@ Describe 'Actual Windows NTFS path scope and identity' {
         [IO.File]::ReadAllText($file) | Should -Be 'short-name-sentinel'
     }
     It 'holds source read handles that prohibit byte replacement and delete' {
-        & (Get-Module CLC.Deployment) {
+        & (Get-Module Clc.Deployment) {
             param($Path)
             $handles = [Collections.Generic.List[IDisposable]]::new()
             try {
@@ -174,5 +174,28 @@ Describe 'Actual Windows NTFS path scope and identity' {
         Test-TestRejection { New-ClcRelease @publishArgs } 'Clc.UnsafePath*'
         [IO.File]::Exists($publishArgs.OutputPath) | Should -BeFalse
         [IO.File]::ReadAllText($path) | Should -Be 'long-path-sentinel'
+    }
+}
+
+Describe 'Canonical target namespaces from the native Windows known folder' {
+    It 'rejects forged ProgramData and SystemDrive environment values without touching host resources' {
+        $before=& (Get-Module Clc.Deployment) { Get-ClcProgramDataRoot }
+        $oldData=$env:ProgramData;$oldDrive=$env:SystemDrive
+        try {
+            $env:ProgramData='Z:\forged-program-data'
+            {& (Get-Module Clc.Deployment) {Get-ClcProgramDataRoot}} | Should -Throw -ErrorId 'Clc.UnsafePath*'
+            $env:ProgramData=$oldData;$env:SystemDrive='Z:'
+            {& (Get-Module Clc.Deployment) {Get-ClcProgramDataRoot}} | Should -Throw -ErrorId 'Clc.UnsafePath*'
+            $env:SystemDrive=$oldDrive
+            $layout=& (Get-Module Clc.Deployment) { Get-ClcTargetLayout ssrs-web-dev '1.2.3' }
+            $layout.targetRoot | Should -BeExactly (Join-Path $before 'clc-ssrs-web-dev')
+            $layout.policyPath | Should -BeExactly (Join-Path $before 'clc-ssrs-web-dev\Deployment\toolkit\policy\host-policy.json')
+            $production=& (Get-Module Clc.Deployment) { Get-ClcTargetLayout ssrs-web-production '4.5.6' }
+            $production.moduleRoot | Should -BeExactly (Join-Path $before 'clc-ssrs-web-production\Deployment\toolkit\versions\4.5.6\Clc.Deployment')
+            $production.lockRoot | Should -Not -Be $layout.lockRoot
+        } finally {$env:ProgramData=$oldData;$env:SystemDrive=$oldDrive}
+    }
+    It 'refuses a caller-selected namespace or unsafe target identity' -ForEach @(@{Id='../other'},@{Id='Other'},@{Id='a\b'},@{Id='a:b'}) {
+        {& (Get-Module Clc.Deployment) {param($id) Get-ClcTargetLayout $id '1.2.3'} $Id} | Should -Throw
     }
 }

@@ -1,6 +1,6 @@
 # CLC Deployment Setup Guide
 
-This is the authoritative setup sequence for applications using the shared tag workflow. Set up each application once. After setup, an authorized developer selects a commit, creates its version tag and pushes it. GitHub builds, tests, packages, publishes and then deploys automatically. DEV can release an unmerged commit containing application, workflow, script, configuration or shared-pin changes. Production must be in protected integration-branch history. Use `ssrs-web` below as an example and substitute your application's identity, repository and project paths. GitHub administration, independently authorized host setup and live acceptance are separate activities; this guide grants no host authority.
+This is the authoritative setup sequence for applications using the shared tag workflow. Set up each deployment target independently. After setup, an authorized developer selects a commit, creates its version tag and pushes it. GitHub builds, tests, packages, publishes and then deploys automatically. DEV can release an unmerged commit containing application, workflow, script, configuration or shared-pin changes. Production must be in protected integration-branch history. Use `ssrs-web` below as an example and substitute your application's identity, repository and project paths. GitHub administration, independently authorized host setup and live acceptance are separate activities; this guide grants no host authority.
 
 ## 1. Establish naming conventions
 
@@ -15,6 +15,8 @@ Choose one stable lowercase `applicationId` of at most 53 characters (letters, d
 | Standing authorization ID | `ssrs-web-dev` | `ssrs-web-production` |
 
 These are distinct protected resources with the same derived identifier. GitHub names do not confer host authority. Consumer configuration version 2 derives routing from `applicationId`; no deployment-routing variables or redundant runner configuration are required.
+
+Each target owns `%ProgramData%\clc-<target-id>\`: `Application`, `Config` (`application.json` and `deployment.json`), `Keys`, `Inbox`, optional `Logs`, and protected `Deployment`. DEV uses `clc-ssrs-web-dev`; Production uses `clc-ssrs-web-production`. Their bootstrap, immutable toolkit versions, active policy, approvals, enrollment evidence and locks/state all live inside their own `Deployment`. The target root is infrastructure owned so runtime writes in Keys/Logs cannot replace protected siblings. There is no shared installation, target registry or enrollment lock.
 
 ## 2. Restrict GitHub Actions
 
@@ -81,7 +83,7 @@ Unsupported tags fail validation. Verification binds tag/object/source, platform
 Infrastructure completes this ordered sequence under its own exact authorizations:
 
 1. Provision Windows Server 2022, PowerShell 7, IIS/.NET/ANCM, TLS and required deployment/runtime identities, keeping one dedicated site/root application/pool and one worker.
-2. Install and verify approved toolkit bytes and independently pin the active distribution using [installation](installation.md). Application artifacts cannot choose or replace it.
+2. Independently authenticate and provision the format-3 `Clc.Deployment` bootstrap in the target's `Deployment/bootstrap`, plus its protected enrollment authorization handoff. Use [installation](installation.md) for exact source/distribution/inventory verification before any import. Application artifacts cannot install or select host code. A real published renamed distribution is required before updating consumer release pins; historical `0.1.0-beta.3` has the old layout and cannot supply that pin. This implementation does not publish a replacement.
 3. Provision protected external configuration, persistent keys and dedicated directories. Accounts, secrets, certificates, trust and components remain external to deployment.
 4. Create target and host authorization records with derived identifiers and exact machine/config/bootstrap/toolkit/operation bindings.
 5. Complete [host enrollment](host-enrollment.md): read-only Get/Plan, then separately authorized Apply for approved missing resources. Enrollment publishes the protected target after verification and changes only approved directories/ACLs and stopped IIS settings. Missing records with prior resources/state require reconciliation.
@@ -94,6 +96,8 @@ After a successful independently approved baseline, infrastructure installs the 
 Standing policy is established once and stays valid until revoked or changed. Each qualifying release receives an exact byte-bound approval through the installed toolkit. No human approval is needed for each routine tag. Host enrollment, initial baseline/cutover, toolkit changes, downgrades and exceptional recovery retain their existing independent authority. Recovery of generated releases needs an independent exact recovery approval; file recovery never establishes database rollback safety.
 
 Host source/target validation, protected configuration/installed toolkit checks, monotonic release ordering, same-tag/downgrade safeguards, approval revocation, canonical locks, durable attempts, backups, readiness and validation remain enforced. Hook uncertainty additionally needs independent persistent-state compatibility/quiescence authority for recovery. Follow [deployment and recovery](deployment.md).
+
+Every target independently pins its runtime `activeToolkit` in `Deployment/toolkit/policy/host-policy.json`. DEV can use version A while Production uses B. A separately authorized upgrade installs a new immutable version and explicitly activates only that target's next policy generation, retaining previous versions/history and recovery evidence. Build-time `orchestration.sharedRevision` remains independently pinned. Native known-folder resolution and authenticated derived target IDs select host paths; no path input or environment variable routes a deployment. Existing machine-wide installations need independently approved re-enrollment or migration; nothing automatically moves operational configuration, keys, logs or retained evidence.
 
 ## 9. Verify the setup
 

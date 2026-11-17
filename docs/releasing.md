@@ -12,7 +12,7 @@ The release bundle contains exactly:
 
 | Output | Identity and checks |
 | --- | --- |
-| `CLC.Deployment-<version>.zip` | Toolkit source commit, module version, source/module inventories and SHA-256; the module manifest links to the root MIT license; checked by the existing independent distribution verifier and extracted without activation for byte verification |
+| `Clc.Deployment-<version>.zip` | Toolkit source commit, module version, source/module inventories and SHA-256; the module manifest links to the root MIT license; checked by the existing independent distribution verifier and extracted without activation for byte verification |
 | `Clc.Deployment.AspNetCore.<version>.nupkg` | Package ID, version, `MIT`, repository URL and source commit; tested from an isolated local NuGet feed/cache using the actual packed bytes, including a second locked restore |
 | `release-manifest.json` | Exact tag, commit, workflow run/attempt/job, artifact name, both SHA-256 values, NuGet content hash and honest `actualIis: NOT RUN` status |
 

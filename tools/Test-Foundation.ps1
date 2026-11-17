@@ -31,7 +31,7 @@ foreach ($path in @('schemas','tests/Fixtures','tools')) {
         $null = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -AsHashtable -Depth 64
     }
 }
-$null = Test-ModuleManifest -Path (Join-Path $repository 'src/CLC.Deployment/CLC.Deployment.psd1')
+$null = Test-ModuleManifest -Path (Join-Path $repository 'src/Clc.Deployment/Clc.Deployment.psd1')
 Import-Module $pesterManifest -Force
 if ((Get-Module Pester).Version.ToString() -cne $lock.pester.version) { throw 'Unexpected Pester version.' }
 Write-Host ('Toolchain: PowerShell ' + $PSVersionTable.PSVersion + '; Pester ' + $lock.pester.version + '; OS ' + [Environment]::OSVersion.VersionString + '; .NET ' + [Environment]::Version)

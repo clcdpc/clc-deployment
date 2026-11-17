@@ -42,7 +42,7 @@ if ($manifest.companion.nuGetContentHashSha512 -isnot [string] -or $manifest.com
     throw 'Release manifest contains an invalid NuGet SHA-512 content hash.'
 }
 
-$expectedToolkitFile='CLC.Deployment-'+$version+'.zip'
+$expectedToolkitFile='Clc.Deployment-'+$version+'.zip'
 $expectedPackageFile='Clc.Deployment.AspNetCore.'+$version+'.nupkg'
 if ($manifest.toolkit.file -cne $expectedToolkitFile -or $manifest.companion.file -cne $expectedPackageFile) { throw 'Release artifact filenames differ from the shared version.' }
 $expectedFiles=[string[]]@($expectedToolkitFile,$expectedPackageFile,'release-manifest.json')

@@ -72,7 +72,7 @@ Describe 'Version-two routine deployment and explicitly authorized lifecycle hoo
     It 'retains the previous backup after persistent work and a later readiness failure, requiring independent recovery authority' {
         $baseline=New-HookApproval $fixture; $null=Invoke-ClcIisDeployment example $baseline.record.approvalId
         $approval=New-HookApproval $fixture hooks-002 2 -Stages AfterStop
-        $global:ClcLifecycle.ready=$false; Mock -ModuleName CLC.Deployment Get-ClcReadinessElapsed { if ($global:ClcLifecycle.ready) { return 0 } else { return 120 } }
+        $global:ClcLifecycle.ready=$false; Mock -ModuleName Clc.Deployment Get-ClcReadinessElapsed { if ($global:ClcLifecycle.ready) { return 0 } else { return 120 } }
         Test-TestRejection { Invoke-ClcIisDeployment example $approval.record.approvalId } 'Clc.ReadinessFailed*'
         $j=Get-HookJournal $fixture; $backup=Join-Path $fixture.controlRoot ('backups\'+$j.attemptId+'\application')
         (Get-TestTreeHashes $backup) | Should -BeExactly (Get-TestTreeHashes $baseline.publish)

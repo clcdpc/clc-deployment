@@ -25,9 +25,9 @@ Describe 'Complete file-only IIS deployment with synthetic IIS and actual NTFS e
         $stageRoot=Join-Path $fixture.controlRoot 'staging'
         $stageEntriesBefore=@(Get-ChildItem -LiteralPath $stageRoot -Recurse -Force | ForEach-Object FullName)
         $stageFilesBefore=Get-TestTreeHashes $stageRoot
-        Mock -ModuleName CLC.Deployment Expand-ClcApprovedRelease { throw 'A healthy NoOp must not extract or stage.' }
-        Mock -ModuleName CLC.Deployment New-ClcVerifiedBackup { throw 'A healthy NoOp must not back up.' }
-        Mock -ModuleName CLC.Deployment Invoke-ClcManagedReplacement { throw 'A healthy NoOp must not replace files.' }
+        Mock -ModuleName Clc.Deployment Expand-ClcApprovedRelease { throw 'A healthy NoOp must not extract or stage.' }
+        Mock -ModuleName Clc.Deployment New-ClcVerifiedBackup { throw 'A healthy NoOp must not back up.' }
+        Mock -ModuleName Clc.Deployment Invoke-ClcManagedReplacement { throw 'A healthy NoOp must not replace files.' }
         for ($i=0;$i -lt $Repetitions;$i++) {
             $fixture.iis.workers=@(); $global:ClcLifecycle.operations.Clear()
             $noop=Invoke-ClcIisDeployment example $approval.record.approvalId
@@ -50,10 +50,10 @@ Describe 'Complete file-only IIS deployment with synthetic IIS and actual NTFS e
             $journal.backup | Should -BeNullOrEmpty; $journal.publishedGeneration | Should -BeNullOrEmpty
             (Get-FileHash -LiteralPath (Join-Path $fixture.controlRoot ('attempts\'+$noop.attemptId+'\deployment.json'))).Hash | Should -BeExactly (Get-FileHash -LiteralPath $journalPath).Hash
         }
-        Should -Invoke Expand-ClcApprovedRelease -ModuleName CLC.Deployment -Times 0 -Exactly
-        Should -Invoke New-ClcVerifiedBackup -ModuleName CLC.Deployment -Times 0 -Exactly
-        Should -Invoke Invoke-ClcManagedReplacement -ModuleName CLC.Deployment -Times 0 -Exactly
-        Should -Invoke Start-ClcApplicationValidator -ModuleName CLC.Deployment -Times $Repetitions -Exactly -ParameterFilter {
+        Should -Invoke Expand-ClcApprovedRelease -ModuleName Clc.Deployment -Times 0 -Exactly
+        Should -Invoke New-ClcVerifiedBackup -ModuleName Clc.Deployment -Times 0 -Exactly
+        Should -Invoke Invoke-ClcManagedReplacement -ModuleName Clc.Deployment -Times 0 -Exactly
+        Should -Invoke Start-ClcApplicationValidator -ModuleName Clc.Deployment -Times $Repetitions -Exactly -ParameterFilter {
             $Dll -ceq (Join-Path $global:ClcTestFixture.target.applicationRoot 'Probe.dll')
         }
     }
@@ -104,11 +104,11 @@ Describe 'Complete file-only IIS deployment with synthetic IIS and actual NTFS e
         $null=Invoke-ClcIisDeployment example $approval.record.approvalId
         $currentPath=Join-Path $fixture.controlRoot 'current.json'; $currentBefore=(Get-FileHash -LiteralPath $currentPath).Hash
         $global:ClcLifecycle.operations.Clear(); $global:ClcReadyAfterRestart=$ReadyAfterRestart
-        Mock -ModuleName CLC.Deployment Invoke-ClcReadinessRequest {
+        Mock -ModuleName Clc.Deployment Invoke-ClcReadinessRequest {
             $global:ClcLifecycle.ready=$global:ClcReadyAfterRestart -and $global:ClcLifecycle.operations.Contains('Start')
             return Get-T3SyntheticReadiness
         }
-        Mock -ModuleName CLC.Deployment Get-ClcReadinessElapsed {
+        Mock -ModuleName Clc.Deployment Get-ClcReadinessElapsed {
             if (-not $global:ClcReadyAfterRestart -and $global:ClcLifecycle.operations.Contains('Start')) { return 120 }
             return 0
         }
@@ -154,7 +154,7 @@ Describe 'Complete file-only IIS deployment with synthetic IIS and actual NTFS e
     }
     It 'preserves an initially <Initial> pool on approved validator failure' -ForEach @(@{Initial='Started'},@{Initial='Stopped'}) {
         $fixture.iis.poolState=$Initial; $fixture.iis.workers=@()
-        Mock -ModuleName CLC.Deployment Start-ClcApplicationValidator { return Start-T3HarmlessHelper 'secret-output-sentinel' 1 }
+        Mock -ModuleName Clc.Deployment Start-ClcApplicationValidator { return Start-T3HarmlessHelper 'secret-output-sentinel' 1 }
         Test-TestRejection { Invoke-ClcIisDeployment example $approval.record.approvalId } 'Clc.ConfigurationInvalid*'
         $fixture.iis.poolState | Should -Be $Initial
         @($global:ClcLifecycle.operations) | Should -Not -Contain Stop
@@ -166,7 +166,7 @@ Describe 'Complete file-only IIS deployment with synthetic IIS and actual NTFS e
     }
     It 'retains a stopped complete candidate after failed readiness and explicitly accepts it with fresh readiness' {
         $global:ClcLifecycle.ready=$false
-        Mock -ModuleName CLC.Deployment Get-ClcReadinessElapsed { if ($global:ClcLifecycle.ready) { return 0 }; return 120 }
+        Mock -ModuleName Clc.Deployment Get-ClcReadinessElapsed { if ($global:ClcLifecycle.ready) { return 0 }; return 120 }
         Test-TestRejection { Invoke-ClcIisDeployment example $approval.record.approvalId } 'Clc.ReadinessFailed*'
         $j=Get-Content -LiteralPath (Join-Path $fixture.controlRoot 'journal.json') -Raw | ConvertFrom-Json
         $j.phase | Should -Be RecoveryRequired; $fixture.iis.poolState | Should -Be Stopped
@@ -179,9 +179,9 @@ Describe 'Complete file-only IIS deployment with synthetic IIS and actual NTFS e
         $recovered.status | Should -Be AcceptedCandidate; $recovered.workerCount | Should -Be 1
     }
     It 'retains a partial first install and explicitly restores its empty stopped guard baseline' {
-        $global:ClcCopyOriginal=& (Get-Module CLC.Deployment) { (Get-Command Copy-ClcPayloadFile).ScriptBlock }
+        $global:ClcCopyOriginal=& (Get-Module Clc.Deployment) { (Get-Command Copy-ClcPayloadFile).ScriptBlock }
         $global:ClcFailCopy=$true
-        Mock -ModuleName CLC.Deployment Copy-ClcPayloadFile {
+        Mock -ModuleName Clc.Deployment Copy-ClcPayloadFile {
             if ($global:ClcFailCopy -and $Destination.StartsWith($global:ClcTestFixture.target.applicationRoot) -and $Destination.EndsWith('Probe.dll')) {
                 [IO.File]::WriteAllText($Destination,'partial')
                 throw 'Injected copy failure'

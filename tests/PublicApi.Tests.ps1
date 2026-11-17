@@ -1,7 +1,7 @@
 BeforeAll { . "$PSScriptRoot/Support.ps1" }
 Describe 'Candidate public API and honest inspection' {
     It 'exports exactly four commands with the exact required explicit parameters' {
-        $commands = @(Get-Command -Module CLC.Deployment | Sort-Object Name)
+        $commands = @(Get-Command -Module Clc.Deployment | Sort-Object Name)
         $commands.Name | Should -Be @('Invoke-ClcIisDeployment','New-ClcRelease','Restore-ClcIisDeployment','Test-ClcRelease')
         $common = @('Verbose','Debug','ErrorAction','WarningAction','InformationAction','ProgressAction','ErrorVariable','WarningVariable','InformationVariable','OutVariable','OutBuffer','PipelineVariable')
         foreach ($command in $commands) {
@@ -26,7 +26,7 @@ Describe 'Candidate public API and honest inspection' {
         $manifest.Version.ToString() | Should -Be '0.1.0'
         $manifest.PrivateData.PSData.Prerelease | Should -Be 'dev.1'
         $manifest.PrivateData.PSData.LicenseUri | Should -Be 'https://github.com/clcdpc/clc-deployment/blob/master/LICENSE'
-        & (Get-Module CLC.Deployment) { Get-ClcToolkitVersion } | Should -Be '0.1.0-dev.1'
+        & (Get-Module Clc.Deployment) { Get-ClcToolkitVersion } | Should -Be '0.1.0-dev.1'
     }
     It 'offers read-only tag classification and rejects mixed authorization parameter sets' {
         $tag=Test-ClcRelease -ReleaseTag v1.2.3-dev.4

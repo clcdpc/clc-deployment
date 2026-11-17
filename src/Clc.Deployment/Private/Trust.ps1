@@ -1,19 +1,11 @@
 # The independent infrastructure installation authenticates the FIRST import.
 # These checks reject drift in already installed code; they cannot authenticate themselves.
 function Get-ClcInstalledLayout {
+    param([Parameter(Mandatory)][string] $TargetId)
+    $layout=Get-ClcTargetLayout $TargetId (Get-ClcToolkitVersion)
     $moduleRoot = $ExecutionContext.SessionState.Module.ModuleBase
-    $versionRoot = [IO.Path]::GetDirectoryName($moduleRoot)
-    $versionsRoot = [IO.Path]::GetDirectoryName($versionRoot)
-    if ([IO.Path]::GetFileName($moduleRoot) -cne 'CLC.Deployment' -or
-        [IO.Path]::GetFileName($versionRoot) -cne (Get-ClcToolkitVersion) -or
-        [IO.Path]::GetFileName($versionsRoot) -cne 'versions') { Stop-ClcError Clc.ToolkitNotActive }
-    $root = [IO.Path]::GetDirectoryName($versionsRoot)
-    return @{ root=$root; moduleRoot=$moduleRoot; versionRoot=$versionRoot;
-        manifestPath=(Join-Path $moduleRoot 'CLC.Deployment.psd1');
-        policyRoot=(Join-Path $root 'policy'); policyPath=(Join-Path $root 'policy\host-policy.json');
-        targetCatalogRoot=(Join-Path $root 'policy\targets'); approvalCatalogRoot=(Join-Path $root 'policy\approvals');
-        sourcePath=(Join-Path $versionRoot 'source.commit'); distributionPath=(Join-Path $versionRoot 'distribution.zip');
-        controlStateRoot=(Join-Path ([IO.Path]::GetDirectoryName($root)) 'control'); lockRoot=(Join-Path ([IO.Path]::GetDirectoryName($root)) 'locks') }
+    if ($moduleRoot -cne $layout.moduleRoot) { Stop-ClcError Clc.ToolkitNotActive }
+    return $layout
 }
 
 function Get-ClcCallerSid {
@@ -256,8 +248,8 @@ function Assert-ClcHelperProtection {
 
 function Open-ClcTrustedContext {
     [CmdletBinding()]
-    param()
-    $context = @{ layout=(Get-ClcInstalledLayout); handles=[Collections.Generic.List[IDisposable]]::new(); pathPins=@{}; ancestorPins=@{}; pinGeneration=0L;
+    param([Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9-]{0,63}$')][string] $TargetId)
+    $context = @{ layout=(Get-ClcInstalledLayout $TargetId); targetId=$TargetId; handles=[Collections.Generic.List[IDisposable]]::new(); pathPins=@{}; ancestorPins=@{}; pinGeneration=0L;
         helperRuntimeSids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal); closed=$false }
     try {
         $context.policyFile = Read-ClcHeldRecord $context.layout.policyPath 'host-policy' $context.handles
@@ -267,7 +259,7 @@ function Open-ClcTrustedContext {
             if (-not $policy[$key].Equals($context.layout[$key],[StringComparison]::Ordinal)) { Stop-ClcError Clc.ToolkitNotActive }
         }
         Assert-ClcStatePathBudget $policy
-        foreach ($path in @($context.layout.root,$context.layout.versionRoot,[IO.Path]::GetDirectoryName($context.layout.versionRoot),$context.layout.moduleRoot,
+        foreach ($path in @($context.layout.targetRoot,$context.layout.deploymentRoot,$context.layout.root,$context.layout.versionRoot,[IO.Path]::GetDirectoryName($context.layout.versionRoot),$context.layout.moduleRoot,
                 $context.layout.policyRoot,$policy.targetCatalogRoot,$policy.approvalCatalogRoot)) { $null = Add-ClcProtectedPathPin $context $path -Directory }
         $null = Add-ClcProtectedPathPin $context $context.layout.policyPath
         Assert-ClcTrustAncestors $context

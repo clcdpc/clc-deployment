@@ -2,8 +2,9 @@ BeforeAll {
     . "$PSScriptRoot/Support.ps1"
     . "$PSScriptRoot/HostEnrollment.Support.ps1"
     $script:distribution=New-HTestDistribution
+    $script:otherDistribution=New-HTestDistribution -ReleaseVersion '7.8.9'
 }
-AfterAll { Remove-TestWorkspace $script:distribution.workspace;Remove-TestWorkspace $script:HBootstrapWorkspace }
+AfterAll { Remove-TestWorkspace $script:distribution.workspace;Remove-TestWorkspace $script:otherDistribution.workspace;Remove-TestWorkspace $script:HBootstrapWorkspace }
 Describe 'Authorized initialization with real NTFS, distribution and protected-record readers' {
     BeforeEach {
         $session=$null; $fixture=New-HTestFixture; Set-HTestMocks $fixture; Set-HTestDistribution $fixture $script:distribution
@@ -118,24 +119,66 @@ Describe 'Authorized initialization with real NTFS, distribution and protected-r
         try {(Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Inspect).ReadyForDeployment | Should -BeFalse}
         finally {$held.Dispose()}
     }
-    It 'enrolls a second application without reinstalling or changing the first target, keys, approvals or state' {
+    It 'admits local standing authorization and rejects a foreign target record without mutation' {
+        $null=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
+        $root=Join-Path $fixture.layout.approvalCatalogRoot 'standing';[void][IO.Directory]::CreateDirectory($root)
+        $standing=Get-Content -LiteralPath (Join-Path $script:FixtureRoot 'standing-authorization.json') -Raw | ConvertFrom-Json -AsHashtable
+        $standing.targetId=$fixture.target.targetId
+        $path=Join-Path $root ($standing.standingAuthorizationId+'.json');Write-TestJson $path $standing
+        (Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Inspect).ReadyForDeployment | Should -BeTrue
+        $standing.targetId='other';Write-TestJson $path $standing
+        $before=Get-TestTreeHashes $fixture.workspace
+        (Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Inspect).ReadyForDeployment | Should -BeFalse
+        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
+    }
+    It 'retains target-local <Directory> authority during inspection and refuses another target' -ForEach @(@{Directory='hooks'},@{Directory='recovery'}) {
+        $null=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
+        $root=Join-Path $fixture.layout.approvalCatalogRoot $Directory;[void][IO.Directory]::CreateDirectory($root)
+        $authority=@{authoritySid='S-1-5-18';reference='synthetic-authority';approvedUtc='2026-01-01T00:00:00Z'}
+        if ($Directory -ceq 'hooks') {
+            $record=@{contractFamily='clc-file-iis-v1';schemaVersion=1L;recordKind='hook-policy';targetId=$fixture.target.targetId;applicationId=$fixture.target.applicationId;environmentName=$fixture.target.environmentName;
+                enabled=$true;channels=@('DEV');exactApprovalChannel='DEV';sourceClasses=@('ExactApproval');stages=@('Preflight');allowPlanning=$true;
+                pwshPath=(Get-Process -Id $PID).Path;pwshSha256=('a'*64);timeoutSeconds=30L;authorization=$authority}
+            $id=$fixture.target.targetId
+        } else {
+            $record=@{contractFamily='clc-file-iis-v1';schemaVersion=1L;recordKind='persistent-state-approval';approvalId='retained-recovery';enabled=$true;targetId=$fixture.target.targetId;
+                attemptId='11111111-1111-4111-8111-111111111111';journalSha256=('a'*64);mode='RestorePrevious';selectedManifestSha256=('b'*64);
+                externalStateCompatible=$true;helpersQuiescentConfirmed=$true;authorization=$authority}
+            $id=$record.approvalId
+        }
+        $path=Join-Path $root ($id+'.json');Write-TestJson $path $record
+        (Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Inspect).ReadyForDeployment | Should -BeTrue
+        (Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Plan).ReadyForDeployment | Should -BeTrue
+        $record.targetId='other';Write-TestJson $path $record
+        $before=Get-TestTreeHashes $fixture.workspace
+        (Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Inspect).ReadyForDeployment | Should -BeFalse
+        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
+    }
+    It 'serializes initial enrollment only through the selected target enrollment handle' {
+        $before=Get-TestTreeHashes $fixture.workspace
+        $held=[IO.FileStream]::new((Join-Path $fixture.authorityRoot 'enrollment.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        try {{Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive} | Should -Throw}
+        finally {$held.Dispose()}
+        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
+    }
+    It 'independently installs a second target without changing the first toolkit, keys, approvals or state' {
         $null=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
         $firstTarget=Join-Path $fixture.layout.targetCatalogRoot ($fixture.target.targetId+'.json');$firstHash=(Get-FileHash -LiteralPath $firstTarget).Hash
-        $toolkitBefore=Get-TestTreeHashes $fixture.layout.versionRoot
+        $firstVersion=$fixture.layout.versionRoot;$toolkitBefore=Get-TestTreeHashes $firstVersion
         $firstKeys=Get-TestTreeHashes $fixture.target.dataProtectionRoot
         $firstKeyRoot=$fixture.target.dataProtectionRoot
         Select-HSecondTestTarget $fixture
         $plan=Invoke-HEnrollment $fixture.configurationPath synthetic-second Plan
-        $plan.HostState | Should -BeExactly TargetNotEnrolled
-        $plan.PlannedOperations | Should -Not -Contain install-toolkit
-        $result=Invoke-HEnrollment $fixture.configurationPath synthetic-second Apply
+        $plan.HostState | Should -BeExactly ToolkitNotInitialized
+        $plan.PlannedOperations | Should -Contain install-toolkit
+        $result=Invoke-HEnrollment $fixture.configurationPath synthetic-second Apply $distribution.archive
         $result.ReadyForDeployment | Should -BeTrue
-        Get-TestTreeHashes $fixture.layout.versionRoot | Should -BeExactly $toolkitBefore
+        Get-TestTreeHashes $firstVersion | Should -BeExactly $toolkitBefore
         (Get-FileHash -LiteralPath $firstTarget).Hash | Should -BeExactly $firstHash
         Get-TestTreeHashes $firstKeyRoot | Should -BeExactly $firstKeys
-        @([IO.Directory]::EnumerateFiles($fixture.layout.targetCatalogRoot)).Count | Should -Be 2
+        @([IO.Directory]::EnumerateFiles($fixture.layout.targetCatalogRoot)).Count | Should -Be 1
     }
-    It 'refuses cross-application <Collision> before selected target effects' -ForEach @(@{Collision='pool'},@{Collision='runtime'},@{Collision='keys'}) {
+    It 'refuses contradictory IIS and cross-target paths before selected target effects' -ForEach @(@{Collision='pool'},@{Collision='keys'}) {
         $null=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
         $first=$fixture.target
         Select-HSecondTestTarget $fixture
@@ -147,7 +190,7 @@ Describe 'Authorized initialization with real NTFS, distribution and protected-r
         Write-TestJson $fixture.configurationPath $fixture.configuration
         $fixture.authorization.deploymentConfigurationSha256=(Get-FileHash -LiteralPath $fixture.configurationPath).Hash.ToLowerInvariant();Save-HTestAuthorization $fixture
         $before=Get-TestTreeHashes $fixture.workspace
-        {Invoke-HEnrollment $fixture.configurationPath synthetic-second Apply} | Should -Throw
+        {Invoke-HEnrollment $fixture.configurationPath synthetic-second Apply $distribution.archive} | Should -Throw
         Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
     }
     It 'refuses an orphan canonical lock even when the selected control root and target are absent' {
@@ -165,23 +208,35 @@ Describe 'Authorized initialization with real NTFS, distribution and protected-r
         {Invoke-HEnrollment $fixture.configurationPath new-approval Apply} | Should -Throw
         Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
     }
-    It 'does not let another target bypass an unresolved first shared-toolkit installation intent' {
-        Mock Install-HToolkit {throw 'injected before-install failure'}
-        {Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive} | Should -Throw
-        Test-Path -LiteralPath $fixture.layout.root | Should -BeFalse
-        Select-HSecondTestTarget $fixture
-        $before=Get-TestTreeHashes $fixture.workspace
-        {Invoke-HEnrollment $fixture.configurationPath synthetic-second Apply $distribution.archive} | Should -Throw
-        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
-    }
-    It 'requires new target authority to bind the complete active host-policy generation' {
+    It 'does not share an enrollment lock or policy generation with another target' {
         $null=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
-        $nextPolicy=$fixture.policy | ConvertTo-Json -Depth 16 -Compress | ConvertFrom-Json -AsHashtable;$nextPolicy.generation=2;Write-TestJson $fixture.layout.policyPath $nextPolicy
-        (Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Inspect).ReadyForDeployment | Should -BeTrue
+        $firstPolicy=$fixture.layout.policyPath;$before=Get-TestTreeHashes $fixture.layout.root
+        $held=[IO.FileStream]::new((Join-Path $fixture.authorityRoot 'enrollment.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+        try {
+            Select-HSecondTestTarget $fixture
+            (Invoke-HEnrollment $fixture.configurationPath synthetic-second Apply $distribution.archive).ReadyForDeployment | Should -BeTrue
+            Get-TestTreeHashes ([IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($firstPolicy))) | Should -BeExactly $before
+        } finally {$held.Dispose()}
+    }
+    It 'pins independent installed versions and changes only the separately approved target activation' {
+        $null=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
+        $before=Get-TestTreeHashes $fixture.configuration.enrollmentRoot
+        (Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $otherDistribution.archive).ActiveToolkitVersion | Should -BeExactly '0.1.0-dev.1'
+        Get-TestTreeHashes $fixture.configuration.enrollmentRoot | Should -BeExactly $before
+        $first=$fixture.Clone()
         Select-HSecondTestTarget $fixture
-        $before=Get-TestTreeHashes $fixture.workspace
-        {Invoke-HEnrollment $fixture.configurationPath synthetic-second Apply} | Should -Throw
-        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
+        Set-HTestDistribution $fixture $otherDistribution
+        $second=Invoke-HEnrollment $fixture.configurationPath synthetic-second Apply $otherDistribution.archive
+        $second.ActiveToolkitVersion | Should -BeExactly '7.8.9'
+        $secondBefore=Get-TestTreeHashes $fixture.configuration.enrollmentRoot
+        $global:HFixture=$first
+        Set-HTestDistribution $first $otherDistribution
+        $null=& "$script:RepositoryRoot/tools/Expand-ToolkitDistribution.ps1" -ArchivePath $otherDistribution.archive -ExpectedSha256 $otherDistribution.identity.distributionSha256 -ExpectedSourceCommit $otherDistribution.commit -ExpectedVersion '7.8.9' -VersionRoot $first.layout.versionRoot -OperatorApprovalReference synthetic-activation
+        # Simulate the separately authorized infrastructure activation, outside enrollment.
+        $first.policy.generation=2L;Write-TestJson $first.layout.policyPath $first.policy
+        (Invoke-HEnrollment $first.configurationPath synthetic-enroll Inspect).ActiveToolkitVersion | Should -BeExactly '7.8.9'
+        Test-Path -LiteralPath (Join-Path $first.layout.root 'versions\0.1.0-dev.1\distribution.zip') | Should -BeTrue
+        Get-TestTreeHashes $fixture.configuration.enrollmentRoot | Should -BeExactly $secondBefore
     }
 }
 Describe 'Stopped first cutover preserves exact unapproved legacy installation' {
@@ -192,13 +247,14 @@ Describe 'Stopped first cutover preserves exact unapproved legacy installation' 
         [IO.File]::WriteAllText((Join-Path $fixture.target.applicationRoot 'nested\asset.txt'),'legacy asset')
         $inventory=Get-HLegacyInventory $fixture.target.applicationRoot
         $fixture.authorization.permittedOperations += 'first-cutover'
-        $fixture.authorization.cutover=@{applicationRootIdentity=$inventory.rootIdentity;files=$inventory.files;inventorySha256=(Get-DistInventoryHash $inventory.files);backupRoot=(Join-Path $fixture.workspace 'legacy-backup')}
+        $fixture.authorization.cutover=@{applicationRootIdentity=$inventory.rootIdentity;files=$inventory.files;inventorySha256=(Get-DistInventoryHash $inventory.files);backupRoot=(Join-Path (Join-Path $fixture.layout.controlStateRoot (Get-ClcTargetKey $fixture.policy.machineIdentity $fixture.target.applicationPoolName.ToUpperInvariant())) 'legacy-cutover-synthetic-enroll')}
         Save-HTestAuthorization $fixture
     }
     AfterEach {Close-HTestSession $session;Remove-TestWorkspace $fixture.workspace}
     It 'verifies a retained backup before removing only authorized original files and never starts the pool' {
-
-        $result=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
+        $session=Open-HSession $fixture.configurationPath synthetic-enroll
+        Invoke-HApply $session $distribution.archive
+        $result=Get-HEnrollmentState $session
         $result.ReadyForDeployment | Should -BeTrue
         $result.ObservedPoolState | Should -BeExactly Stopped
         @([IO.Directory]::EnumerateFileSystemEntries($fixture.target.applicationRoot)).Count | Should -Be 0
@@ -218,5 +274,11 @@ Describe 'Stopped first cutover preserves exact unapproved legacy installation' 
         $before=Get-TestTreeHashes $fixture.target.applicationRoot
         {Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive} | Should -Throw
         Get-TestTreeHashes $fixture.target.applicationRoot | Should -BeExactly $before
+    }
+    It 'rejects another target or protected subtree as the retained legacy backup location' -ForEach @(@{Suffix='clc-other\Deployment\backup'},@{Suffix='clc-example\Deployment\bootstrap'},@{Suffix='clc-example\Deployment\toolkit'}) {
+        $fixture.authorization.cutover.backupRoot=Join-Path $fixture.workspace $Suffix;Save-HTestAuthorization $fixture
+        $before=Get-TestTreeHashes $fixture.workspace
+        {Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive} | Should -Throw
+        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
     }
 }

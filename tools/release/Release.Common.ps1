@@ -2,8 +2,8 @@
 # accept a narrow API boundary so qualification uses deterministic offline data.
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
-. (Join-Path $PSScriptRoot '../../src/CLC.Deployment/Private/Contracts.ps1')
-. (Join-Path $PSScriptRoot '../../src/CLC.Deployment/Private/Automation.ps1')
+. (Join-Path $PSScriptRoot '../../src/Clc.Deployment/Private/Contracts.ps1')
+. (Join-Path $PSScriptRoot '../../src/Clc.Deployment/Private/Automation.ps1')
 . (Join-Path $PSScriptRoot '../SharedReleasePublisher.Common.ps1')
 . (Join-Path $PSScriptRoot '../Probe.Metadata.ps1')
 

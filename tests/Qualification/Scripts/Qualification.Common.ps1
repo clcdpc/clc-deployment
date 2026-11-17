@@ -2,6 +2,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $script:QualificationRepository=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 . "$script:QualificationRepository/tools/Distribution.Common.ps1"
+. "$script:QualificationRepository/src/Clc.Deployment/Private/Contracts.ps1"
+. "$script:QualificationRepository/src/Clc.Deployment/Private/Paths.ps1"
 
 function Read-QConfiguration([string] $Path) {
     Assert-DistLocalPath $Path
@@ -12,11 +14,13 @@ function Read-QConfiguration([string] $Path) {
     if ($configuration.siteName -cne ('clc-t4-'+$configuration.campaignId) -or $configuration.poolName -cne $configuration.siteName) { throw 'Test resource names must match the exact campaign.' }
     foreach ($name in @('ownedRoot','evidenceRoot','operationalConfigPath','dataProtectionRoot','artifactInboxRoot','applicationRoot')) { Assert-DistLocalPath $configuration[$name] }
     $root=$configuration.ownedRoot
-    if ($root.Length -gt 58 -or $root.Length -lt 8 -or $root -imatch '^C:\\(Windows|Program Files|ProgramData)(\\|$)') { throw 'Use an explicit short test-only root.' }
+    $layout=Get-ClcTargetLayout $configuration.targetId $configuration.toolkit.version
+    if ($root -cne $layout.targetRoot) { throw 'Qualification requires the canonical target-specific ProgramData root.' }
+    Assert-ClcTargetPaths @{targetId=$configuration.targetId;applicationRoot=$configuration.applicationRoot;operationalConfigPath=$configuration.operationalConfigPath;dataProtectionRoot=$configuration.dataProtectionRoot;artifactInboxRoot=$configuration.artifactInboxRoot} $layout
     foreach ($name in @('applicationRoot','operationalConfigPath','dataProtectionRoot','artifactInboxRoot')) {
         if (-not $configuration[$name].StartsWith($root+'\',[StringComparison]::Ordinal)) { throw 'Test root escapes owned scope.' }
     }
-    $paths=@($configuration.applicationRoot,[IO.Path]::GetDirectoryName($configuration.operationalConfigPath),$configuration.dataProtectionRoot,$configuration.artifactInboxRoot,(Join-Path $root 'toolkit'),(Join-Path $root 'control'),(Join-Path $root 'locks'),$configuration.evidenceRoot)
+    $paths=@($configuration.applicationRoot,[IO.Path]::GetDirectoryName($configuration.operationalConfigPath),$configuration.dataProtectionRoot,$configuration.artifactInboxRoot,(Join-Path (Join-Path $root 'Deployment') 'toolkit'),(Join-Path (Join-Path $root 'Deployment') 'control'),(Join-Path (Join-Path $root 'Deployment') 'locks'),$configuration.evidenceRoot)
     for ($i=0;$i -lt $paths.Count;$i++) { for ($j=$i+1;$j -lt $paths.Count;$j++) {
         if ($paths[$i].Equals($paths[$j],[StringComparison]::OrdinalIgnoreCase) -or $paths[$i].StartsWith($paths[$j]+'\',[StringComparison]::OrdinalIgnoreCase) -or $paths[$j].StartsWith($paths[$i]+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Qualification roots overlap.' }
     } }
@@ -104,19 +108,19 @@ function Assert-QAuthorization($Configuration, [string] $AuthorizationPath, [str
 function Get-QTargetKey($Configuration) {
     Get-DistHash ([Text.Encoding]::UTF8.GetBytes($Configuration.machineIdentity+[char]0+$Configuration.poolName.ToUpperInvariant()))
 }
-function Get-QControlRoot($Configuration) { Join-Path (Join-Path $Configuration.ownedRoot 'control') (Get-QTargetKey $Configuration) }
-function Get-QInstalledManifest($Configuration) { Join-Path $Configuration.ownedRoot ('toolkit\versions\'+$Configuration.toolkit.version+'\CLC.Deployment\CLC.Deployment.psd1') }
+function Get-QControlRoot($Configuration) { Join-Path (Join-Path $Configuration.ownedRoot 'Deployment\control') (Get-QTargetKey $Configuration) }
+function Get-QInstalledManifest($Configuration) { Join-Path $Configuration.ownedRoot ('Deployment\toolkit\versions\'+$Configuration.toolkit.version+'\Clc.Deployment\Clc.Deployment.psd1') }
 function Import-QVerifiedToolkit($Configuration) {
     $manifest=Get-QInstalledManifest $Configuration; $versionRoot=[IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($manifest))
     $verified=& "$script:QualificationRepository/tools/Test-ToolkitDistribution.ps1" -ArchivePath (Join-Path $versionRoot 'distribution.zip') -ExpectedSha256 $Configuration.toolkit.distributionSha256 -ExpectedSourceCommit $Configuration.toolkit.sourceCommit -ExpectedVersion $Configuration.toolkit.version -InstalledModuleRoot ([IO.Path]::GetDirectoryName($manifest))
     if ($verified.inventorySha256 -cne $Configuration.toolkit.inventorySha256) { throw 'Installed candidate differs from campaign pin.' }
     Import-Module $manifest -Force
-    $exports=@((Get-Module CLC.Deployment).ExportedFunctions.Keys | Sort-Object)
+    $exports=@((Get-Module Clc.Deployment).ExportedFunctions.Keys | Sort-Object)
     if (($exports -join ',') -cne 'Invoke-ClcIisDeployment,New-ClcRelease,Restore-ClcIisDeployment,Test-ClcRelease') { throw 'Unexpected module export surface.' }
 }
 function Invoke-QPrivate([string] $Name, [object[]] $Arguments=@()) {
     # All call sites are fixed read-only observations. JSON cannot choose Name.
-    & (Get-Module CLC.Deployment) { param($N,$A) & $N @A } $Name $Arguments
+    & (Get-Module Clc.Deployment) { param($N,$A) & $N @A } $Name $Arguments
 }
 function Read-QOwnership($Configuration) {
     $path=Join-Path $Configuration.ownedRoot '.clc-t4-owner.json'
@@ -232,7 +236,7 @@ function Get-QPreflight($Configuration) {
     $deploymentToken=Assert-QRoleToken $Configuration Deployment
     $null=Read-QOwnership $Configuration
     Import-QVerifiedToolkit $Configuration
-    $context=Invoke-QPrivate Open-ClcTrustedContext
+    $context=Invoke-QPrivate Open-ClcTrustedContext @($Configuration.targetId)
     try {
         $targetFile=Invoke-QPrivate Read-ClcProtectedTarget @($context,$Configuration.targetId)
         foreach ($name in @('applicationRoot','operationalConfigPath','dataProtectionRoot','artifactInboxRoot','siteName','readinessUri','runtimeEnvironment')) {

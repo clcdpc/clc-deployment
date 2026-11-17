@@ -9,7 +9,7 @@ Import the exact independently installed manifest in a fresh trusted PowerShell 
 For a consumer using GitHub Actions, complete the [GitHub setup checklist](github-setup.md) before enabling its trusted automatic deployment consumer. The recommended integration consumes successful eligible tagged builds under standing policy after an independently approved baseline. Runner admission and infrastructure-approved environment protection are separate from protected host and exact-byte release approval. The exact manual commands below remain supported for independently authorized operations.
 
 ```powershell
-Import-Module 'C:\approved-toolkit\versions\<version>\CLC.Deployment\CLC.Deployment.psd1'
+Import-Module 'C:\ProgramData\clc-example\Deployment\toolkit\versions\<version>\Clc.Deployment\Clc.Deployment.psd1'
 Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId example-002
 Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId example-001 -AllowDowngrade -Reason approved-incident
 Restore-ClcIisDeployment -TargetId example -AttemptId '<latest-attempt-guid>' -Mode RestorePrevious -Reason approved-incident
@@ -21,7 +21,7 @@ For an already deployed baseline, infrastructure may separately enable [tag-auth
 
 ## Deployment sequence and safeguards
 
-1. Resolve the protected target/release approval using the fixed installed toolkit context, verify the toolkit and acquire one fail-fast exclusive OS file handle for the actual machine/pool. Read that pool's state and reject unresolved attempts. Never delete a lock file or infer completion from its age or released handle.
+1. Resolve the protected target/release approval using the target-local installed toolkit context bound to TargetId, verify the toolkit and acquire one fail-fast exclusive OS file handle for the actual machine/pool. Read that pool's state and reject unresolved attempts. Never delete a lock file or infer completion from its age or released handle.
 2. Verify approved ZIP SHA-256 once, exact manifest bytes/source/build identity and safe archive contents. Preflight dedicated IIS configuration, physical paths, platform/runtime, external configuration, separate identities and effective protected-resource access. Reject reparse points, hard links, unsafe aliases/streams, overlapping roots and unknown files.
 3. For a **V1** exact current release with matching host observations, verify its installed approved inventory before running its fixed application validator against current configuration. If configuration matches, check fresh expected-release readiness and record NoOp without extraction, staging, backup or stop/copy/start; preserve current state and save the completed attempt. **V2 always performs the full cycle**, even on identical repeats.
 4. Otherwise extract safely to protected staging, verify inventory before application validation, run the approved fixed validator and check previous configuration compatibility. Changed configuration revisions require restart; failed NoOp readiness follows this staged deployment path.

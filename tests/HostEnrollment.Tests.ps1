@@ -13,7 +13,7 @@ Describe 'Host-local configuration and independent enrollment authorization' {
         $result.ReadyForDeployment | Should -BeFalse
         $result.InitializationPerformed | Should -BeFalse
         Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
-        Test-Path -LiteralPath $fixture.configuration.enrollmentRoot | Should -BeFalse
+        Test-Path -LiteralPath $fixture.layout.root | Should -BeFalse
     }
     It 'rejects <Case> before any provisioning' -ForEach @(
         @{Case='different host';Field='host'},@{Case='different target';Field='target'},@{Case='different config bytes';Field='configuration'},
@@ -33,7 +33,7 @@ Describe 'Host-local configuration and independent enrollment authorization' {
         $before=Get-TestTreeHashes $fixture.workspace
         { Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply } | Should -Throw
         Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
-        Test-Path -LiteralPath $fixture.configuration.enrollmentRoot | Should -BeFalse
+        Test-Path -LiteralPath $fixture.layout.root | Should -BeFalse
         Should -Invoke Set-HNewResourceAcl -Times 0 -Exactly
     }
     It 'requires a protected preexisting authorization rather than release metadata or caller hashes' {
@@ -41,7 +41,7 @@ Describe 'Host-local configuration and independent enrollment authorization' {
         Write-TestJson (Join-Path $fixture.authorityRoot 'release.json') (Get-TestMetadata)
         { Open-HSession $fixture.configurationPath synthetic-enroll } | Should -Throw
         { Open-HSession $fixture.configurationPath release } | Should -Throw
-        Test-Path -LiteralPath $fixture.configuration.enrollmentRoot | Should -BeFalse
+        Test-Path -LiteralPath $fixture.layout.root | Should -BeFalse
     }
     It 'rejects expired, revoked and future authorizations at the mutation gate' -ForEach @(
         @{Case='expired'},@{Case='revoked'},@{Case='future'}
@@ -65,7 +65,7 @@ Describe 'Host-local configuration and independent enrollment authorization' {
         $fixture.authorization.deploymentConfigurationSha256=(Get-FileHash -LiteralPath $fixture.configurationPath).Hash.ToLowerInvariant(); Save-HTestAuthorization $fixture
         try { Open-HSession $fixture.configurationPath synthetic-enroll; throw 'Expected refusal' }
         catch { $_.Exception.Message | Should -Not -Match SYNTHETIC_DO_NOT_LOG }
-        Test-Path -LiteralPath $fixture.configuration.enrollmentRoot | Should -BeFalse
+        Test-Path -LiteralPath $fixture.layout.root | Should -BeFalse
     }
     It 'rejects duplicate properties, legacy formats and scalar coercions' {
         foreach ($json in @('{"targetId":"a","TargetId":"b"}','{"contractFamily":"clc-host-enrollment-v1","schemaVersion":"1","recordKind":"deployment-configuration"}','{"schemaVersion":1}')) {
@@ -234,7 +234,7 @@ Describe 'Native enrollment path and preservation boundaries' {
         [IO.File]::ReadAllText((Join-Path $fixture.target.dataProtectionRoot 'key.xml')) | Should -BeExactly CLC_SYNTHETIC_KEY_MUST_REMAIN_UNCHANGED
     }
     It 'releases the read-only pool handle when a leaf ACL check rejects inspection' {
-        $global:HRejectedReadLockPath=Join-Path $fixture.authorityRoot 'host-enrollment.lock'
+        $global:HRejectedReadLockPath=Join-Path $fixture.authorityRoot 'enrollment.lock'
         Mock Assert-HResourceAccess {Stop-ClcError Clc.HostPreflightFailed} -ParameterFilter {$Path -ceq $global:HRejectedReadLockPath}
         {Open-HReadLock $session @{record=$fixture.target} @{lockPath=$global:HRejectedReadLockPath}} | Should -Throw
         $again=[IO.FileStream]::new($global:HRejectedReadLockPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)

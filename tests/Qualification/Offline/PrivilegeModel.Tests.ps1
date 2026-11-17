@@ -56,13 +56,13 @@ Describe 'Read-only access evidence and deterministic mandatory matrix' {
         (Get-Acl -LiteralPath $path).Sddl | Should -BeExactly $sddl
     }
     It 'uses native Authz group access rather than only the current individual SID' {
-        $sid=& (Get-Module CLC.Deployment) { Get-ClcCallerSid }
+        $sid=& (Get-Module Clc.Deployment) { Get-ClcCallerSid }
         $descriptor=[Security.AccessControl.RawSecurityDescriptor]::new('O:SYG:SYD:(A;;0x1;;;WD)')
         $bytes=[byte[]]::new($descriptor.BinaryLength); $descriptor.GetBinaryForm($bytes,0)
-        (& (Get-Module CLC.Deployment) { param($b,$s) Get-ClcEffectiveAccess $b $s } $bytes $sid) | Should -Be 1L
+        (& (Get-Module Clc.Deployment) { param($b,$s) Get-ClcEffectiveAccess $b $s } $bytes $sid) | Should -Be 1L
         $context=@{policyFile=@{record=@{infrastructureOwnerSids=@('S-1-1-0');deploymentSids=@('S-1-5-21-1-2-3-9999')}}}
         # Everyone is a synthetic privileged role only in this no-effect fixture.
-        { & (Get-Module CLC.Deployment) { param($c,$s) Assert-ClcRuntimeIdentity $c $s } $context $sid } | Should -Throw '*'
+        { & (Get-Module Clc.Deployment) { param($c,$s) Assert-ClcRuntimeIdentity $c $s } $context $sid } | Should -Throw '*'
     }
     It 'observes actual directories and streams files without capturing their contents or masking probes' {
         $path=Join-Path $workspace 'fixture.json'; [IO.File]::WriteAllText($path,'safe private fixture')
@@ -98,7 +98,7 @@ Describe 'Runtime token probes without control-tree read privileges' {
             applicationRoot=(Join-Path $workspace 'app');artifactInboxRoot=(Join-Path $workspace 'inbox');dataProtectionRoot=(Join-Path $workspace 'keys');
             operationalConfigPath=(Join-Path $workspace 'config\app.json');probeReleases=@{initial=@{approvalId='initial'};newer=@{approvalId='newer'}}}
         $layout=@{root=(Join-Path $workspace 'toolkit');moduleRoot=(Join-Path $workspace 'toolkit\module');lockRoot=(Join-Path $workspace 'locks');
-            approvalCatalogRoot=(Join-Path $workspace 'toolkit\policy\approvals');policyRoot=(Join-Path $workspace 'toolkit\policy');manifestPath=(Join-Path $workspace 'toolkit\module\CLC.Deployment.psd1');
+            approvalCatalogRoot=(Join-Path $workspace 'toolkit\policy\approvals');policyRoot=(Join-Path $workspace 'toolkit\policy');manifestPath=(Join-Path $workspace 'toolkit\module\Clc.Deployment.psd1');
             policyPath=(Join-Path $workspace 'toolkit\policy\host-policy.json');sourcePath=(Join-Path $workspace 'toolkit\source.commit')}
         foreach ($path in @($configuration.applicationRoot,$layout.root,[IO.Path]::GetDirectoryName($configuration.operationalConfigPath))) { $null=[IO.Directory]::CreateDirectory($path) }
         $global:QWritableLeaf=''; $global:QWritableMask=2; $global:QKeysPath=$configuration.dataProtectionRoot

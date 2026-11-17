@@ -1,5 +1,7 @@
 # Verified workflow integration contract
 
+After authenticating the GitHub job, tagged configuration, source eligibility and derived route, the workflow selects only `%ProgramData%\clc-<target-id>\Deployment`. Native Windows known-folder resolution supplies ProgramData. The target-local host policy pins the runtime toolkit independently of the build-time shared revision. The trusted checkout verifies protected ancestors, exact installed module inventory, retained distribution/source and manifest identity before import, then rechecks target/source/producer attempt/artifact/release before protected admission. Beta/RC tags never select a host toolkit. No caller-supplied root, global active version or shared policy is used.
+
 The shared [workflow integration guide](shared-release-orchestration.md) describes consumer configuration and examples. This document defines the handoff into the independently installed host toolkit. It extends the implementation on `master` at [`7f814ef`](https://github.com/clcdpc/clc-deployment/commit/7f814ef838abcfd12ade494c429918657598c35d); existing release artifacts must be evaluated at their own exact source/distribution pins. The new formats below are introduced by this change and require independent toolkit installation/adoption. No operational state is migrated.
 
 ## Host API and versions

@@ -9,28 +9,32 @@ Describe 'Installed toolkit and independently protected selection' {
         Test-TestRejection { [IO.File]::WriteAllText($fixture.layout.policyPath,'tamper') } '*'
         Test-TestRejection { Invoke-T2Private Open-ClcTrustedContext @('C:\caller-policy') } '*'
     }
-    It 'derives installation solely from the loaded manifest location' {
+    It 'binds the loaded manifest location to the independently derived target namespace' {
         $before=Get-T2TreeHashes $fixture
         $powerShell=[PowerShell]::Create(); $pending=$null
         try {
             # This isolated runspace has no Pester mocks. Exercise the actual
             # resolver independently of the synthetic parent/child host layout.
             $null=$powerShell.AddScript({
-                param($SourceManifest,$InstalledManifest)
+                param($SourceManifest,$InstalledManifest,$ProgramData)
                 $ErrorActionPreference='Stop'
                 Import-Module $SourceManifest -Force
                 try {
-                    $null=& (Get-Module CLC.Deployment) { Get-ClcInstalledLayout }
+                    $null=& (Get-Module Clc.Deployment) { param($Root) function Get-ClcProgramDataRoot { $Root }; Get-ClcInstalledLayout example } $ProgramData
                     throw 'The source checkout unexpectedly resolved an installation.'
                 } catch {
                     if ($_.FullyQualifiedErrorId -notlike 'Clc.ToolkitNotActive*') { throw }
                     $sourceRefusal=$_.FullyQualifiedErrorId
                 }
-                Remove-Module CLC.Deployment -Force
+                Remove-Module Clc.Deployment -Force
                 Import-Module $InstalledManifest -Force
-                $layout=& (Get-Module CLC.Deployment) { Get-ClcInstalledLayout }
+                $layout=& (Get-Module Clc.Deployment) { param($Root) function Get-ClcProgramDataRoot { $Root }; Get-ClcInstalledLayout example } $ProgramData
+                $otherRefused=$false
+                try { $null=& (Get-Module Clc.Deployment) { param($Root) function Get-ClcProgramDataRoot { $Root }; Get-ClcInstalledLayout other } $ProgramData }
+                catch { if ($_.FullyQualifiedErrorId -notlike 'Clc.ToolkitNotActive*') { throw }; $otherRefused=$true }
+                if (-not $otherRefused) { throw 'Wrong-target module was admitted.' }
                 return @{sourceRefusal=$sourceRefusal;layout=$layout}
-            }.ToString()).AddArgument($script:ModulePath).AddArgument($fixture.layout.manifestPath)
+            }.ToString()).AddArgument($script:ModulePath).AddArgument($fixture.layout.manifestPath).AddArgument($fixture.workspace)
             $pending=$powerShell.BeginInvoke()
             if (-not $pending.AsyncWaitHandle.WaitOne(30000)) { $powerShell.Stop(); throw 'Installed-layout observation exceeded its deadline.' }
             $observations=$powerShell.EndInvoke($pending)
@@ -40,7 +44,7 @@ Describe 'Installed toolkit and independently protected selection' {
             $layout=$observations[0].layout
             $layout.manifestPath | Should -BeExactly $fixture.layout.manifestPath
             $layout.policyPath | Should -BeExactly $fixture.layout.policyPath
-            $layout.controlStateRoot | Should -BeExactly (Join-Path $fixture.workspace 'control')
+            $layout.controlStateRoot | Should -BeExactly $fixture.layout.controlStateRoot
             $layout.lockRoot | Should -BeExactly $fixture.layout.lockRoot
             (Get-T2TreeHashes $fixture) | Should -BeExactly $before
         } finally {
@@ -48,16 +52,28 @@ Describe 'Installed toolkit and independently protected selection' {
             $powerShell.Dispose()
         }
     }
+    It 'rejects reading another target through an already opened target context' {
+        $context=Invoke-T2Private Open-ClcTrustedContext
+        $before=Get-T2TreeHashes $fixture
+        Test-TestRejection {Invoke-T2Private Read-ClcProtectedTarget @($context,'other')} 'Clc.HostPreflightFailed*'
+        Get-T2TreeHashes $fixture | Should -BeExactly $before
+    }
+    It 'rejects a second target record on direct deployment entry before locking or mutation' {
+        $other=$fixture.target | ConvertTo-Json -Depth 16 | ConvertFrom-Json -AsHashtable;$other.targetId='other'
+        Write-TestJson (Join-Path $fixture.layout.targetCatalogRoot 'other.json') $other
+        Test-TestRejection {Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId example-001} 'Clc.HostPreflightFailed*'
+        @([IO.Directory]::EnumerateFileSystemEntries($fixture.layout.lockRoot)).Count | Should -Be 0
+    }
     It 'rejects active <Field> drift' -ForEach @(
         @{Field='version';Value='0.2.0-dev'},@{Field='sourceCommit';Value=('b'*40)},
         @{Field='distributionSha256';Value=('b'*64)},@{Field='inventorySha256';Value=('b'*64)},
-        @{Field='moduleManifestPath';Value='C:\caller\CLC.Deployment.psd1'}
+        @{Field='moduleManifestPath';Value='C:\caller\Clc.Deployment.psd1'}
     ) {
         $fixture.policy.activeToolkit[$Field]=$Value; Write-TestJson $fixture.layout.policyPath $fixture.policy
         Test-TestRejection { Invoke-T2Private Open-ClcTrustedContext } 'Clc.ToolkitNotActive*'
     }
     It 'rejects altered, additional and missing installed module bytes' -ForEach @(@{Mode='altered'},@{Mode='additional'},@{Mode='missing'}) {
-        $path=Join-Path $fixture.layout.moduleRoot 'CLC.Deployment.psm1'
+        $path=Join-Path $fixture.layout.moduleRoot 'Clc.Deployment.psm1'
         switch ($Mode) { altered {[IO.File]::AppendAllText($path,'tamper')}; additional {[IO.File]::WriteAllText((Join-Path $fixture.layout.moduleRoot 'extra.ps1'),'tamper')}; missing {Remove-Item -LiteralPath $path} }
         Test-TestRejection { Invoke-T2Private Open-ClcTrustedContext } 'Clc.ToolkitNotActive*'
     }
@@ -133,14 +149,14 @@ Describe 'Installed toolkit and independently protected selection' {
     ) {
         $global:ClcTestUnsafeHelperPath=Join-Path $fixture.workspace ('binaries\'+$Relative)
         $global:ClcTestUnsafeHelperSid=if ($Identity -ceq 'runtime') { $fixture.target.runtimeIdentitySid } else { $fixture.policy.deploymentSids[0] }
-        Mock -ModuleName CLC.Deployment Assert-ClcAccess {
+        Mock -ModuleName Clc.Deployment Assert-ClcAccess {
             if ($Path -ceq $global:ClcTestUnsafeHelperPath -and $DeniedWriters -ccontains $global:ClcTestUnsafeHelperSid) { throw 'Synthetic helper dependency write access.' }
             return (Invoke-T2Private Get-ClcSecurityObservation @($Path)).sha256
         }
         $context=Invoke-T2Private Open-ClcTrustedContext; $before=Get-TestTreeHashes $fixture.workspace
         Test-TestRejection { Invoke-T2Private Enter-ClcDeploymentLock @($context,'example') }
-        Should -Invoke -ModuleName CLC.Deployment Get-ClcIisPoolNames -Times 0 -Exactly
-        Should -Invoke -ModuleName CLC.Deployment Get-ClcIisObservation -Times 0 -Exactly
+        Should -Invoke -ModuleName Clc.Deployment Get-ClcIisPoolNames -Times 0 -Exactly
+        Should -Invoke -ModuleName Clc.Deployment Get-ClcIisObservation -Times 0 -Exactly
         @([IO.Directory]::EnumerateFileSystemEntries($fixture.policy.lockRoot)).Count | Should -Be 0
         (Get-TestTreeHashes $fixture.workspace) | Should -Be $before
     }
@@ -153,8 +169,8 @@ Describe 'Installed toolkit and independently protected selection' {
         Test-TestRejection { Invoke-T2Private Open-ClcTrustedContext } 'Clc.ToolkitNotActive*'
     }
     It 'rejects case-sensitive or unprovable directory mode before state or native operations' -ForEach @(@{Case='sensitive'},@{Case='unknown'}) {
-        if ($Case -ceq 'sensitive') { Mock -ModuleName CLC.Deployment Get-ClcDirectoryCaseFlags { return 1L } }
-        else { Mock -ModuleName CLC.Deployment Get-ClcDirectoryCaseFlags { throw 'Synthetic unavailable directory flags' } }
+        if ($Case -ceq 'sensitive') { Mock -ModuleName Clc.Deployment Get-ClcDirectoryCaseFlags { return 1L } }
+        else { Mock -ModuleName Clc.Deployment Get-ClcDirectoryCaseFlags { throw 'Synthetic unavailable directory flags' } }
         $before=Get-TestTreeHashes $fixture.workspace
         Test-TestRejection { Invoke-T2Private Open-ClcTrustedContext }
         @([IO.Directory]::EnumerateFileSystemEntries($fixture.policy.lockRoot)).Count | Should -Be 0

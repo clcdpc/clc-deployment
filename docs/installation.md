@@ -8,18 +8,20 @@ The shared release version comes from `v<version>` tags; root [`VERSION`](../VER
 
 The infrastructure operator independently authenticates the exact repository revision, producer workflow/run/job/artifact and archive digest. Review the verifier scripts at that revision through an already trusted workstation/channel. Do not execute a verifier obtained from an unauthenticated archive to authenticate that archive. Adjacent `*.identity.json`, a build log, an inspection result and `distribution.json` are integrity claims. None grants installation or application execution authority.
 
-The build and verifier are ordinary repository tools outside `CLC.Deployment`. They never import distribution code during inspection. Review [Distribution.Common](../tools/Distribution.Common.ps1), [build](../tools/New-ToolkitDistribution.ps1), [verify](../tools/Test-ToolkitDistribution.ps1) and [extract](../tools/Expand-ToolkitDistribution.ps1). The verifier uses trusted .NET metadata/native path readers, not the archive's scripts. SHA-256 supplied to verification must come from the independent approval procedure.
+The build and verifier are ordinary repository tools outside `Clc.Deployment`. They never import distribution code during inspection. Review [Distribution.Common](../tools/Distribution.Common.ps1), [build](../tools/New-ToolkitDistribution.ps1), [verify](../tools/Test-ToolkitDistribution.ps1) and [extract](../tools/Expand-ToolkitDistribution.ps1). The verifier uses trusted .NET metadata/native path readers, not the archive's scripts. SHA-256 supplied to verification must come from the independent approval procedure.
 
 ## Distribution formats and reproducibility
 
-Format 1 contains exactly `CLC.Deployment/` runtime files, `source.commit` (40 lowercase ASCII bytes, no newline), and `distribution.json`. Existing approved format-1 installations remain verifiable/reusable. Format 2 adds the exact eight infrastructure files returned by `Get-DistInfrastructureNames` under `tools/`, including `tools/host/`; it is required for first automated installation. These files stay outside the module and app release packages. No tests, policy, approvals, targets, operational config, keys, credentials or generated state are installed in the module tree. `distribution.json` contains:
+New format 3 contains exactly `Clc.Deployment/` runtime files, `source.commit` (40 lowercase ASCII bytes, no newline), `distribution.json` and the exact eight infrastructure files returned by `Get-DistInfrastructureNames` under `tools/`, including `tools/host/`. It is required for target-local enrollment. Historical formats 1 and 2 retain their original `CLC.Deployment/` names and byte inventories; format 2 includes infrastructure tools. The independent verifier can inspect those retained archives, but they cannot initialize this architecture. They are never renamed or republished. The new module casing requires a separately reviewed, published release before consumer release pinning. This task publishes no release.
+
+Infrastructure tools stay outside the module and application release packages. No tests, policy, approvals, targets, operational configuration, keys, credentials or state are installed in the module tree. `distribution.json` contains:
 
 | Field | Meaning |
 | --- | --- |
-| distributionFormat / formatVersion | `clc-toolkit-distribution` / integer `1` or `2`; unsupported shapes refuse |
+| distributionFormat / formatVersion | `clc-toolkit-distribution` / integer `3` for new distributions; historical `1`/`2` retain their exact interpretation |
 | sourceCommit / moduleVersion | Exact committed HEAD and full stable or prerelease module version |
 | files / inventorySha256 | Complete module-relative path/length/SHA-256 inventory and digest matching the module's installed-tree algorithm |
-| infrastructureFiles / infrastructureInventorySha256 | Format 2 only: complete version-relative infrastructure inventory, also checked against committed source; strict allowlist, no arbitrary scripts |
+| infrastructureFiles / infrastructureInventorySha256 | Formats 2/3: complete version-relative infrastructure inventory, also checked against committed source; strict allowlist, no arbitrary scripts |
 | sourceFiles / sourceInventorySha256 | Complete committed repository file inventory; source contents are not bundled as executable runtime dependencies |
 | toolchain | Actual PowerShell, .NET runtime hosting PowerShell and Git versions |
 | reproducibility | Fixed timestamps/stored entries/sorting and explicit cross-toolchain limitations |
@@ -40,23 +42,36 @@ Keep build output outside tracked source, or under ignored `artifacts/`. Verific
 
 ## Installation
 
-Use the fixed [machine enrollment layout](host-enrollment.md#trust-and-prerequisites):
+Every target owns the canonical [target enrollment layout](host-enrollment.md#trust-and-prerequisites). Windows native known-folder resolution supplies ProgramData; environment variables cannot select it:
 
 ```text
-<enrollment>/toolkit/versions/<full-version>/CLC.Deployment/...
+%ProgramData%/clc-<target-id>/
+  Application/; Config/application.json; Config/deployment.json; Keys/; Inbox/; Logs/
+  Deployment/                         # <enrollment>, infrastructure protected
+<enrollment>/bootstrap/Clc.Deployment/; tools/; source.commit; distribution.zip
+<enrollment>/toolkit/versions/<full-version>/Clc.Deployment/...
 <enrollment>/toolkit/versions/<full-version>/source.commit
 <enrollment>/toolkit/versions/<full-version>/distribution.zip
 <enrollment>/toolkit/policy/host-policy.json
 <enrollment>/toolkit/policy/targets/<targetId>.json
 <enrollment>/toolkit/policy/approvals/<approvalId>.json
 <enrollment>/toolkit/policy/approvals/standing/<standingAuthorizationId>.json # optional
+<enrollment>/toolkit/policy/approvals/hooks/<targetId>.json                 # optional
+<enrollment>/toolkit/policy/approvals/recovery/<approvalId>.json            # optional
+<enrollment>/enrollment/authorizations/<authorizationId>.json
+<enrollment>/enrollment/evidence/<authorizationId>.json
+<enrollment>/enrollment/enrollment.lock
 <enrollment>/locks/<actual-targetKey>.lock
 <enrollment>/control/<actual-targetKey>/...
 ```
 
-The fixed control root must fit the existing 71-character root budget; locks fit the 170-character budget. Application, inbox, external configuration directory, external keys, trust/policy, control and locks remain disjoint. The disposable harness applies a shorter root bound. Use paths from its checked local configuration; these diagrams invent no production location.
+The control root must fit the existing 71-character root budget; locks fit the 170-character budget. Long target IDs or a long native ProgramData location fail the existing 240-character state-path bound. Application, inbox, configuration, keys and protected deployment subtrees remain disjoint. The target root itself is infrastructure owned and prevents runtime modification, deletion, renaming or replacement of protected siblings. Logs are application owned where needed; provisioning their application-specific permissions remains infrastructure work.
 
-Optional [standing authorization](automated-deployments.md) requires a compatible installed toolkit and independently protected target-scoped policy. Trusted workflow code establishes GitHub provenance before host admission; no signing dependency is installed. Existing V1 manual approvals/installations need no new directory or dependency. Package2, standing/verified2, generated approval3 and journal3 require a newly reviewed compatible toolkit; retain old distributions/state and do not overwrite an installed version. This PR does not publish or activate such a distribution. [Hook policy](application-hooks.md) additionally pins independently installed PowerShell and permits explicit stages/source/channel scope; it is never application-owned configuration or an automatic enrollment side effect.
+Each target has its own `activeToolkit` in its own host-policy. DEV and Production can install and pin different versions on the same server. An install never implicitly activates a version. Upgrading or activating one target changes only that target's protected policy and history; retain previous versions and recovery evidence. There is no shared policy, target registry, enrollment lock or active version. Actual IIS resource conflicts still fail host observations; different targets do not coordinate through filesystem storage.
+
+Old machine-wide installations require independently approved re-enrollment or migration with all relevant release/recovery evidence preserved. No old policy supplies authority for a new namespace, and no automatic migration, deletion or fallback is implemented.
+
+Optional [standing authorization](automated-deployments.md) requires a compatible installed toolkit and independently protected target-scoped policy. Trusted workflow code establishes GitHub provenance before host admission; no signing dependency is installed. V1 application approval shapes retain their existing meaning, but this target-local runtime requires independently reviewed installation/enrollment. Package2, standing/verified2, generated approval3 and journal3 require a newly reviewed compatible toolkit; retain old distributions/state and do not overwrite an installed version. This PR does not publish or activate such a distribution. [Hook policy](application-hooks.md) additionally pins independently installed PowerShell and permits explicit stages/source/channel scope; it is never application-owned configuration or an automatic enrollment side effect.
 
 1. Authenticate source and exact archive through the independent infrastructure procedure. Review all changes and producer pins. For GitHub output, verify authenticated run/job/head/artifact ID and service transport digest, then independently inspect the inner toolkit ZIP. Retain those observations under infrastructure ownership and normal ACLs, with independent backups; deployment administrator containment is unavailable.
 2. As infrastructure, create a new version directory with infrastructure ownership and read/execute-only deployment access. Its parent must prevent runtime replacement through delete-child, DACL or owner rights and reject unexpected structural write grants. Elevated deployment can inherit Administrators authority; do not add its direct SID as a protected writer or claim NTFS containment. Do not reuse or patch an installed version.
@@ -91,4 +106,4 @@ Use the producing run's exact source/archive/inventory pins from `candidate-evid
 
 ## Automated setup and retained first-import boundary
 
-The independently protected packaged bootstrap and fixed authorization handoff must be authenticated before code executes. Get/Plan read only; Apply installs exact approved format-2 bytes in the fixed machine enrollment, sets infrastructure ownership/ACLs, creates the v1 policy/catalog/control/lock structure, activates the exact initial pin and verifies it. Policy plus target publication and live facts establish initialization; no sentinel is created. The standalone extractor now holds the archive against write/delete across verification/extraction/retention and bounds streamed entries, total bytes and elapsed time. A failed version is retained and never overwritten. Existing valid active distributions are reused; a different supplied candidate is not an upgrade request. See the [runbook](host-enrollment.md) for all fixed paths, approvals, additional targets and stopped legacy cutover.
+The protected packaged bootstrap at the selected target's `Deployment/bootstrap` and local authorization handoff must be independently authenticated before execution. Get/Plan read only; Apply installs exact approved format-3 bytes, protects ownership/ACLs, creates the unchanged v1 record shapes at canonical target-local paths, activates the exact initial pin and verifies it. Policy, target publication and live facts establish initialization; no sentinel is created. Extraction holds the archive against write/delete throughout bounded verification, extraction and retention. Failed versions remain unactivated evidence and are never overwritten. Existing valid active target-local distributions are reused; a different candidate does not authorize an upgrade. See the [runbook](host-enrollment.md) for exact paths, approvals and stopped legacy cutover.

@@ -8,34 +8,40 @@ This is infrastructure tooling for elevated V1 deployment. Offline tests do not 
 
 ## Trust and prerequisites
 
-Infrastructure independently authenticates the reviewed source, producer and exact toolkit distribution before **any bootstrap code executes**. Obtain the verifier/bootstrap through an already trusted channel; verify the whole format-2 inventory, extract to an infrastructure-owned protected bootstrap directory and pin its exact source/inventory in the authorization. The bootstrap includes `CLC.Deployment/`, `tools/`, `source.commit` and retained `distribution.zip`. Never execute an arbitrary checkout or obtain a verifier from an unauthenticated archive to authenticate itself. Source-checkout layout is refused. The inventory check inside already running code detects drift; it cannot authenticate its own first execution.
+Infrastructure independently authenticates the reviewed source, producer and exact toolkit distribution before **any bootstrap code executes**. Obtain the verifier/bootstrap through an already trusted channel; verify the whole format-3 inventory, extract to an infrastructure-owned protected bootstrap directory and pin its exact source/inventory in the authorization. The bootstrap includes `Clc.Deployment/`, `tools/`, `source.commit` and retained `distribution.zip`. Never execute an arbitrary checkout or obtain a verifier from an unauthenticated archive to authenticate itself. Source-checkout layout is refused. The already trusted bootstrap pins executable/source/archive read streams against write/delete and checks the independently approved inventory/source before further use. These drift checks cannot authenticate their own first execution.
 
 The intended Server 2022 x64 IIS host must already have PowerShell 7, x64 .NET 10/ANCM 20, protected installed IIS/.NET helpers, existing runtime accounts, required logon/profile rights, operational application configuration, a valid trusted HTTPS certificate/private key and DNS/network routing. Accounts, passwords, components, certificates, machine trust and application-specific bootstrap variables are infrastructure prerequisites, never deployment inputs or enrollment side effects. Existing pool credentials are neither read nor changed.
 
 The authorized deployment account must have its exact admitted SID and an enabled elevated Administrators token. New infrastructure resources are owned by BUILTIN\Administrators and grant FullControl only to approved infrastructure SIDs (including SYSTEM/Administrators). No individual deployment SID gets protected-resource write ACEs. Administrative inheritance provides the required elevated access. Independent approval remains procedural against that administrator; NTFS and hashes cannot contain it. Runtime remains distinct, nonadministrator including indirect groups, and effectively unable to write/replace protected resources.
 
-Infrastructure provisions its independent approval handoff once, with SYSTEM/Administrators ownership/writers and protected ancestors:
+Infrastructure provisions each target's independent approval handoff, with SYSTEM/Administrators ownership/writers and protected ancestors:
 
 ```text
-%ProgramData%\CLC\Deployment\host-authorizations\<authorizationId>.json
-%ProgramData%\CLC\Deployment\host-authorizations\host-enrollment.lock
-%ProgramData%\CLC\Deployment\host-authorizations\evidence\
+%ProgramData%\clc-<target-id>\Deployment\enrollment\authorizations\<authorizationId>.json
+%ProgramData%\clc-<target-id>\Deployment\enrollment\enrollment.lock
+%ProgramData%\clc-<target-id>\Deployment\enrollment\evidence\
 ```
 
 The empty lock file and evidence directory belong to this approval handoff, not a target initialization workflow. The scripts cannot redirect that handoff. Authorizations are written/revoked by the independent infrastructure procedure; the tooling provides no approval-writing command. Revocation/replacement is fenced against active execution and retained in infrastructure evidence. An administrator can bypass the procedure; no stronger boundary is claimed.
 
-There is one fixed managed installation per machine:
+Every authenticated target has its own fixed installation:
 
 ```text
-%ProgramData%\CLC\Deployment\Enrollment\toolkit\versions\<version>\...
-%ProgramData%\CLC\Deployment\Enrollment\toolkit\policy\host-policy.json
-%ProgramData%\CLC\Deployment\Enrollment\toolkit\policy\targets\<targetId>.json
-%ProgramData%\CLC\Deployment\Enrollment\toolkit\policy\approvals\<approvalId>.json
-%ProgramData%\CLC\Deployment\Enrollment\locks\<machine-pool-key>.lock
-%ProgramData%\CLC\Deployment\Enrollment\control\<machine-pool-key>\...
+%ProgramData%\clc-<target-id>\Deployment\toolkit\versions\<version>\...
+%ProgramData%\clc-<target-id>\Deployment\toolkit\policy\host-policy.json
+%ProgramData%\clc-<target-id>\Deployment\toolkit\policy\targets\<targetId>.json
+%ProgramData%\clc-<target-id>\Deployment\toolkit\policy\approvals\<approvalId>.json
+%ProgramData%\clc-<target-id>\Deployment\locks\<machine-pool-key>.lock
+%ProgramData%\clc-<target-id>\Deployment\control\<machine-pool-key>\...
 ```
 
-`enrollmentRoot` must equal that fixed root with exact spelling; a caller cannot select another toolkit/lock/state namespace. Existing installations elsewhere require separately reviewed infrastructure maintenance/adoption, never automatic reinstall at a second root. Dedicated `CLC` and `clc-<safe-id>` ProgramData namespaces are admitted under the normal owner/ACL/physical checks; ProgramData itself, other product namespaces and OS directories are refused. Parents of new external directories must already exist with safe infrastructure protection.
+`enrollmentRoot` retains its v1 field shape and must exactly equal the target's derived `Deployment` directory. The initial held configuration parse supplies only a validated target selector. Native Windows known-folder resolution derives ProgramData, then protected local approval binds the exact held configuration bytes, target, bootstrap and policy before mutation. Environment variables, JSON paths, the executing module location and workflow inputs cannot choose another namespace.
+
+`Application`, `Config/application.json`, `Config/deployment.json`, `Keys`, `Inbox` and optional application-owned `Logs` are siblings of protected `Deployment` beneath `%ProgramData%\clc-<target-id>`. Application/configuration/key/inbox paths and the supplied DeploymentConfigurationPath must match these exact canonical locations. Infrastructure must protect the target root against runtime modification, deletion, renaming and replacement. Parents of new resources already exist with safe protection.
+
+The local catalog contains only its selected target. Actual IIS configuration supplies site/pool/binding conflicts; enrollment never scans other targets' ProgramData directories. The bootstrap must execute from that target's exact `Deployment/bootstrap`, containing only `Clc.Deployment`, `tools`, `source.commit` and `distribution.zip` with independently approved executable inventory. Preprovisioned bootstrap and enrollment handoff are expected fresh contents; toolkit, control, locks, prior intent or unknown entries still require reconciliation.
+
+Old machine-wide installations are never adopted, moved or deleted automatically. Independently authorize re-enrollment or migration and retain all relevant release/recovery evidence. There is no fallback to the old policy.
 
 ## Host-local deployment.json
 
@@ -54,14 +60,14 @@ The example uses synthetic placeholders and grants no authority:
   "runtimeEnvironment": "Production",
   "siteName": "ExampleApplication",
   "applicationPoolName": "ExampleApplication",
-  "applicationRoot": "C:\\ProgramData\\clc-example-app\\Application",
-  "operationalConfigPath": "C:\\ProgramData\\clc-example-app\\Config\\application.json",
-  "dataProtectionRoot": "C:\\ProgramData\\clc-example-app\\Keys",
-  "artifactInboxRoot": "C:\\ProgramData\\clc-example-app\\Inbox",
+  "applicationRoot": "C:\\ProgramData\\clc-example-app-dev\\Application",
+  "operationalConfigPath": "C:\\ProgramData\\clc-example-app-dev\\Config\\application.json",
+  "dataProtectionRoot": "C:\\ProgramData\\clc-example-app-dev\\Keys",
+  "artifactInboxRoot": "C:\\ProgramData\\clc-example-app-dev\\Inbox",
   "runtimeIdentitySid": "S-1-5-21-1-2-3-2001",
   "runtimeAccountName": "EXAMPLE\\svc-example-app",
   "readinessUri": "https://example-app.example.invalid/health/ready",
-  "enrollmentRoot": "C:\\ProgramData\\CLC\\Deployment\\Enrollment"
+  "enrollmentRoot": "C:\\ProgramData\\clc-example-app-dev\\Deployment"
 }
 ```
 
@@ -83,11 +89,11 @@ Supply only `-AuthorizationId`; it resolves the exact protected `<id>.json`. The
 | permittedOperations | Explicit subset of install-toolkit, enroll-target, configure-iis, create-site, create-pool, first-cutover |
 | iis | Exact bindingAddress, certificateThumbprint (uppercase SHA-1 store selector), newPoolIdentityType, expectedSnapshotSha256 |
 | resourceBindings | applicationRoot, operationalConfigPath, dataProtectionRoot and artifactInboxRoot: null only if genuinely absent; otherwise exact native volumeId/fileId/canonicalPath/securityDescriptorSha256 |
-| cutover | null, or exact applicationRootIdentity, complete ordinal files array, inventorySha256 and new disjoint backupRoot |
+| cutover | null, or exact applicationRootIdentity, complete ordinal files array, inventorySha256 and new canonical control-root legacy backup |
 
-Bootstrap inventory uses the distribution's module files with `CLC.Deployment/` prefixes plus all eight `tools/` files, sorted ordinally using the existing path/NUL/length/NUL/SHA-256/LF digest. `source.commit` must match bootstrap.sourceCommit. The external acquisition procedure proves which source produced those bytes. Use trusted `Get-HBootstrapInventory`, `Get-HResourceBinding` and `Get-HIisSnapshot` helpers for read-only observations on the operator's reviewed bootstrap when assembling the handoff; observations grant no authority. Infrastructure independently reviews and publishes the resulting exact authorization. Use `Get-HIisSnapshotHash (Get-HIisSnapshot $session)` for the approved pre-state; it hashes an explicit ordered projection and sorted arrays as UTF-8 SHA-256, independently of hashtable property order. Its stable selected projection includes site/root/pool association, pool settings/state/workers, relevant environment and bindings; it never reads a pool password. Do not log that projection, environment values or the private snapshot digest; an unkeyed digest can reveal guesses about low-entropy values.
+Bootstrap inventory uses the distribution's module files with `Clc.Deployment/` prefixes plus all eight `tools/` files, sorted ordinally using the existing path/NUL/length/NUL/SHA-256/LF digest. `source.commit` must match bootstrap.sourceCommit. The external acquisition procedure proves which source produced those bytes. Use trusted `Get-HBootstrapInventory`, `Get-HResourceBinding` and `Get-HIisSnapshot` helpers for read-only observations on the operator's reviewed bootstrap when assembling the handoff; observations grant no authority. Infrastructure independently reviews and publishes the resulting exact authorization. Use `Get-HIisSnapshotHash (Get-HIisSnapshot $session)` for the approved pre-state; it hashes an explicit ordered projection and sorted arrays as UTF-8 SHA-256, independently of hashtable property order. Its stable selected projection includes site/root/pool association, pool settings/state/workers, relevant environment and bindings; it never reads a pool password. Do not log that projection, environment values or the private snapshot digest; an unkeyed digest can reveal guesses about low-entropy values.
 
-For existing resources, approval binds their physical/ACL pre-state. Existing invalid owners/permissions are refused; there is no recursive repair option. The initial host-policy's toolkit version/source/archive/module-inventory identity is independently approved, never copied from adjacent artifact metadata as authority. Apply on an initialized shared host must match its complete current policy, including generation and active pin. Existing active format-1 installations remain verifiable/reusable; first automated installation requires the format-2 tooling distribution. An available different distribution does not authorize an upgrade.
+For existing resources, approval binds their physical/ACL pre-state. Existing invalid owners/permissions are refused; there is no recursive repair option. The initial host-policy's toolkit version/source/archive/module-inventory identity is independently approved, never copied from adjacent artifact metadata as authority. Apply on an initialized target must match its complete current policy, including generation and active pin. New target-local enrollment requires format 3. Historical format-1/2 archives remain inspectable with their original CLC.Deployment names and inventories; they do not initialize the new architecture. An available different distribution does not authorize an upgrade.
 
 Get/Plan also require a durable infrastructure inspection handoff. An existing installation can receive one with an empty permittedOperations array. Setup expiry/revocation prevents mutation, while inspection of an already valid target remains useful. Subsequent release approvals are entirely separate and are never written, enabled or inferred here.
 
@@ -111,14 +117,14 @@ if (-not $verified.ReadyForDeployment) { throw 'Enrollment requires independent 
 $verified | ConvertTo-Json -Depth 8 -Compress
 ```
 
-Inspect/Plan perform reads only. Apply may provision only the exact approved missing resources. It takes the fixed host-wide enrollment handle, repeats inspection, verifies exact distribution inventory before extraction, persists a create-new immutable authorization intent, installs/protects one immutable version, creates/protects catalog/control/lock roots and activates the exact host policy. It then acquires a **create-new canonical per-pool deployment lock**, repeats collision/resource checks, creates missing external directories, applies approved IIS operations, performs approved cutover if needed, verifies the complete target with existing v1 contract/host helpers and publishes the target record create-new **last**. Failed extraction/initialization is retained, never overwritten or automatically repaired.
+Inspect/Plan perform reads only. Apply may provision only the exact approved missing resources. It takes the target-local enrollment handle, repeats inspection, verifies exact distribution inventory before extraction, persists a create-new immutable authorization intent, installs/protects one immutable version, creates/protects catalog/control/lock roots and activates the exact host policy. It then acquires a **create-new canonical per-pool deployment lock**, repeats collision/resource checks, creates missing external directories, applies approved IIS operations, performs approved cutover if needed, verifies the complete target with existing v1 contract/host helpers and publishes the target record create-new **last**. Failed extraction/initialization is retained, never overwritten or automatically repaired.
 
 The intent is protected infrastructure audit/recovery evidence that consumes one authorization before effects. It is not a second deployment journal, completion marker or readiness authority. An absent target/policy plus prior matching intent, orphan lock, canonical state or partial resources blocks retry under another ID too. Reconciliation is an independent fenced maintenance change preserving evidence. A fully valid target is established exclusively by its protected policy/target and complete live verification; historical intent does not cause needless repeat setup.
 
 | HostState | Meaning and next permitted action |
 | --- | --- |
 | ToolkitNotInitialized | No toolkit/control/lock/prior-operation evidence; approved initial resources verified. Plan independent first installation/enrollment |
-| TargetNotEnrolled | Valid active shared installation; no selected target or prior pool evidence. Plan independently authorized target enrollment |
+| TargetNotEnrolled | Valid active target-local installation; no selected target or prior pool evidence. Plan independently authorized target enrollment |
 | Ready | Protected records, exact installed bytes/pin, target/config, actual IIS/filesystem/security and existing deployment-state reconciliation verify. Continue with separately approved release |
 | Incomplete | Missing policy with partial installation/unexpected enrollment contents. Retain and reconcile |
 | DriftDetected | Invalid contract, mismatched config/SID/path/ACL/IIS/certificate or conflicting target. Refuse repair; reconcile |
@@ -134,13 +140,13 @@ Only an already stopped/zero-worker pool may receive approved setting changes, b
 
 New app/inbox roots allow deployment Modify; app runtime receives ReadAndExecute and no writes. New key roots retain infrastructure ownership and runtime Modify without WRITE_DAC/WRITE_OWNER; protected ancestors must prevent replacement. New toolkit/policy/catalog/control/lock roots have infrastructure administrative ACLs. Existing directories/configuration/keys are inspected without ACL changes. Keys are never created, deleted, exported, encrypted or rewritten. Existing configuration bytes and key/profile/account compatibility are retained. The app must supply its own configuration loader/key policy and pool bootstrap variable.
 
-Additional applications reuse the same toolkit/policy/catalog roots. Distinct target IDs cannot share a site/pool, runtime SID, app/config/key/inbox roots or canonical state by accident. Existing targets, approvals, releases and journals are read/retained without modification. No historical version, backup, approval, key or journal cleanup is provided.
+Local approvals retain the existing standing, hooks and recovery subdirectories, strictly parsed and bound to the selected target. Every target installs and pins its own toolkit, policy, approvals and state. DEV and Production can pin different versions on the same server. Actual IIS site/pool/binding conflicts fail host observations. There is no shared registry, directory scan or cross-target lock. Existing versions, approvals, releases, keys and journals remain retained; no automatic cleanup is provided.
 
 ## First cutover and failure handling
 
-Legacy content requires a distinct `first-cutover` operation and exact approved physical root plus complete legacy path/length/SHA-256 inventory. Unknown files, empty unrelated directories, hard links, streams, reparses or unsafe ownership fail. Operators fence conflicting IIS/config/writer changes and independently stop the selected pool, establishing zero workers **before** Apply. An ordinary repeat-deployment approval cannot authorize cutover.
+Legacy content requires a distinct `first-cutover` operation and exact approved physical root plus complete legacy path/length/SHA-256 inventory. Its `backupRoot` must equal `Deployment/control/<targetKey>/legacy-cutover-<authorizationId>`; this retained enrollment backup is separate from approved application-release backups. Unknown files, empty unrelated directories, hard links, streams, reparses or unsafe ownership fail. Operators fence conflicting IIS/config/writer changes and independently stop the selected pool, establishing zero workers **before** Apply. An ordinary repeat-deployment approval cannot authorize cutover.
 
-Under both locks and held root identities, enrollment copies the exact original inventory into the new disjoint protected `backupRoot\original`, verifies every retained byte and publishes a backup index binding the approval and original root. Only after the complete backup verifies does it remove exact identity-bound approved originals and known empty ancestor directories. It preserves the original root, external configuration and keys, checks stopped/zero workers before every deletion and verifies an empty managed root before final target publication. The backup explicitly records `toolkitApprovedRelease=false`.
+Under both locks and held root identities, enrollment copies the exact original inventory into the new protected `control/<targetKey>/legacy-cutover-<authorizationId>/original`, verifies every retained byte and publishes a backup index binding the approval and original root. Only after the complete backup verifies does it remove exact identity-bound approved originals and known empty ancestor directories. It preserves the original root, external configuration and keys, checks stopped/zero workers before every deletion and verifies an empty managed root before final target publication. The backup explicitly records `toolkitApprovedRelease=false`.
 
 Failure retains backup/index, authorization intent, partial installation and actual stopped state; it never restores/deletes the prior backup or restarts code. If first deployment later fails, use ordinary recovery for its approved empty baseline. Restoring original legacy files is a separate operator-directed maintenance change using the retained exact backup, not RestorePrevious to a fabricated approved release. Unknown/partial evidence requires operator intervention; deleting an intent/lock/journal is never a retry procedure.
 

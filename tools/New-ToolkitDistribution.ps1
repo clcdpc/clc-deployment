@@ -27,11 +27,11 @@ try {
         $null=$treeBlobs.Remove($entry.FullName)
         $source.Add([ordered]@{path=$entry.FullName;length=[long]$bytes.Length;sha256=(Get-DistHash $bytes)})
         if ($entry.FullName -ceq 'VERSION') { $versionBytes=$bytes }
-        if ($entry.FullName.StartsWith('src/CLC.Deployment/',[StringComparison]::Ordinal)) {
+        if ($entry.FullName.StartsWith('src/Clc.Deployment/',[StringComparison]::Ordinal)) {
             $relative=$entry.FullName.Substring(19)
-            if ($relative -cnotmatch '^(CLC\.Deployment\.ps[dm]1|(Private|Public)/[A-Za-z0-9.-]+\.ps1)$') { throw 'Unexpected module runtime dependency.' }
+            if ($relative -cnotmatch '^(Clc\.Deployment\.ps[dm]1|(Private|Public)/[A-Za-z0-9.-]+\.ps1)$') { throw 'Unexpected module runtime dependency.' }
             $module.Add([ordered]@{path=$relative;length=[long]$bytes.Length;sha256=(Get-DistHash $bytes)})
-            $payload['CLC.Deployment/'+$relative]=$bytes
+            $payload['Clc.Deployment/'+$relative]=$bytes
         }
         if ($entry.FullName -cin (Get-DistInfrastructureNames)) {
             $infrastructure.Add([ordered]@{path=$entry.FullName;length=[long]$bytes.Length;sha256=(Get-DistHash $bytes)})
@@ -45,29 +45,28 @@ try {
     Assert-DistInventory $sourceFiles
     if ($null -eq $versionBytes) { throw 'Committed shared VERSION is missing.' }
     $version=Get-DistVersionFromBytes $versionBytes
-    $manifestText=[Text.UTF8Encoding]::new($false,$true).GetString($payload['CLC.Deployment/CLC.Deployment.psd1'])
+    $manifestText=[Text.UTF8Encoding]::new($false,$true).GetString($payload['Clc.Deployment/Clc.Deployment.psd1'])
     if ((Get-DistModuleVersion $manifestText) -cne $version) { throw 'Committed module metadata differs from the shared repository version.' }
-    $sourceManifest=$payload['CLC.Deployment/CLC.Deployment.psd1']
+    $sourceManifest=$payload['Clc.Deployment/Clc.Deployment.psd1']
     if ($ReleaseVersion) {
         $version=$ReleaseVersion
         $generated=Get-DistVersionedManifestBytes $sourceManifest $version
-        $payload['CLC.Deployment/CLC.Deployment.psd1']=$generated
+        $payload['Clc.Deployment/Clc.Deployment.psd1']=$generated
         foreach ($file in $module) {
-            if ($file.path -ceq 'CLC.Deployment.psd1') { $file.length=[long]$generated.Length; $file.sha256=Get-DistHash $generated }
+            if ($file.path -ceq 'Clc.Deployment.psd1') { $file.length=[long]$generated.Length; $file.sha256=Get-DistHash $generated }
         }
     }
     $moduleFiles=Sort-DistFiles $module.ToArray()
     Assert-DistInventory $moduleFiles
-    $record=[ordered]@{distributionFormat='clc-toolkit-distribution';formatVersion=1;sourceCommit=$SourceCommit;moduleVersion=$version;
+    $record=[ordered]@{distributionFormat='clc-toolkit-distribution';formatVersion=3;sourceCommit=$SourceCommit;moduleVersion=$version;
         files=$moduleFiles;inventorySha256=(Get-DistInventoryHash $moduleFiles);sourceFiles=$sourceFiles;sourceInventorySha256=(Get-DistInventoryHash $sourceFiles);
         toolchain=[ordered]@{powershell=$PSVersionTable.PSVersion.ToString();dotnetRuntime=[Environment]::Version.ToString();git=(Get-DistGit $RepositoryRoot @('--version'))};
         reproducibility='Stored ZIP, ordinal inventory, fixed 1980 timestamps; exact bytes repeat with the same source and toolchain. Rebuilt apps and cross-runtime ZIP identity are not claimed.'}
     if ($infrastructure.Count) {
         if ($infrastructure.Count -ne @(Get-DistInfrastructureNames).Count) { throw 'Incomplete infrastructure tooling inventory.' }
-        $record.formatVersion=2
         $record.infrastructureFiles=Sort-DistFiles $infrastructure.ToArray()
         $record.infrastructureInventorySha256=Get-DistInventoryHash $record.infrastructureFiles
-    }
+    } else { throw 'Renamed distributions require the exact infrastructure tooling inventory.' }
     $payload['distribution.json']=[Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json -Depth 16 -Compress))
     $payload['source.commit']=[Text.Encoding]::ASCII.GetBytes($SourceCommit)
     # Recheck before publication; do not claim a dirty checkout is a pinned input.

@@ -44,16 +44,16 @@ try {
     }
     $root=$configuration.ownedRoot; $null=[IO.Directory]::CreateDirectory($root)
     Set-QDirectoryAcl $root @() @($configuration.deploymentSid,$configuration.runtimeSid)
-    $toolkit=Join-Path $root 'toolkit'; $version=Join-Path $toolkit ('versions\'+$configuration.toolkit.version)
+    $toolkit=Join-Path (Join-Path $root 'Deployment') 'toolkit'; $version=Join-Path $toolkit ('versions\'+$configuration.toolkit.version)
     foreach ($path in @($toolkit,$version,(Join-Path $toolkit 'policy\targets'),(Join-Path $toolkit 'policy\approvals'),
-            $configuration.applicationRoot,[IO.Path]::GetDirectoryName($configuration.operationalConfigPath),$configuration.dataProtectionRoot,$configuration.artifactInboxRoot,(Join-Path $root 'locks'),(Get-QControlRoot $configuration))) { $null=[IO.Directory]::CreateDirectory($path) }
-    foreach ($path in @($configuration.applicationRoot,$configuration.artifactInboxRoot,(Join-Path $root 'locks'),(Join-Path $root 'control'))) { Set-QDirectoryAcl $path @($configuration.deploymentSid) @() }
+            $configuration.applicationRoot,[IO.Path]::GetDirectoryName($configuration.operationalConfigPath),$configuration.dataProtectionRoot,$configuration.artifactInboxRoot,(Join-Path (Join-Path $root 'Deployment') 'locks'),(Get-QControlRoot $configuration))) { $null=[IO.Directory]::CreateDirectory($path) }
+    foreach ($path in @($configuration.applicationRoot,$configuration.artifactInboxRoot,(Join-Path (Join-Path $root 'Deployment') 'locks'),(Join-Path (Join-Path $root 'Deployment') 'control'))) { Set-QDirectoryAcl $path @($configuration.deploymentSid) @() }
     Set-QDirectoryAcl $configuration.applicationRoot @($configuration.deploymentSid) @($configuration.runtimeSid)
     Set-QDirectoryAcl $configuration.dataProtectionRoot @($configuration.runtimeSid) @($configuration.deploymentSid)
     $archive=[IO.Compression.ZipFile]::OpenRead($DistributionPath)
     try {
         foreach ($entry in $archive.Entries) {
-            if (-not $entry.FullName.StartsWith('CLC.Deployment/',[StringComparison]::Ordinal) -and $entry.FullName -cnotin (Get-DistInfrastructureNames)) { continue }
+            if (-not $entry.FullName.StartsWith('Clc.Deployment/',[StringComparison]::Ordinal) -and $entry.FullName -cnotin (Get-DistInfrastructureNames)) { continue }
             $destination=Join-Path $version $entry.FullName.Replace('/','\'); Assert-DistLocalPath $destination
             $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
             $inputStream=$entry.Open(); $outputStream=[IO.FileStream]::new($destination,[IO.FileMode]::CreateNew)
@@ -70,14 +70,13 @@ try {
     $trustedInstaller=[Security.Principal.NTAccount]::new('NT SERVICE\TrustedInstaller').Translate([Security.Principal.SecurityIdentifier]).Value
     $policy=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=1;recordKind='host-policy';generation=1;machineIdentity=$configuration.machineIdentity;
         activeToolkit=@{version=$configuration.toolkit.version;sourceCommit=$configuration.toolkit.sourceCommit;distributionSha256=$configuration.toolkit.distributionSha256;inventorySha256=$configuration.toolkit.inventorySha256;moduleManifestPath=$manifest};
-        targetCatalogRoot=(Join-Path $toolkit 'policy\targets');approvalCatalogRoot=(Join-Path $toolkit 'policy\approvals');controlStateRoot=(Join-Path $root 'control');lockRoot=(Join-Path $root 'locks');
+        targetCatalogRoot=(Join-Path $toolkit 'policy\targets');approvalCatalogRoot=(Join-Path $toolkit 'policy\approvals');controlStateRoot=(Join-Path (Join-Path $root 'Deployment') 'control');lockRoot=(Join-Path (Join-Path $root 'Deployment') 'locks');
         dotnetPath=$configuration.dotnetPath;appcmdPath=$configuration.appcmdPath;infrastructureOwnerSids=@($configuration.infrastructureSid,'S-1-5-18','S-1-5-32-544',$trustedInstaller);deploymentSids=@($configuration.deploymentSid)}
     Invoke-QPrivate Assert-ClcRuntimeIdentity @(@{policyFile=@{record=$policy}},$configuration.runtimeSid)
     $target=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=1;recordKind='target';targetId=$configuration.targetId;applicationId='clc-qualification-probe';environmentName='disposable-qualification';runtimeEnvironment=$configuration.runtimeEnvironment;siteName=$configuration.siteName;applicationPoolName=$configuration.poolName;
         applicationRoot=$configuration.applicationRoot;operationalConfigPath=$configuration.operationalConfigPath;dataProtectionRoot=$configuration.dataProtectionRoot;artifactInboxRoot=$configuration.artifactInboxRoot;runtimeIdentitySid=$configuration.runtimeSid;readinessUri=$configuration.readinessUri}
     Write-QJson (Join-Path $toolkit 'policy\host-policy.json') $policy
     Write-QJson (Join-Path $policy.targetCatalogRoot ($target.targetId+'.json')) $target
-    $target.targetId=$configuration.alternateTargetId; Write-QJson (Join-Path $policy.targetCatalogRoot ($target.targetId+'.json')) $target
     Write-QJson $configuration.operationalConfigPath @{configurationRevision='probe-config-001';keyStoreCompatibilityId='clc-probe-dpapi-user-v1';syntheticSecret='CLC_SYNTHETIC_SECRET_SENTINEL_T4'}
     # Exact root ownership is recorded before IIS effects. Partial provisioning is
     # retained for operator inspection; it is never automatically removed.

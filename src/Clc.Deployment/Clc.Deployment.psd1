@@ -1,5 +1,5 @@
 @{
-    RootModule = 'CLC.Deployment.psm1'
+    RootModule = 'Clc.Deployment.psm1'
     ModuleVersion = '0.1.0'
     GUID = '06389081-3a35-4dfb-8b17-0a78a2f30fe5'
     Author = 'CLC'

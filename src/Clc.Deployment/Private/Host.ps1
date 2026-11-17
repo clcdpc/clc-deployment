@@ -149,7 +149,8 @@ function Assert-ClcControlAncestorAccess {
 
 # Keep canonical control-state admission bounded even when ordinary retained
 # history is large. Exact historical evidence is verified by its reader; only
-# these six direct children define the state namespace's boundary.
+# six lifecycle children and at most one retained enrollment cutover backup
+# define the state boundary. The legacy backup never authorizes recovery.
 function Assert-ClcControlRootBoundary {
     param($Context, $Identity, [string] $RuntimeSid, [Diagnostics.Stopwatch] $Clock=$null, [int] $DeadlineSeconds=300)
     if ($null -eq $Clock) { $Clock=[Diagnostics.Stopwatch]::StartNew() }
@@ -170,12 +171,15 @@ function Assert-ClcControlRootBoundary {
         $allowed=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($name in @('journal.json','current.json','staging','backups','releases','attempts')) { $null=$allowed.Add($name) }
         $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $legacySeen=$false
         foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($root)) {
             Assert-ClcDeadline $Clock $DeadlineSeconds
-            if ($seen.Count -ge 6) { Stop-ClcError Clc.UnsafePath }
+            if ($seen.Count -ge 7) { Stop-ClcError Clc.UnsafePath }
             $name=[IO.Path]::GetFileName($entry)
-            if (-not $allowed.Contains($name) -or -not $seen.Add($name)) { Stop-ClcError Clc.UnsafePath }
-            $directory=$name -iin @('staging','backups','releases','attempts')
+            $legacy=$name -cmatch '^legacy-cutover-[a-z0-9][a-z0-9-]{0,63}$'
+            if ((-not $allowed.Contains($name) -and -not $legacy) -or -not $seen.Add($name) -or ($legacy -and $legacySeen)) { Stop-ClcError Clc.UnsafePath }
+            if ($legacy) { $legacySeen=$true; $null=Add-ClcProtectedPathPin $Context $entry -Directory -RuntimeSid $RuntimeSid }
+            $directory=$legacy -or $name -iin @('staging','backups','releases','attempts')
             if ($directory) {
                 # Hold each observed fixed container with LIST_DIRECTORY access
                 # and no write/delete sharing so it cannot be renamed away.

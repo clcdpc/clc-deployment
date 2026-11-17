@@ -60,7 +60,7 @@ if ($candidateEvidence.sourceCommit -cne $SourceCommit -or $candidateEvidence.to
     throw 'Candidate tests did not consume the exact prebuilt release distribution.'
 }
 
-$toolkitFile='CLC.Deployment-'+$version+'.zip'
+$toolkitFile='Clc.Deployment-'+$version+'.zip'
 $packageFile=$packageResult.package
 [void][IO.Directory]::CreateDirectory($bundle)
 [IO.File]::Copy($distributionPath,(Join-Path $bundle $toolkitFile),$false)

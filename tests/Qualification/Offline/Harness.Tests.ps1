@@ -66,7 +66,7 @@ Describe 'Qualification admission and honest evidence' {
     }
     It 'observes only functions that exist in the current installed module' {
         foreach ($name in Get-QObservedCommands) {
-            & (Get-Module CLC.Deployment) { param($n) (Get-Command $n -CommandType Function -ErrorAction Stop).Name } $name | Should -BeExactly $name
+            & (Get-Module Clc.Deployment) { param($n) (Get-Command $n -CommandType Function -ErrorAction Stop).Name } $name | Should -BeExactly $name
         }
     }
     It 'observes a real module command with an external debugger breakpoint without replacing its function' {
@@ -77,19 +77,19 @@ Describe 'Qualification admission and honest evidence' {
             continue
         }.GetNewClosure()
         try {
-            & (Get-Module CLC.Deployment) { Get-ClcToolkitVersion } | Should -BeExactly '0.1.0-dev.1'
+            & (Get-Module Clc.Deployment) { Get-ClcToolkitVersion } | Should -BeExactly '0.1.0-dev.1'
             $global:ClcQualificationCountTest.ContainsKey('Get-ClcToolkitVersion') | Should -BeTrue
         } finally { Remove-PSBreakpoint $breakpoint; Remove-Variable ClcQualificationCountTest -Scope Global }
     }
     It 'records stable toolkit identity when prerelease metadata is absent' {
-        $module=Get-Module CLC.Deployment
+        $module=Get-Module Clc.Deployment
         $stable=[pscustomobject]@{Version=[version]'1.2.3';PrivateData=@{PSData=@{}}}
         & $module { param($Module) Get-ClcToolkitVersion -Module $Module } $stable | Should -BeExactly '1.2.3'
         $withoutPsData=[pscustomobject]@{Version=[version]'2.3.4';PrivateData=@{}}
         & $module { param($Module) Get-ClcToolkitVersion -Module $Module } $withoutPsData | Should -BeExactly '2.3.4'
     }
     It 'rejects malformed present prerelease metadata instead of emitting a trailing separator' {
-        $module=Get-Module CLC.Deployment
+        $module=Get-Module Clc.Deployment
         $invalid=[pscustomobject]@{Version=[version]'1.2.3';PrivateData=@{PSData=@{Prerelease=''}}}
         { & $module { param($Module) Get-ClcToolkitVersion -Module $Module } $invalid } | Should -Throw
     }

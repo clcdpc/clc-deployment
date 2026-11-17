@@ -3,17 +3,17 @@
 function Set-T3Mocks {
     Set-T2Mocks
     $global:ClcLifecycle=@{revision='example-001';keyId='probe-example';operations=[Collections.Generic.List[string]]::new();ready=$true;startIdle=$true;failStart=$false;failStop=$false}
-    Mock -ModuleName CLC.Deployment Get-ClcPlatformObservation { return @{build='20348';productType=3L;is64Bit=$true;powershellMajor=7L} }
-    Mock -ModuleName CLC.Deployment Get-ClcRuntimeObservation { return @{frameworks=@(@{name='Microsoft.NETCore.App';version='10.0.12'},@{name='Microsoft.AspNetCore.App';version='10.0.12'});ancmMajor=20L;ancmX64=$true;dotnetX64=$true} }
-    Mock -ModuleName CLC.Deployment Assert-ClcHostAccess { }
-    Mock -ModuleName CLC.Deployment Start-ClcApplicationValidator {
+    Mock -ModuleName Clc.Deployment Get-ClcPlatformObservation { return @{build='20348';productType=3L;is64Bit=$true;powershellMajor=7L} }
+    Mock -ModuleName Clc.Deployment Get-ClcRuntimeObservation { return @{frameworks=@(@{name='Microsoft.NETCore.App';version='10.0.12'},@{name='Microsoft.AspNetCore.App';version='10.0.12'});ancmMajor=20L;ancmX64=$true;dotnetX64=$true} }
+    Mock -ModuleName Clc.Deployment Assert-ClcHostAccess { }
+    Mock -ModuleName Clc.Deployment Start-ClcApplicationValidator {
         $global:ClcLifecycle.operations.Add('Validate')
         $identity=Get-T3DllIdentity $Dll
         $record=@{validationContractVersion=1L;valid=$true;applicationId=$identity.applicationId;releaseId=$identity.releaseId;sourceCommit=$identity.source.commit;
             runtimeEnvironment='Production';configurationRevision=$global:ClcLifecycle.revision;keyStoreCompatibilityId=$global:ClcLifecycle.keyId;errorCodes=@()}
         return Start-T3HarmlessHelper ($record | ConvertTo-Json -Compress)
     }
-    Mock -ModuleName CLC.Deployment Start-ClcIisHelper {
+    Mock -ModuleName Clc.Deployment Start-ClcIisHelper {
         $global:ClcLifecycle.operations.Add($Operation)
         $state=Invoke-T2Private Read-ClcDeploymentState @($Lock)
         $state.journal.record.intent.operation | Should -BeExactly $Operation
@@ -28,8 +28,8 @@ function Set-T3Mocks {
         }
         return Start-T3HarmlessHelper ''
     }
-    Mock -ModuleName CLC.Deployment Get-ClcPoolObservation { return @{poolState=$global:ClcTestFixture.iis.poolState;workerCount=[long]$global:ClcTestFixture.iis.workers.Count} }
-    Mock -ModuleName CLC.Deployment Invoke-ClcReadinessRequest {
+    Mock -ModuleName Clc.Deployment Get-ClcPoolObservation { return @{poolState=$global:ClcTestFixture.iis.poolState;workerCount=[long]$global:ClcTestFixture.iis.workers.Count} }
+    Mock -ModuleName Clc.Deployment Invoke-ClcReadinessRequest {
         return Get-T3SyntheticReadiness
     }
 }

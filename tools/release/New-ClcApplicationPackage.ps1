@@ -61,10 +61,10 @@ $embedded=Get-ProbeEmbeddedMetadata (Join-Path $publish ($assembly+'.dll'))
 Assert-ClcCompiledApplicationIdentity $embedded $c.applicationId $source.identity.releaseId $SourceCommit
 $sharedRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $distribution=& (Join-Path $sharedRoot 'tools/New-ToolkitDistribution.ps1') -RepositoryRoot $sharedRoot -SourceCommit $SharedSourceCommit -OutputPath (Join-Path $OutputDirectory 'toolkit.zip')
-Import-Module (Join-Path $sharedRoot 'src/CLC.Deployment/CLC.Deployment.psd1') -Force
+Import-Module (Join-Path $sharedRoot 'src/Clc.Deployment/Clc.Deployment.psd1') -Force
 $metadata=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=2L;recordKind='release-metadata';applicationId=$c.applicationId;releaseId=$source.identity.releaseId;
     source=@{repository=$c.repository;commit=$SourceCommit};build=@{workflowPath=$c.producer.workflowPath;runId=$RunId;runAttempt=$RunAttempt;job=$c.producer.job;sdkVersion=$sdk.sdkVersion;dependencyLockSha256=$lockHash};
-    builder=@{module='CLC.Deployment';version=$distribution.moduleVersion;sourceCommit=$SharedSourceCommit;distributionSha256=$distribution.distributionSha256};
+    builder=@{module='Clc.Deployment';version=$distribution.moduleVersion;sourceCommit=$SharedSourceCommit;distributionSha256=$distribution.distributionSha256};
     runtime=@{framework='net10.0';rid='win-x64';architecture='x64';hostingModel='inprocess';workerLimit=1L};changeKind='application-deployment';validation=@{contractVersion=1L;entryPoint=$assembly+'.dll'};readinessContractVersion=1L}
 $parameters=@{PublishRoot=$publish;MetadataPath=(Join-Path $OutputDirectory 'metadata.json')}
 if ($c.Contains('hooks')) { $metadata.hooks=$c.hooks; $parameters.HookRoot=Join-Path $SourceRoot '.clc/hooks' }

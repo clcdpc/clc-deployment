@@ -17,21 +17,22 @@ Describe 'Canonical observed machine and actual pool identity' {
         @{Values=@('11111111-1111-1111-1111-111111111111','11111111-1111-1111-1111-111111111111')}
     ) {
         $global:ClcTestUuid=$Values
-        Mock -ModuleName CLC.Deployment Get-ClcMachineUuidObservation { return $global:ClcTestUuid }
+        Mock -ModuleName Clc.Deployment Get-ClcMachineUuidObservation { return $global:ClcTestUuid }
         Test-TestRejection { Invoke-T2Private Get-ClcMachineIdentity @($fixture.policy.machineIdentity) } 'Clc.HostPreflightFailed*'
     }
     It 'rejects ambiguous, unsupported or missing actual pools' -ForEach @(
         @{Name='example-pool';Actual=@()},@{Name='example-pool';Actual=@('example-pool','EXAMPLE-POOL')},
         @{Name='bad name';Actual=@('bad name')},@{Name='éxample';Actual=@('éxample')},@{Name=('a'*65);Actual=@(('a'*65))}
     ) { Test-TestRejection { Invoke-T2Private Get-ClcCanonicalPoolName @($Name,$Actual) } }
-    It 'maps alternate TargetIds to the same canonical lock and state paths' {
+    It 'rejects another target selector or catalog record before opening lock or state' {
         $second=$fixture.target.Clone(); $second.targetId='alternate'; $second.applicationPoolName='EXAMPLE-POOL'
         Write-TestJson (Join-Path $fixture.layout.targetCatalogRoot 'alternate.json') $second
         $context=Invoke-T2Private Open-ClcTrustedContext
-        $a=Invoke-T2Private Read-ClcProtectedTarget @($context,'example'); $b=Invoke-T2Private Read-ClcProtectedTarget @($context,'alternate')
-        $ia=Invoke-T2Private Get-ClcTargetIdentity @($context,$a); $ib=Invoke-T2Private Get-ClcTargetIdentity @($context,$b)
-        $ia.lockPath | Should -Be $ib.lockPath; $ia.controlRoot | Should -Be $ib.controlRoot
-        (Invoke-T2Private Test-ClcValueEqual @($ia.snapshot,$ib.snapshot)) | Should -BeTrue
+        $before=Get-T2TreeHashes $fixture
+        Test-TestRejection {Invoke-T2Private Read-ClcProtectedTarget @($context,'example')} 'Clc.HostPreflightFailed*'
+        Test-TestRejection {Invoke-T2Private Read-ClcProtectedTarget @($context,'alternate')} 'Clc.HostPreflightFailed*'
+        @([IO.Directory]::EnumerateFileSystemEntries($fixture.layout.lockRoot)).Count | Should -Be 0
+        Get-T2TreeHashes $fixture | Should -BeExactly $before
     }
     It 'refuses target root/site reassignment and missing enrollment without creating state' -ForEach @(@{Change='root'},@{Change='site'},@{Change='control'}) {
         if ($Change -ceq 'root') { $fixture.iis.applications[0].physicalPath=$fixture.target.artifactInboxRoot }
@@ -52,9 +53,9 @@ Describe 'Canonical observed machine and actual pool identity' {
 Describe 'Read-only host preflight with deterministic IIS observations' {
     BeforeEach {
         $fixture=New-T2Fixture; Set-T2FixtureInModule $fixture; Set-T2Mocks
-        Mock -ModuleName CLC.Deployment Get-ClcPlatformObservation { return @{build='20348';productType=3L;is64Bit=$true;powershellMajor=7L} }
-        Mock -ModuleName CLC.Deployment Get-ClcRuntimeObservation { return @{frameworks=@(@{name='Microsoft.NETCore.App';version='10.0.12'},@{name='Microsoft.AspNetCore.App';version='10.0.12'});ancmMajor=20L;ancmX64=$true;dotnetX64=$true} }
-        Mock -ModuleName CLC.Deployment Assert-ClcHostAccess { }
+        Mock -ModuleName Clc.Deployment Get-ClcPlatformObservation { return @{build='20348';productType=3L;is64Bit=$true;powershellMajor=7L} }
+        Mock -ModuleName Clc.Deployment Get-ClcRuntimeObservation { return @{frameworks=@(@{name='Microsoft.NETCore.App';version='10.0.12'},@{name='Microsoft.AspNetCore.App';version='10.0.12'});ancmMajor=20L;ancmX64=$true;dotnetX64=$true} }
+        Mock -ModuleName Clc.Deployment Assert-ClcHostAccess { }
         $context=Invoke-T2Private Open-ClcTrustedContext; $lock=Invoke-T2Private Enter-ClcDeploymentLock @($context,'example')
     }
     AfterEach { Invoke-T2Private Exit-ClcDeploymentLock @($lock); Invoke-T2Private Close-ClcTrustedContext @($context); Remove-TestWorkspace $fixture.workspace }
@@ -89,7 +90,7 @@ Describe 'Read-only host preflight with deterministic IIS observations' {
         $before=(Invoke-T2Private Get-ClcHostPreflight @($context,$lock.targetFile,$lock.identity,'net10.0')).hostObservationSha256
         if ($Field -ceq 'bindings') { $fixture.iis.bindings += @{protocol='http';host='synthetic.invalid';port=80L;address='127.0.0.1'} }
         elseif ($Field -ceq 'environment') { $fixture.iis.environment += @{name='SYNTHETIC_SETTING';value='changed';scope='Pool'} }
-        else { Mock -ModuleName CLC.Deployment Get-ClcRuntimeObservation { return @{frameworks=@(@{name='Microsoft.NETCore.App';version='10.0.13'},@{name='Microsoft.AspNetCore.App';version='10.0.13'});ancmMajor=20L;ancmX64=$true;dotnetX64=$true} } }
+        else { Mock -ModuleName Clc.Deployment Get-ClcRuntimeObservation { return @{frameworks=@(@{name='Microsoft.NETCore.App';version='10.0.13'},@{name='Microsoft.AspNetCore.App';version='10.0.13'});ancmMajor=20L;ancmX64=$true;dotnetX64=$true} } }
         (Invoke-T2Private Get-ClcHostPreflight @($context,$lock.targetFile,$lock.identity,'net10.0')).hostObservationSha256 | Should -Not -Be $before
     }
     It 'ignores enumeration and object-property order in unchanged host configuration' {
@@ -123,10 +124,10 @@ Describe 'Read-only host preflight with deterministic IIS observations' {
         Test-TestRejection { Invoke-T2Private Get-ClcHostPreflight @($context,$lock.targetFile,$lock.identity,'net10.0') } 'Clc.HostPreflightFailed*'
     }
     It 'rejects unqualified runtime, x86 ANCM/dotnet and missing/unprovable access' -ForEach @(@{Case='runtime'},@{Case='x86'},@{Case='dotnet-x86'},@{Case='rights'}) {
-        if ($Case -ceq 'rights') { Mock -ModuleName CLC.Deployment Assert-ClcHostAccess { throw 'Synthetic access observation unavailable' } }
-        elseif ($Case -ceq 'runtime') { Mock -ModuleName CLC.Deployment Get-ClcRuntimeObservation { return @{frameworks=@();ancmMajor=19L;ancmX64=$true;dotnetX64=$true} } }
-        elseif ($Case -ceq 'dotnet-x86') { Mock -ModuleName CLC.Deployment Get-ClcRuntimeObservation { return @{frameworks=@();ancmMajor=20L;ancmX64=$true;dotnetX64=$false} } }
-        else { Mock -ModuleName CLC.Deployment Get-ClcRuntimeObservation { return @{frameworks=@();ancmMajor=20L;ancmX64=$false;dotnetX64=$true} } }
+        if ($Case -ceq 'rights') { Mock -ModuleName Clc.Deployment Assert-ClcHostAccess { throw 'Synthetic access observation unavailable' } }
+        elseif ($Case -ceq 'runtime') { Mock -ModuleName Clc.Deployment Get-ClcRuntimeObservation { return @{frameworks=@();ancmMajor=19L;ancmX64=$true;dotnetX64=$true} } }
+        elseif ($Case -ceq 'dotnet-x86') { Mock -ModuleName Clc.Deployment Get-ClcRuntimeObservation { return @{frameworks=@();ancmMajor=20L;ancmX64=$true;dotnetX64=$false} } }
+        else { Mock -ModuleName Clc.Deployment Get-ClcRuntimeObservation { return @{frameworks=@();ancmMajor=20L;ancmX64=$false;dotnetX64=$true} } }
         Test-TestRejection { Invoke-T2Private Get-ClcHostPreflight @($context,$lock.targetFile,$lock.identity,'net10.0') } 'Clc.HostPreflightFailed*'
     }
 }
@@ -135,19 +136,19 @@ Describe 'Protected ANCM dependency tree and native x64 header inspection' {
         $fixture=New-T2Fixture; Set-T2FixtureInModule $fixture; Set-T2Mocks; $context=$null
         $ancmRoot=Join-Path $fixture.workspace 'binaries\ancm'; [void][IO.Directory]::CreateDirectory($ancmRoot)
         $ancmPath=Join-Path $ancmRoot 'aspnetcorev2.dll'; [IO.File]::WriteAllText($ancmPath,'synthetic; never loaded')
-        Mock -ModuleName CLC.Deployment Invoke-ClcRuntimeReadQuery { throw 'Forbidden synthetic runtime query.' }
+        Mock -ModuleName Clc.Deployment Invoke-ClcRuntimeReadQuery { throw 'Forbidden synthetic runtime query.' }
     }
     AfterEach { if ($context) { Invoke-T2Private Close-ClcTrustedContext @($context) }; Remove-TestWorkspace $fixture.workspace }
     It 'refuses runtime-writable ANCM directory or DLL before querying dotnet' -ForEach @(@{Leaf='directory'},@{Leaf='dll'}) {
         $global:ClcTestUnsafeAncm=if ($Leaf -ceq 'directory') { $ancmRoot } else { $ancmPath }
-        Mock -ModuleName CLC.Deployment Assert-ClcAccess {
+        Mock -ModuleName Clc.Deployment Assert-ClcAccess {
             if ($Path -ceq $global:ClcTestUnsafeAncm -and $DeniedWriters -ccontains $global:ClcTestFixture.target.runtimeIdentitySid) { Invoke-T2Private Stop-ClcError @('Clc.HostPreflightFailed') }
             return (Invoke-T2Private Get-ClcSecurityObservation @($Path)).sha256
         }
         $context=Invoke-T2Private Open-ClcTrustedContext
         $null=Invoke-T2Private Read-ClcProtectedTarget @($context,'example'); $before=Get-TestTreeHashes $fixture.workspace
         Test-TestRejection { Invoke-T2Private Get-ClcRuntimeObservation @($context,$ancmPath,$fixture.target.runtimeIdentitySid) } 'Clc.HostPreflightFailed*'
-        Should -Invoke -ModuleName CLC.Deployment Invoke-ClcRuntimeReadQuery -Times 0 -Exactly
+        Should -Invoke -ModuleName Clc.Deployment Invoke-ClcRuntimeReadQuery -Times 0 -Exactly
         (Get-TestTreeHashes $fixture.workspace) | Should -Be $before
     }
     It 'reads an actual held PE header and refuses x86 dotnet before a runtime query' {
@@ -159,7 +160,7 @@ Describe 'Protected ANCM dependency tree and native x64 header inspection' {
         (Invoke-T2Private Get-ClcFileX64 @($context,$fixture.policy.dotnetPath)) | Should -BeFalse
         (Invoke-T2Private Get-ClcFileX64 @($context,$ancmPath)) | Should -BeTrue
         Test-TestRejection { Invoke-T2Private Get-ClcRuntimeObservation @($context,$ancmPath,$fixture.target.runtimeIdentitySid) } 'Clc.HostPreflightFailed*'
-        Should -Invoke -ModuleName CLC.Deployment Invoke-ClcRuntimeReadQuery -Times 0 -Exactly
+        Should -Invoke -ModuleName Clc.Deployment Invoke-ClcRuntimeReadQuery -Times 0 -Exactly
     }
 }
 Describe 'Actual NTFS ownership and current-token effective access observations' {
@@ -176,7 +177,7 @@ Describe 'Actual NTFS ownership and current-token effective access observations'
         $observation=Invoke-T2Private Get-ClcSecurityObservation @($workspace)
         Test-TestRejection { Invoke-T2Private Assert-ClcAccess @($workspace,@('S-1-5-19'),@('S-1-5-19'),@()) } 'Clc.HostPreflightFailed*'
         Test-TestRejection { Invoke-T2Private Assert-ClcAccess @($workspace,@($observation.ownerSid),@(),@()) } 'Clc.HostPreflightFailed*'
-        Mock -ModuleName CLC.Deployment Get-ClcEffectiveAccess { throw 'Synthetic inaccessible identity' }
+        Mock -ModuleName Clc.Deployment Get-ClcEffectiveAccess { throw 'Synthetic inaccessible identity' }
         Test-TestRejection { Invoke-T2Private Assert-ClcAccess @($workspace,@($observation.ownerSid),@($observation.ownerSid,'S-1-5-18','S-1-5-32-544'),@('S-1-5-19')) }
     }
     It 'queries one actual Windows SMBIOS UUID without using hostname or a generated identity' {
@@ -191,13 +192,13 @@ Describe 'Actual NTFS ownership and current-token effective access observations'
     ) {
         $global:ClcTestAncestorMask=$Mask
         $global:ClcTestAncestorSid=if ($Identity -ceq 'runtime') { 'S-1-5-20' } else { 'S-1-5-21-1-2-3-1002' }
-        Mock -ModuleName CLC.Deployment Get-ClcCallerSid { return 'S-1-5-19' }
-        Mock -ModuleName CLC.Deployment Test-ClcAdministratorToken { return $true }
-        Mock -ModuleName CLC.Deployment Get-ClcSecurityObservation {
+        Mock -ModuleName Clc.Deployment Get-ClcCallerSid { return 'S-1-5-19' }
+        Mock -ModuleName Clc.Deployment Test-ClcAdministratorToken { return $true }
+        Mock -ModuleName Clc.Deployment Get-ClcSecurityObservation {
             $raw=[Security.AccessControl.RawSecurityDescriptor]::new('O:SYG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)')
             return @{ownerSid='S-1-5-18';dacl=$raw.DiscretionaryAcl;bytes=[byte[]]@(1);sha256=('a'*64)}
         }
-        Mock -ModuleName CLC.Deployment Get-ClcEffectiveAccess { if ($Sid -ceq $global:ClcTestAncestorSid) { return $global:ClcTestAncestorMask }; return 0L }
+        Mock -ModuleName Clc.Deployment Get-ClcEffectiveAccess { if ($Sid -ceq $global:ClcTestAncestorSid) { return $global:ClcTestAncestorMask }; return 0L }
         $context=@{layout=@{root=(Join-Path $workspace 'toolkit')};policyFile=@{record=@{infrastructureOwnerSids=@('S-1-5-18','S-1-5-32-544');deploymentSids=@('S-1-5-19','S-1-5-21-1-2-3-1002')}};ancestorPins=@{}}
         $before=(Get-Acl -LiteralPath $workspace).Sddl
         Test-TestRejection { Invoke-T2Private Assert-ClcTrustAncestors @($context,$context.layout.root,'S-1-5-20') } 'Clc.HostPreflightFailed*'

@@ -17,10 +17,10 @@ $null=& "$script:QualificationRepository/tools/Expand-ToolkitDistribution.ps1" -
 # The protected toolkit parent supplies inherited infrastructure ownership and
 # read/execute-only deployment access. Verify it before active metadata changes.
 Assert-QProtectedAuthorization $versionRoot $configuration
-$policyPath=Join-Path $configuration.ownedRoot 'toolkit\policy\host-policy.json'
+$policyPath=Join-Path $configuration.ownedRoot 'Deployment\toolkit\policy\host-policy.json'
 $policyBytes=[IO.File]::ReadAllBytes($policyPath); $policy=Read-DistJson $policyBytes
 if ($policy.activeToolkit.sourceCommit -cne $configuration.toolkit.sourceCommit -or $policy.activeToolkit.distributionSha256 -cne $configuration.toolkit.distributionSha256) { throw 'Original activation identity differs.' }
-$history=Join-Path $configuration.ownedRoot 'toolkit\policy\activation-history'; $null=[IO.Directory]::CreateDirectory($history)
+$history=Join-Path $configuration.ownedRoot 'Deployment\toolkit\policy\activation-history'; $null=[IO.Directory]::CreateDirectory($history)
 $historyStream=[IO.FileStream]::new((Join-Path $history ('host-policy-'+$policy.generation+'.json')),[IO.FileMode]::CreateNew)
 try { $historyStream.Write($policyBytes); $historyStream.Flush($true) } finally { $historyStream.Dispose() }
 Write-QJson (Join-Path $history ('owner-'+$policy.generation+'.json')) $marker

@@ -1,15 +1,11 @@
 BeforeAll {
     . "$PSScriptRoot/Support.ps1"; . "$PSScriptRoot/T2Support.ps1"; . "$PSScriptRoot/T3Support.ps1"
-    function Copy-ClcTestTarget($Fixture) {
-        $target=$Fixture.target | ConvertTo-Json | ConvertFrom-Json -AsHashtable
-        $target.targetId='alternate'; Write-TestJson (Join-Path $Fixture.layout.targetCatalogRoot 'alternate.json') $target
-    }
 }
 Describe 'Practical deployment failure and recovery boundaries' {
     BeforeEach {
         $fixture=New-T2Fixture; Set-T2FixtureInModule $fixture; Set-T3Mocks
         $approval=New-T3Approval $fixture -Nested
-        $global:ClcOriginalCopy=& (Get-Module CLC.Deployment) { (Get-Command Copy-ClcPayloadFile).ScriptBlock }
+        $global:ClcOriginalCopy=& (Get-Module Clc.Deployment) { (Get-Command Copy-ClcPayloadFile).ScriptBlock }
     }
     AfterEach { Remove-TestWorkspace $fixture.workspace }
     It 'rejects a downloaded ZIP that differs from its protected expected SHA-256 before staging or IIS mutation' {
@@ -35,7 +31,7 @@ Describe 'Practical deployment failure and recovery boundaries' {
     It 'restores the prior running pool after a backup failure before replacement' {
         $null=Invoke-ClcIisDeployment example $approval.record.approvalId
         $newer=New-T3Approval $fixture probe-approval-002 2L
-        Mock -ModuleName CLC.Deployment New-ClcVerifiedBackup { throw 'Synthetic storage failure' }
+        Mock -ModuleName Clc.Deployment New-ClcVerifiedBackup { throw 'Synthetic storage failure' }
         Test-TestRejection { Invoke-ClcIisDeployment example $newer.record.approvalId }
         $fixture.iis.poolState | Should -BeExactly Started
         (Get-TestTreeHashes $fixture.target.applicationRoot) | Should -BeExactly (Get-TestTreeHashes $approval.publish)
@@ -45,7 +41,7 @@ Describe 'Practical deployment failure and recovery boundaries' {
         $null=Invoke-ClcIisDeployment example $approval.record.approvalId
         $newer=New-T3Approval $fixture probe-approval-002 2L
         $global:ClcFailReplacement=$true
-        Mock -ModuleName CLC.Deployment Copy-ClcPayloadFile {
+        Mock -ModuleName Clc.Deployment Copy-ClcPayloadFile {
             if ($global:ClcFailReplacement -and $Destination.StartsWith($global:ClcTestFixture.target.applicationRoot) -and $Destination.EndsWith('Probe.dll')) {
                 [IO.File]::WriteAllText($Destination,'partial candidate'); throw 'Synthetic storage failure'
             }
@@ -74,13 +70,17 @@ Describe 'Practical deployment failure and recovery boundaries' {
         (Get-FileHash -LiteralPath $fixture.target.operationalConfigPath).Hash | Should -BeExactly $config
         (Get-FileHash -LiteralPath $key).Hash | Should -BeExactly $keyHash
     }
-    It 'blocks both a retry and an alternate target selector after an unresolved attempt' {
+    It 'blocks a local unresolved retry and refuses a foreign selector before state access' {
         $global:ClcLifecycle.ready=$false
-        Mock -ModuleName CLC.Deployment Get-ClcReadinessElapsed { return 120 }
+        Mock -ModuleName Clc.Deployment Get-ClcReadinessElapsed { return 120 }
         Test-TestRejection { Invoke-ClcIisDeployment example $approval.record.approvalId } 'Clc.ReadinessFailed*'
-        $alias=Copy-ClcTestTarget $fixture
         $before=Get-T2TreeHashes $fixture
-        Test-TestRejection { Invoke-ClcIisDeployment alternate anything } 'Clc.RecoveryRequired*'
+        Test-TestRejection { Invoke-ClcIisDeployment example $approval.record.approvalId } 'Clc.RecoveryRequired*'
+        $global:ClcForeignStateReads=0
+        Mock -ModuleName Clc.Deployment Read-ClcDeploymentState { $global:ClcForeignStateReads++; throw 'Foreign selector reached deployment state.' }
+        Test-TestRejection { Invoke-ClcIisDeployment alternate anything } 'Clc.ToolkitNotActive*'
+        Should -Invoke -ModuleName Clc.Deployment Get-ClcInstalledLayout -Times 1 -Exactly -ParameterFilter {$TargetId -ceq 'alternate'}
+        $global:ClcForeignStateReads | Should -Be 0
         (Get-T2TreeHashes $fixture) | Should -BeExactly $before
     }
     It 'serializes the actual pool through one exclusive OS lock' {
@@ -92,7 +92,7 @@ Describe 'Practical deployment failure and recovery boundaries' {
     }
     It 'rejects an unknown native launch before any recovery effects' {
         $global:ClcLifecycle.ready=$false
-        Mock -ModuleName CLC.Deployment Get-ClcReadinessElapsed { return 120 }
+        Mock -ModuleName Clc.Deployment Get-ClcReadinessElapsed { return 120 }
         Test-TestRejection { Invoke-ClcIisDeployment example $approval.record.approvalId }
         $path=Join-Path $fixture.controlRoot 'journal.json'; $j=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
         $j.nativeCall=@{callId=[guid]::NewGuid().ToString('D');operation='Start';launchState='Intent';processId=$null;creationUtc=$null;exitCode=$null}
@@ -109,9 +109,9 @@ Describe 'Practical deployment failure and recovery boundaries' {
         $fixture.iis.poolState | Should -BeExactly Started
     }
     It 'reports failed terminal persistence and requires explicit recovery of its published candidate' {
-        $global:ClcOriginalComplete=& (Get-Module CLC.Deployment) { (Get-Command Complete-ClcAttempt).ScriptBlock }
+        $global:ClcOriginalComplete=& (Get-Module Clc.Deployment) { (Get-Command Complete-ClcAttempt).ScriptBlock }
         $global:ClcFailComplete=$true
-        Mock -ModuleName CLC.Deployment Complete-ClcAttempt {
+        Mock -ModuleName Clc.Deployment Complete-ClcAttempt {
             if ($Outcome -ceq 'Deployed' -and $global:ClcFailComplete) { throw 'Synthetic terminal write failure' }
             & $global:ClcOriginalComplete $Session $Outcome $Pool
         }
