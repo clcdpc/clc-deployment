@@ -11,7 +11,7 @@ GitHub configuration results do not complete deployment/recovery acceptance or i
 ## Rollout order
 
 1. Complete application-owned compatibility and release integration, including immutable source and distribution pins required by the consumer.
-2. Have infrastructure inspect the actual target with read-only `Get-ClcHostEnrollment` and `Initialize-ClcHostEnrollment -Operation Plan`. Apply missing setup only under exact protected authorization; reconcile incomplete or drifted state before proceeding.
+2. Have infrastructure complete [preauthorization observation collection and the independent protected handoff](host-enrollment.md#3-collect-observations-and-prepare-the-candidate) before the first read-only `Get-ClcHostEnrollment` and `Initialize-ClcHostEnrollment -Operation Plan`. Apply only exact authorized missing setup; reconcile incomplete/drifted state first.
 3. Conduct a separately authorized consumer deployment/recovery pilot using the seven checks below and the application's prerequisites. A consumer may use its dedicated approved target; a disposable probe application is not a prerequisite.
 4. Scope disruptive/destructive checks, including reboot and storage faults, separately from ordinary deployment/recovery verification.
 

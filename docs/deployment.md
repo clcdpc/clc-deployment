@@ -2,22 +2,130 @@
 
 Follow the [public contracts](contracts.md) for command, approval, package and state formats, and [application hooks](application-hooks.md) for V2 policy, planning and persistent-state recovery.
 
-## Prerequisites and commands
+## First application deployment
 
-Import the exact independently installed manifest in a fresh trusted PowerShell process. Infrastructure must provision and approve the dedicated Windows Server 2022/IIS target, elevated deployment identity, separate nonadministrator runtime, .NET/ANCM, protected configuration/keys, target/approval catalogs and exact toolkit pin. `Test-ClcRelease` reports integrity only.
+Perform this once per successfully [enrolled target](host-enrollment.md#5-inspect-plan-apply-and-verify), before standing authorization. The application owner must first qualify configuration/readiness and any separately authorized [hooks](application-hooks.md). The deployment operator uses the admitted enabled elevated administrator token. This procedure uses the existing shared package mechanism; an application-owned producer must supply equivalent authenticated identity/provenance.
 
-For a consumer using GitHub Actions, complete the [GitHub setup checklist](github-setup.md) before enabling its trusted automatic deployment consumer. The recommended integration consumes successful eligible tagged builds under standing policy after an independently approved baseline. Runner admission and infrastructure-approved environment protection are separate from protected host and exact-byte release approval. The exact manual commands below remain supported for independently authorized operations.
+### Obtain the exact release ZIP
+
+1. **Application repository:** an authorized developer pushes a valid DEV tag, or a stable Production tag contained in master history, using the existing [release workflow](setup-guide.md#7-configure-the-release-workflow). The successful producer uploads `clc-package-<fullSourceCommit>-<runId>-<attempt>`, containing only `release.zip`; publication exposes that same ZIP as the canonical immutable GitHub Release asset.
+2. Before baseline/standing setup, the automatic deployment stage is expected to refuse: an enrolled empty target reaches `Clc.AutomationRequiresBaseline`; missing toolkit/target can fail earlier. No baseline, exact approval or standing policy is inferred. Keep successful package/publication evidence even if the overall workflow becomes Failed. A publication failure skips deployment and requires separate reconciliation.
+3. **Trusted infrastructure workstation, fresh PowerShell:** independently authenticate the application repository, exact tag/source, `.clc/release.json` at that source, workflow/job, run/attempt and artifact. Obtain run ID/attempt from the Actions run; obtain the artifact ID and service transport digest from its authenticated API record. Use reviewed shared source pinned by the tagged configuration (`$sharedSource`), not arbitrary release payload code. Provision read-only GitHub access through the existing secure workstation process (`GH_TOKEN` for these readers); never print/store credentials in examples/evidence. Import the independently reviewed packaging module, then load its read-only preparation readers:
 
 ```powershell
-Import-Module 'C:\ProgramData\clc-example\Deployment\toolkit\versions\<version>\Clc.Deployment\Clc.Deployment.psd1'
-Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId example-002
-Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId example-001 -AllowDowngrade -Reason approved-incident
-Restore-ClcIisDeployment -TargetId example -AttemptId '<latest-attempt-guid>' -Mode RestorePrevious -Reason approved-incident
+# setup-example: baseline-acquisition
+Import-Module "$sharedSource\src\Clc.Deployment\Clc.Deployment.psd1"
+. "$sharedSource\tools\release\Workflow.Common.ps1"
+# $repository is the independently selected owner/repository, e.g. EXAMPLE-OWNER/ssrs-web.
+$api = { param($method,$path,$body,[switch]$Bytes)
+    Invoke-ClcReleaseApi -Repository $repository -Method $method -Path $path -Body $body -Bytes:$Bytes
+}
+# $tag, $sourceCommit, $runId and $runAttempt identify the selected producer.
+$configResponse = & $api GET ("/repos/$repository/contents/.clc/release.json?ref=$sourceCommit") $null
+if ($configResponse.encoding -cne 'base64') { throw 'Expected exact tagged configuration bytes.' }
+$c = Read-ClcConsumerConfiguration -Bytes ([Convert]::FromBase64String($configResponse.content))
+if ($c.repository -cne $repository) { throw 'Configuration repository differs.' }
+$source = Get-ClcVerifiedSource $c $tag $sourceCommit $runId $api
+$artifactId = Get-ClcQualifiedArtifactId $c $sourceCommit $runId $runAttempt $api
+$run = & $api GET ("/repos/$repository/actions/runs/$runId/attempts/$runAttempt") $null
+$jobs = Get-ClcGitHubCollection $api ("/repos/$repository/actions/runs/$runId/attempts/$runAttempt/jobs") jobs
+$artifact = & $api GET ("/repos/$repository/actions/artifacts/$artifactId") $null
+$published = & $api GET ("/repos/$repository/releases/tags/$tag") $null
 ```
 
-These are nonoperational placeholders. Public commands accept no credentials, callbacks, arbitrary target/state paths or trust-bypass flag. The independently protected enabled approval supplies the expected hashes; an inspection result, manifest, caller expectation or release name never authorizes code. Deployment never provisions credentials or operational configuration.
+Before proceeding, the **independent reviewer** verifies these facts against the selected tagged workflow and authenticated GitHub responses:
 
-For an already deployed baseline, infrastructure may separately enable [tag-authorized routine deployment](automated-deployments.md). `Invoke-ClcIisDeployment -TargetId $target -StandingAuthorizationId $standing -ReleaseTag $tag -ArchivePath $zip -VerifiedReleasePath $identity` validates trusted workflow-supplied release identity and exact package bytes and publishes exact authority under the same lock before this sequence. Revoked/changed policy blocks routine use of its generated approvals, including direct exact-ID retries. Existing manual approval commands need no standing policy.
+| Observation | Required match |
+| --- | --- |
+| Run | Exact repository/head_repository, run ID/attempt, full head SHA, configured workflow path, event `push`, head_branch equal to selected tag |
+| Producer job | Exactly one configured REST job name (`producer.jobName`, otherwise `producer.job`), Completed/Success, same run/source; all required application qualification precedes packaging |
+| Artifact | Exact ID, not expired, positive bounded size, name `clc-package-<source>-<run>-<attempt>`, same workflow_run ID/head SHA; `digest` matches `sha256:<64 lowercase hex>` |
+| Timing | Artifact created between that producer job's started/completed times; job started no earlier than this attempt's run_started_at |
+| Publication | Same tag/source, correct prerelease classification, canonical `release.zip` bytes, published API `immutable=true` |
+| Failed overall run | Failure is the expected downstream host-authorization refusal, not failed producer/qualification/publication; retain the exact successful producer evidence |
+
+`Get-ClcVerifiedProducer` can verify an in-progress or successfully completed overall run; it deliberately rejects a completed failed run. Do not change that verifier or fabricate a successful run. The manual independent approval procedure above reviews the successful producer separately when only downstream deployment refused.
+
+After that review, form provenance from those authenticated observations, download the Actions transport and verify the package. `$newDownloadDirectory` is an absent protected local preparation directory; `$runId`/`$runAttempt`/`$artifactId` are actual positive integers:
+
+```powershell
+# setup-example: baseline-package
+$producer = @{workflowPath=$c.producer.workflowPath; runId=[long]$runId
+    runAttempt=[long]$runAttempt; buildJob=$c.producer.job; artifactId=[long]$artifactId
+    transportSha256=$artifact.digest.Substring(7)}
+$releaseZip = Save-ClcVerifiedArtifact $repository $producer $newDownloadDirectory $api
+$inspection = Get-ClcVerifiedPackage $c $source $producer $releaseZip
+$publishedAssets = @($published.assets | Where-Object { $_.name -ceq 'release.zip' })
+if ($published.draft -isnot [bool] -or $published.draft -or
+    $published.immutable -isnot [bool] -or -not $published.immutable -or
+    $published.tag_name -cne $tag -or $publishedAssets.Count -ne 1) {
+    throw 'Expected one canonical immutable published release ZIP.'
+}
+$publishedZip = & $api GET ("/repos/$repository/releases/assets/"+$publishedAssets[0].id) $null -Bytes
+if ((Get-ClcBytesHash $publishedZip) -cne $inspection.archiveSha256) {
+    throw 'Published ZIP differs from the qualified producer ZIP.'
+}
+# Recheck tag/source after download; any difference requires fresh review.
+$sourceAgain = Get-ClcVerifiedSource $c $tag $sourceCommit $runId $api
+if (($source.identity | ConvertTo-Json -Compress) -cne
+    ($sourceAgain.identity | ConvertTo-Json -Compress)) { throw 'Source changed.' }
+```
+
+`Save-ClcVerifiedArtifact` checks the actual outer transport digest and safely extracts its sole bounded ZIP. `Get-ClcVerifiedPackage` checks all package/inventory hashes, source/producer/builder pin and compiled application identity without executing it. Success is integrity evidence, still not approval. If downloading canonical `release.zip` instead, independently compare it byte-for-byte with this producer-verified inner ZIP; a Release name alone is insufficient. An expired/unavailable original artifact requires a new qualified tag/build and independent review, not invented provenance or repackaging.
+
+### Prepare and independently install the exact approval
+
+**Infrastructure workstation:** choose a new safe `$approvalId` (for example `ssrs-web-dev-baseline`) and a stable `$lineageId` (for example `ssrs-web-dev`) that later standing policy will retain. Use the authenticated values above:
+
+```powershell
+# setup-example: baseline-approval
+$releaseCandidate = [ordered]@{
+    contractFamily='clc-file-iis-v1'; schemaVersion=1L; recordKind='release-approval'
+    approvalId=$approvalId; targetId=$targetId; enabled=$false
+    applicationId=$inspection.applicationId; releaseId=$inspection.releaseId
+    sourceRepository=$source.identity.repository; sourceCommit=$inspection.sourceCommit
+    lineageId=$lineageId; releaseSequence=$source.identity.sequence
+    releaseZipSha256=$inspection.archiveSha256; manifestSha256=$inspection.manifestSha256
+    provenance=$producer
+    authorization=@{authoritySid=$authoritySid; reference=$changeReference; approvedUtc=$approvedUtc}
+}
+Assert-ClcRecord $releaseCandidate release-approval
+```
+
+`$authoritySid` is the actual independent approving infrastructure SID admitted by host policy and distinct from deployment; reference/time come from its approval process. Validate against [release-approval schema](../schemas/release-approval.schema.json). Independently review final bytes, package/source/producer evidence, target, lineage/sequence, configuration compatibility and maintenance scope, then enable/protect the approved record. Inspection/self-declared hashes never authenticate approval.
+
+**On the enrolled host**, the authorized infrastructure process installs the final schema-1 approval at:
+
+```text
+%ProgramData%\clc-<target-id>\Deployment\toolkit\policy\approvals\<approvalId>.json
+```
+
+Use infrastructure ownership and structural protection from [enrollment](host-enrollment.md#1-inspect-and-prepare-the-host); never grant the individual deployment SID protected writes. Place the exact reviewed application ZIP at `%ProgramData%\clc-<target-id>\Inbox\<approvalId>.zip` and recompare its SHA-256 with the approval. Do not change/rebuild its bytes during transfer.
+
+### Deploy and verify the baseline
+
+**Intended host, fresh elevated admitted deployment process:** import the exact independently active manifest (from protected host-policy, verified through [installation](installation.md#verification-and-activation)), then invoke:
+
+```powershell
+Import-Module $independentlyInstalledManifest
+$result = Invoke-ClcIisDeployment -TargetId $targetId -ReleaseApprovalId $approvalId
+$result | ConvertTo-Json -Depth 8
+```
+
+Accept the baseline only on `status=Deployed`, expected release/toolkit identity, `observedPoolState=Started`, `workerCount=1` and `currentGeneration=1` for the first empty deployment. The engine verifies expected-release HTTPS readiness and final complete installed inventory before success. Infrastructure also reviews protected `control/<targetKey>/current.json`, `journal.json` and `attempts/<attemptId>/deployment.json`: same attempt/release/generation, Completed journal/terminal snapshot and verified empty backup/index. Derive `targetKey` with `Get-ClcTargetKey $policy.machineIdentity $target.applicationPoolName.ToUpperInvariant()` in the trusted preparation scope. Retain local evidence without publishing private configuration hashes. Follow [seven real-IIS checks](iis-verification.md#seven-checks) for observed acceptance.
+
+Only after this successful real baseline does infrastructure establish [standing authorization](automated-deployments.md#configure-standing-authorization). For failure, preserve all retained material and use the recovery procedure below; never fabricate current state or an empty-baseline exception.
+
+## Manual operations after baseline
+
+Use the same exact-manifest import and protected approval/inbox locations above. Downgrades additionally require independent exact authority and a nonsecret reason:
+
+```powershell
+Invoke-ClcIisDeployment -TargetId $targetId -ReleaseApprovalId $approvedPriorRelease -AllowDowngrade -Reason $incidentReference
+Restore-ClcIisDeployment -TargetId $targetId -AttemptId $latestFailedAttemptId -Mode RestorePrevious -Reason $incidentReference
+```
+
+For routine standing selection, see [automated deployments](automated-deployments.md). Revoked/changed standing bytes also block direct retries of generated exact approvals. No command provisions credentials or operational configuration.
 
 ## Deployment sequence and safeguards
 
