@@ -68,10 +68,11 @@ Start a fresh `pwsh -NoLogo -NoProfile -NonInteractive` and import **that exact 
 
 ## Later independently approved upgrades
 
-Infrastructure fences active deployment/enrollment processes and competing policy writers, preserving previous distributions, policy history, approvals, current/journal, attempts and backups. Review compatibility with retained state and application contracts. Authenticate the replacement archive and use the extractor above with a new exact `Deployment\toolkit\versions\<version>` directory. Never overwrite an installed version.
+1. Infrastructure fences deployment/enrollment processes and policy writers. Preserve previous distributions, policy history, approvals, current/journal, attempts and backups; review retained-state/application compatibility.
+2. Authenticate the replacement archive. Extract to a new exact `Deployment\toolkit\versions\<version>` directory; never overwrite an installed version. Verify bytes, owner/DACL/ancestor replacement rights and effective runtime isolation.
+3. Independently replace protected host policy with next generation and exact `activeToolkit` version/source/distribution digest/module inventory/absolute manifest. **No general activation command exists.** Extractor `OperatorApprovalReference` records a reference without authenticating approval or activating code.
+4. Use a fresh process/new manifest and update the independent inspection handoff when needed. Inspect the target; prove an old inactive manifest refuses before effects. Interrupted publication/incompatible state requires fenced maintenance; retain both versions/evidence.
 
-Verify installed bytes, owner/DACL/ancestor replacement rights and effective runtime isolation. Infrastructure then independently replaces the protected host policy with its next generation and exact `activeToolkit` version, source, distribution digest, module inventory and absolute manifest path. There is **no general activation command**. Installation's `OperatorApprovalReference` records a reference; it does not authenticate approval or activate code.
-
-Use a fresh process with the new manifest. Obtain an updated independent enrollment inspection handoff when necessary, inspect the target and prove an old inactive manifest refuses before privileged effects. Interrupted publication or incompatible retained state requires fenced maintenance; keep both versions and evidence. DEV and Production policies can pin different versions on the same machine.
+DEV and Production can pin different versions on one machine.
 
 For the separately authorized disposable harness only, `Set-QualificationToolkit.ps1 -Operation Inspect` and its independently authorized `activate-compatible-toolkit` procedure retain campaign-specific policy/history checks. It is not a production installer. See [IIS verification](iis-verification.md) and [testing/toolchain evidence](testing.md). **Real IIS and compatible-toolkit recovery qualification remain NOT RUN.**

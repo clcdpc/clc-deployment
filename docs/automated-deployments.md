@@ -1,11 +1,18 @@
 # Standing authorization and routine deployment
 
-Complete [host enrollment](host-enrollment.md) and the [first independently approved application baseline](deployment.md#first-application-deployment) before configuring standing authority. It admits routine exact releases for one established target; it cannot authorize enrollment, initial baseline/cutover, toolkit changes, downgrades or exceptional recovery. Build-time shared pins and the target's independently active host-toolkit pin remain separate.
+Complete [enrollment](host-enrollment.md) and the [independently approved baseline](deployment.md#first-application-deployment) first. Standing authority admits routine exact releases for that target. It excludes enrollment, baseline/cutover, toolkit changes, downgrades and exceptional recovery. Build-time shared pins remain separate from the active host-toolkit pin.
 
 ## Configure standing authorization
 
-1. **Infrastructure workstation:** obtain the protected target/host policy and the successful baseline approval. Record the exact application, target, `environmentName`, repository and baseline `lineageId`. Read the producer workflow path/job from the authenticated application's `.clc/release.json` and workflow. `buildJob` is the logical configured producer job, not its optional REST display name. Use `integrationBranch=master`.
-2. Prepare a schema-**2** candidate using the [strict schema](../schemas/standing-authorization.schema.json). Current shared tag behavior supplies schema-2 verified evidence; DEV requires `allowUnmergedDevTags=true`. Use `allowSnapshots=false` for both shared routine targets. The example is shape-valid synthetic data: replace repository, approving SID/reference/time and any different actual target/producer/lineage values before review. Keep `enabled=false` until independent approval:
+1. **Infrastructure workstation:** collect inputs from protected target/host policy, successful baseline approval and authenticated application `.clc/release.json`/workflow:
+
+   | Input | Value |
+   | --- | --- |
+   | Scope | Exact application/target/environment/repository; baseline `lineageId` |
+   | Producer | Exact workflow path and logical `buildJob`, not optional REST display name |
+   | Source policy | `integrationBranch=master`; DEV `allowUnmergedDevTags=true`; shared routine targets `allowSnapshots=false` |
+
+2. Prepare a [schema-2 candidate](../schemas/standing-authorization.schema.json), matching current shared evidence. Replace synthetic repository/SID/reference/time and any differing target/producer/lineage values below. Keep disabled pending independent approval:
 
 ```json
 {
@@ -35,14 +42,14 @@ Complete [host enrollment](host-enrollment.md) and the [first independently appr
 }
 ```
 
-3. **Independent infrastructure reviewer:** verify the complete candidate against baseline/target/producer evidence and host policy. `authorization.authoritySid` must be an actual admitted infrastructure SID distinct from deployment; reference/time come from its approval process. Approve final bytes and set `enabled=true`. Hooks require a separate [hook policy](application-hooks.md), including `UnmergedDevTag` scope for unmerged DEV hooks; standing policy alone never enables executable hooks.
+3. **Independent reviewer:** compare candidate with baseline/target/producer/host-policy evidence. Use an admitted infrastructure SID distinct from deployment and the actual approval reference/time. Approve final bytes and enable. Hooks separately require [hook policy](application-hooks.md), including UnmergedDevTag scope for unmerged DEV.
 4. **On the intended host, infrastructure process:** create/protect the `standing` subdirectory if absent and install the exact approved record at:
 
 ```text
 %ProgramData%\clc-<target-id>\Deployment\toolkit\policy\approvals\standing\<standingAuthorizationId>.json
 ```
 
-Use the [protected ownership/ancestor procedure](host-enrollment.md#1-inspect-and-prepare-the-host), effective runtime isolation and no direct deployment-SID protected write ACE. The toolkit never creates/enables standing policy. NTFS does not contain the elevated deployment administrator; independent approval remains procedural.
+Apply [ownership/ancestor protection](host-enrollment.md#1-inspect-and-prepare-the-host), effective runtime isolation and no direct deployment-SID write ACE. The toolkit never creates/enables standing policy; approval against the elevated administrator remains procedural.
 
 5. **Verify locally:** validate final JSON with `Test-Json -Json (Get-Content -LiteralPath $standingPath -Raw) -SchemaFile $standingSchema`, where `$standingSchema` is the reviewed schema above. Then, in a fresh elevated admitted deployment process importing the exact active manifest, use this infrastructure-only read of the installed protected record:
 
@@ -61,11 +68,13 @@ Use the [protected ownership/ancestor procedure](host-enrollment.md#1-inspect-an
 } $targetId $standingAuthorizationId
 ```
 
-Success: strict protected-record verification returns the intended enabled scope. Compare it with the baseline and tagged producer configuration; this reader does not verify GitHub or authorize deployment. Under separately authorized consumer scope, the next eligible tag verifies the complete workflow/host path. Repeat setup independently for Production using its target/standing ID, exact target `environmentName`, `channel=Production`, baseline lineage and `allowUnmergedDevTags=false`.
+Compare returned enabled scope with baseline/tagged producer configuration. This read does not verify GitHub or authorize a deployment; exercise the next eligible tag only under separately authorized consumer scope.
+
+Repeat independently for Production: its target/standing ID, exact `environmentName`, `channel=Production`, baseline lineage and `allowUnmergedDevTags=false`.
 
 ## Routine operation and revocation
 
-An authorized developer pushes an eligible tag using [setup section 10](setup-guide.md#10-routine-operation). The existing application workflow qualifies its producer, publishes immutable bytes, then invokes installed admission. Its authenticated channel determines target/environment/runner labels before host lookup. Native ProgramData and protected target-local host policy select/verify the exact active toolkit; beta/RC return before any host lookup.
+An authorized developer [pushes an eligible tag](setup-guide.md#10-routine-operation). The workflow qualifies its producer, publishes immutable bytes, then invokes installed admission. Authenticated channel selects target/environment/runner labels; native ProgramData/protected policy select the active toolkit. Beta/RC return before host lookup.
 
 The current explicit engine invocation is:
 
@@ -74,9 +83,15 @@ Invoke-ClcIisDeployment -TargetId $targetId -StandingAuthorizationId $standingAu
     -ReleaseTag $tag -ArchivePath $inboxZip -VerifiedReleasePath $verifiedIdentity
 ```
 
-The trusted workflow supplies the exact inbox ZIP and independently verified release identity; hand-written identity JSON is not authentication. No additional human approval is required for each routine tag. Verify actual result, expected readiness, installed inventory and completed state as in [deployment](deployment.md#deploy-and-verify-the-baseline). V2 repeats perform the full cycle and rerun applicable hooks; V1 retains healthy NoOp behavior.
+The trusted workflow supplies exact ZIP and authenticated release identity; hand-written JSON grants no authority. Routine tags need no further human approval. Verify [result/readiness/inventory/completed state](deployment.md#deploy-and-verify-the-baseline). V2 repeats rerun full cycle/hooks; V1 retains healthy NoOp.
 
-**Revoke through infrastructure:** fence active deployment/policy writers, preserve the old exact policy/evidence, then disable, remove or byte-change that protected standing record under independently authorized change control. This revokes its generated approvals, including direct `-ReleaseApprovalId` retries. Recheck the disabled/missing record and, in a separately authorized negative exercise, verify refusal before mutation. Never delete attempts, pending intents or release evidence to retry. Generated-release recovery needs an independent matching schema-1 `RecoveryApprovalId`, plus compatible files/configuration and proven helper exit; possible hook mutation additionally needs independent persistent-state approval.
+To revoke, infrastructure:
+
+1. Fences deployment/policy writers and preserves exact old policy/evidence.
+2. Independently authorizes and disables, removes or byte-changes the protected record. Generated approvals, including direct `-ReleaseApprovalId` retries, are revoked.
+3. Rechecks disabled/missing/changed bytes; separately authorizes a negative exercise proving refusal before mutation.
+
+Preserve attempts/intents/release evidence. Generated-release recovery needs independent matching schema-1 RecoveryApprovalId, compatible files/configuration and exited helpers. Possible hook mutation also needs persistent-state approval; follow [recovery](deployment.md#explicit-recovery).
 
 ## Source, ordering and interruption reference
 
@@ -88,14 +103,24 @@ The trusted workflow supplies the exact inbox ZIP and independently verified rel
 | `-test.N` | Unsupported |
 | `refs/heads/<integrationBranch>` | Retained installed DEV snapshot support only when explicitly enabled; shared routine entry point accepts tags only |
 
-Unmerged DEV needs no PR metadata, approval, current PR-head equality or master-file equality. PR branches may be draft/closed/advanced/deleted/unprotected. The authorized tag creator can select executable workflow/script/configuration/shared-pin changes. GitHub native actor/tag controls and protected master remain required; verification repeats exact source/producer/artifact eligibility after queueing/download. See [workflow contract](verified-workflow-integration.md).
+Unmerged DEV needs no PR metadata/approval, PR-head or master-file equality; branch status/protection is irrelevant. Authorized tag creators select executable workflow/script/configuration/shared pins. Native actor/tag controls and protected master remain required; exact source/producer/artifact checks repeat after queueing/download. See [workflow trust](verified-workflow-integration.md).
 
-SemVer uses bounded numeric sequence from `Test-ClcRelease -ReleaseTag`. Snapshots use authenticated producer runId and `dev-<runId>-<first12SourceCommit>`. Ordering kinds cannot mix within an automated lineage; switching requires a separate manual baseline. Protect integration history: run order is not a rollback detector. Only DEV/Production are deployment channels; host/environment names containing “test” do not create another channel.
+| Ordering | Rule |
+| --- | --- |
+| Tags | Bounded numeric sequence from `Test-ClcRelease -ReleaseTag` |
+| Snapshots | Authenticated runId; `dev-<runId>-<first12SourceCommit>` |
+| Switching kinds | Separate manual baseline; never mix within automated lineage |
+| History/channels | Protect integration history; run order cannot detect rollback. Only DEV/Production deploy; “test” names add no channel |
 
-Later runs/attempts may admit rebuilt same-tag/source bytes; changed bytes in one run/attempt, moved tags and older builds refuse. An UnmergedDevTag becoming integrated can be admitted in the same run only with identical reference/source/release/provenance/ZIP/manifest. This does not permit replacement of immutable canonical GitHub assets: conflicting rebuilt publication fails; choose a new tag.
+Later runs/attempts may admit rebuilt same-tag/source bytes; same-attempt changed bytes, moved tags and older builds refuse. Same-run UnmergedDevTag → integrated admission requires identical reference/source/release/provenance/ZIP/manifest. Immutable canonical assets cannot be replaced: conflicting publication requires a new tag.
 
-Schema-2 policy/evidence yields generated approval 3 with source identity. Historical schema-1 policy/evidence yields generated approval 2; schema versions must match. Generated records bind exact standing bytes and target/source/build/artifact/package identity. Equivalent evidence formatting preserves first-admitted evidence. Tag/source bindings are immutable per target/lineage; snapshots never permanently bind a mutable branch name. No historical policy registry exists.
+| Matching policy/evidence | Generated approval |
+| --- | --- |
+| Schema 2 | Schema 3, including source identity |
+| Historical schema 1 | Schema 2 |
 
-Admission holds the canonical machine/pool lock and requires clean current baseline state. A durable `standing/<targetId>.pending` intent precedes catalog/inbox/approval effects; interruption blocks ordinary deployment for independent reconciliation. Thereafter the normal lifecycle journal blocks unresolved attempts. Policy revocation does not prevent independently exact-approved recovery; retain original generated approvals/journals. File recovery never establishes database rollback safety.
+Both bind exact standing bytes and target/source/build/artifact/package. Equivalent evidence formatting preserves first-admitted evidence. Tag/source bindings are immutable per target/lineage; snapshots do not permanently bind branch names. No historical policy registry exists.
+
+Admission requires clean baseline under the machine/pool lock. Durable `standing/<targetId>.pending` intent precedes catalog/inbox/approval effects; interruption requires independent reconciliation. The lifecycle journal then blocks unresolved attempts. Retain generated approvals/journals for independent recovery; file recovery proves no database rollback safety.
 
 **Actual Windows Server 2022/IIS, runner admission and independent-identity qualification remain NOT RUN.** Follow [IIS verification](iis-verification.md).

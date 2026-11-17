@@ -1,16 +1,24 @@
 # IIS deployment and explicit recovery
 
-Follow the [public contracts](contracts.md) for command, approval, package and state formats, and [application hooks](application-hooks.md) for V2 policy, planning and persistent-state recovery.
+Use [contracts](contracts.md) for formats and [application hooks](application-hooks.md) for V2 policy/planning. Start with the baseline below; later failures use [explicit recovery](#operator-procedure).
 
 ## First application deployment
 
-Perform this once per successfully [enrolled target](host-enrollment.md#5-inspect-plan-apply-and-verify), before standing authorization. The application owner must first qualify configuration/readiness and any separately authorized [hooks](application-hooks.md). The deployment operator uses the admitted enabled elevated administrator token. This procedure uses the existing shared package mechanism; an application-owned producer must supply equivalent authenticated identity/provenance.
+Establish one exact approved baseline per [enrolled target](host-enrollment.md#5-inspect-plan-apply-and-verify), **before standing authorization**. Application owners first qualify configuration/readiness and separately authorized hooks. Deployment requires the admitted elevated administrator token.
 
-### Obtain the exact release ZIP
+### 1. Select and acquire the release
 
-1. **Application repository:** an authorized developer pushes a valid DEV tag, or a stable Production tag contained in master history, using the existing [release workflow](setup-guide.md#7-configure-the-release-workflow). The successful producer uploads `clc-package-<fullSourceCommit>-<runId>-<attempt>`, containing only `release.zip`; publication exposes that same ZIP as the canonical immutable GitHub Release asset.
-2. Before baseline/standing setup, the automatic deployment stage is expected to refuse: an enrolled empty target reaches `Clc.AutomationRequiresBaseline`; missing toolkit/target can fail earlier. No baseline, exact approval or standing policy is inferred. Keep successful package/publication evidence even if the overall workflow becomes Failed. A publication failure skips deployment and requires separate reconciliation.
-3. **Trusted infrastructure workstation, fresh PowerShell:** independently authenticate the application repository, exact tag/source, `.clc/release.json` at that source, workflow/job, run/attempt and artifact. Obtain run ID/attempt from the Actions run; obtain the artifact ID and service transport digest from its authenticated API record. Use reviewed shared source pinned by the tagged configuration (`$sharedSource`), not arbitrary release payload code. Provision read-only GitHub access through the existing secure workstation process (`GH_TOKEN` for these readers); never print/store credentials in examples/evidence. Import the independently reviewed packaging module, then load its read-only preparation readers:
+1. **Application repository:** push an authorized DEV tag or stable Production tag in master history through the [release workflow](setup-guide.md#7-configure-the-release-workflow). Retain successful producer/publication evidence: `clc-package-<fullSourceCommit>-<runId>-<attempt>` contains only `release.zip`, also published as the canonical immutable Release asset.
+2. Expect automatic deployment to refuse before baseline/standing setup (`Clc.AutomationRequiresBaseline` on an enrolled empty target; missing setup may fail earlier). Preserve successful upstream evidence even if the overall run fails. Failed publication requires reconciliation and blocks deployment.
+3. **Trusted infrastructure workstation, fresh PowerShell:** authenticate the inputs below. Application-owned producers need equivalent identity/provenance. Use reviewed `$sharedSource` pinned by tagged configuration and securely provision read-only `GH_TOKEN`; never record credentials.
+
+   | Input | Authenticated source |
+   | --- | --- |
+   | Repository, tag, full commit, configuration | Application repository and exact tagged `.clc/release.json` |
+   | Workflow/job, run ID/attempt | Selected Actions producer run |
+   | Artifact ID, transport digest | Artifact API record |
+
+4. Import the reviewed packaging module and load its read-only readers:
 
 ```powershell
 # setup-example: baseline-acquisition
@@ -33,7 +41,9 @@ $artifact = & $api GET ("/repos/$repository/actions/artifacts/$artifactId") $nul
 $published = & $api GET ("/repos/$repository/releases/tags/$tag") $null
 ```
 
-Before proceeding, the **independent reviewer** verifies these facts against the selected tagged workflow and authenticated GitHub responses:
+### 2. Verify provenance and exact bytes
+
+1. **Independent reviewer:** compare the tagged workflow with authenticated GitHub responses:
 
 | Observation | Required match |
 | --- | --- |
@@ -44,9 +54,9 @@ Before proceeding, the **independent reviewer** verifies these facts against the
 | Publication | Same tag/source, correct prerelease classification, canonical `release.zip` bytes, published API `immutable=true` |
 | Failed overall run | Failure is the expected downstream host-authorization refusal, not failed producer/qualification/publication; retain the exact successful producer evidence |
 
-`Get-ClcVerifiedProducer` can verify an in-progress or successfully completed overall run; it deliberately rejects a completed failed run. Do not change that verifier or fabricate a successful run. The manual independent approval procedure above reviews the successful producer separately when only downstream deployment refused.
+`Get-ClcVerifiedProducer` rejects completed failed runs. When only downstream deployment refused, independently review the successful producer using this table; never fabricate success or bypass the verifier.
 
-After that review, form provenance from those authenticated observations, download the Actions transport and verify the package. `$newDownloadDirectory` is an absent protected local preparation directory; `$runId`/`$runAttempt`/`$artifactId` are actual positive integers:
+2. Form provenance, download and verify. Use an absent protected `$newDownloadDirectory` and actual positive integer run/attempt/artifact IDs:
 
 ```powershell
 # setup-example: baseline-package
@@ -71,11 +81,13 @@ if (($source.identity | ConvertTo-Json -Compress) -cne
     ($sourceAgain.identity | ConvertTo-Json -Compress)) { throw 'Source changed.' }
 ```
 
-`Save-ClcVerifiedArtifact` checks the actual outer transport digest and safely extracts its sole bounded ZIP. `Get-ClcVerifiedPackage` checks all package/inventory hashes, source/producer/builder pin and compiled application identity without executing it. Success is integrity evidence, still not approval. If downloading canonical `release.zip` instead, independently compare it byte-for-byte with this producer-verified inner ZIP; a Release name alone is insufficient. An expired/unavailable original artifact requires a new qualified tag/build and independent review, not invented provenance or repackaging.
+The readers verify transport/package/inventory hashes, source/producer/builder pin and compiled application identity without execution. This is integrity evidence, not approval.
 
-### Prepare and independently install the exact approval
+3. If acquiring canonical `release.zip` separately, compare it byte-for-byte with the producer-verified inner ZIP. Expired/unavailable originals require a new qualified tag/build and review; never invent provenance or repackage.
 
-**Infrastructure workstation:** choose a new safe `$approvalId` (for example `ssrs-web-dev-baseline`) and a stable `$lineageId` (for example `ssrs-web-dev`) that later standing policy will retain. Use the authenticated values above:
+### 3. Independently approve and install
+
+1. **Infrastructure workstation:** choose a new safe `$approvalId` (e.g. `ssrs-web-dev-baseline`) and stable `$lineageId` (e.g. `ssrs-web-dev`) for later standing policy. Build the disabled candidate from verified observations:
 
 ```powershell
 # setup-example: baseline-approval
@@ -92,19 +104,19 @@ $releaseCandidate = [ordered]@{
 Assert-ClcRecord $releaseCandidate release-approval
 ```
 
-`$authoritySid` is the actual independent approving infrastructure SID admitted by host policy and distinct from deployment; reference/time come from its approval process. Validate against [release-approval schema](../schemas/release-approval.schema.json). Independently review final bytes, package/source/producer evidence, target, lineage/sequence, configuration compatibility and maintenance scope, then enable/protect the approved record. Inspection/self-declared hashes never authenticate approval.
+2. **Independent infrastructure reviewer:** validate the [schema](../schemas/release-approval.schema.json), final bytes, package/source/producer evidence, target, lineage/sequence, configuration compatibility and maintenance scope. `$authoritySid` must be admitted by host policy and distinct from deployment; reference/time come from the approval process. Enable only the approved record.
 
-**On the enrolled host**, the authorized infrastructure process installs the final schema-1 approval at:
+3. **Enrolled host, authorized infrastructure process:** install the final schema-1 approval at:
 
 ```text
 %ProgramData%\clc-<target-id>\Deployment\toolkit\policy\approvals\<approvalId>.json
 ```
 
-Use infrastructure ownership and structural protection from [enrollment](host-enrollment.md#1-inspect-and-prepare-the-host); never grant the individual deployment SID protected writes. Place the exact reviewed application ZIP at `%ProgramData%\clc-<target-id>\Inbox\<approvalId>.zip` and recompare its SHA-256 with the approval. Do not change/rebuild its bytes during transfer.
+4. Apply [enrollment's ownership/ancestor protection](host-enrollment.md#1-inspect-and-prepare-the-host), without individual deployment-SID writes. Transfer unchanged reviewed bytes to the target's `Inbox\<approvalId>.zip`; recompare SHA-256 with approval. Inspection/self-declared hashes grant no authority.
 
 ### Deploy and verify the baseline
 
-**Intended host, fresh elevated admitted deployment process:** import the exact independently active manifest (from protected host-policy, verified through [installation](installation.md#verification-and-activation)), then invoke:
+1. **Host, fresh elevated admitted deployment process:** [verify the exact active manifest](installation.md#verification-and-activation), import it and deploy:
 
 ```powershell
 Import-Module $independentlyInstalledManifest
@@ -112,40 +124,52 @@ $result = Invoke-ClcIisDeployment -TargetId $targetId -ReleaseApprovalId $approv
 $result | ConvertTo-Json -Depth 8
 ```
 
-Accept the baseline only on `status=Deployed`, expected release/toolkit identity, `observedPoolState=Started`, `workerCount=1` and `currentGeneration=1` for the first empty deployment. The engine verifies expected-release HTTPS readiness and final complete installed inventory before success. Infrastructure also reviews protected `control/<targetKey>/current.json`, `journal.json` and `attempts/<attemptId>/deployment.json`: same attempt/release/generation, Completed journal/terminal snapshot and verified empty backup/index. Derive `targetKey` with `Get-ClcTargetKey $policy.machineIdentity $target.applicationPoolName.ToUpperInvariant()` in the trusted preparation scope. Retain local evidence without publishing private configuration hashes. Follow [seven real-IIS checks](iis-verification.md#seven-checks) for observed acceptance.
+2. Verify the first empty deployment:
 
-Only after this successful real baseline does infrastructure establish [standing authorization](automated-deployments.md#configure-standing-authorization). For failure, preserve all retained material and use the recovery procedure below; never fabricate current state or an empty-baseline exception.
+   | Evidence | Required result |
+   | --- | --- |
+   | Returned result | `status=Deployed`, expected release/toolkit, `observedPoolState=Started`, `workerCount=1`, `currentGeneration=1` |
+   | Application | Expected-release HTTPS readiness and final complete installed inventory |
+   | Protected state under `control/<targetKey>` | `current.json`, `journal.json` and `attempts/<attemptId>/deployment.json` agree on attempt/release/generation; Completed journal/terminal snapshot; verified empty backup/index |
+
+   Derive `targetKey` with `Get-ClcTargetKey $policy.machineIdentity $target.applicationPoolName.ToUpperInvariant()` in trusted preparation. Keep private configuration hashes local. Use the [seven real-IIS checks](iis-verification.md#seven-checks) for observed acceptance.
+
+3. Only after successful real baseline, install [standing authorization](automated-deployments.md#configure-standing-authorization). On failure, preserve material and follow recovery below; never fabricate current state or baseline exceptions.
 
 ## Manual operations after baseline
 
-Use the same exact-manifest import and protected approval/inbox locations above. Downgrades additionally require independent exact authority and a nonsecret reason:
+Use the same manifest/approval/inbox procedure. Downgrades need independent exact authority and a nonsecret reason:
 
 ```powershell
 Invoke-ClcIisDeployment -TargetId $targetId -ReleaseApprovalId $approvedPriorRelease -AllowDowngrade -Reason $incidentReference
 Restore-ClcIisDeployment -TargetId $targetId -AttemptId $latestFailedAttemptId -Mode RestorePrevious -Reason $incidentReference
 ```
 
-For routine standing selection, see [automated deployments](automated-deployments.md). Revoked/changed standing bytes also block direct retries of generated exact approvals. No command provisions credentials or operational configuration.
+Use [standing selection](automated-deployments.md) for routine tags; revoked/changed standing bytes also block direct generated-approval retries. Deployment provisions no credentials or operational configuration.
 
 ## Deployment sequence and safeguards
 
-1. Resolve the protected target/release approval using the target-local installed toolkit context bound to TargetId, verify the toolkit and acquire one fail-fast exclusive OS file handle for the actual machine/pool. Read that pool's state and reject unresolved attempts. Never delete a lock file or infer completion from its age or released handle.
-2. Verify approved ZIP SHA-256 once, exact manifest bytes/source/build identity and safe archive contents. Preflight dedicated IIS configuration, physical paths, platform/runtime, external configuration, separate identities and effective protected-resource access. Reject reparse points, hard links, unsafe aliases/streams, overlapping roots and unknown files.
-3. For a **V1** exact current release with matching host observations, verify its installed approved inventory before running its fixed application validator against current configuration. If configuration matches, check fresh expected-release readiness and record NoOp without extraction, staging, backup or stop/copy/start; preserve current state and save the completed attempt. **V2 always performs the full cycle**, even on identical repeats.
-4. Otherwise extract safely to protected staging, verify inventory before application validation, run the approved fixed validator and check previous configuration compatibility. Changed configuration revisions require restart; failed NoOp readiness follows this staged deployment path.
-5. Persist stop and backup intent, stop, confirm Stopped/zero workers and copy the exact approved old inventory. Verify the complete backup/index before replacement. Track bounded helper launches and exact process creation identity; unknown helper lifetime blocks recovery.
-6. Persist replacement intent, replace only the approved managed union using ordinary literal .NET file operations and affected-path checks, and verify the destination inventory. Confirm Stopped/zero workers at each file effect. External configuration, keys, logs and data stay outside the replaceable tree; unexpected files are never cleanup candidates. Recovery never restores external configuration or Data Protection keys with application files.
-7. Persist startup intent, start and poll exact release/source/environment/configuration readiness. Verify final hashes and exactly one worker before publishing current and a matching terminal record, with durable intent before current publication. Persistence failures cannot return success.
+| Phase | Engine behavior |
+| --- | --- |
+| Admit | Verify protected target/approval/toolkit; acquire exclusive machine/pool handle; reject unresolved attempts |
+| Preflight | Verify ZIP once, manifest/source/build, safe archive, IIS/platform, paths, configuration, identities and effective access; reject unsafe objects, overlaps and unknown files |
+| Stage/validate | Safely extract/verify, run fixed validator and check prior configuration compatibility. New configuration revision requires restart; failed NoOp readiness follows this path |
+| Stop/backup | Persist intent, prove Stopped/zero workers, copy approved prior inventory and verify backup/index before replacement |
+| Replace | Persist intent; replace only approved managed union using literal operations; check paths and Stopped/zero workers at every effect; verify destination |
+| Start/publish | Persist intent, start, verify exact release/source/environment/configuration readiness, final hashes and one worker; durably publish current and matching terminal state |
 
-V2 hook packages retain a verified online backup of exact prior managed bytes before any hook. Preflight and BeforeStop run before the first IIS stop; AfterStop runs only after Stopped/zero workers; AfterStart follows exact-release readiness. This reuses the same stop/replacement/start engine. No-hook V2 keeps the stopped backup sequence. Every started hook is possible persistent mutation regardless of its result flag. SQL/DACPAC/Hangfire semantics remain application-owned.
+**V1 healthy repeat:** unchanged configuration/host, verified live inventory, fixed validation and fresh readiness permit NoOp. Application/current remain unchanged; only the completed attempt is saved. No extraction, stage, backup or stop/copy/start occurs. **V2 repeats always run the full cycle.**
 
-Comprehensive host/access checks are lifecycle gates, not operations repeated for every file. At preflight and effect gates, a bounded actual-IIS observation checks every application's virtual-directory root against the selected Application tree. Exact, ancestor, descendant and physical-identity overlap refuse even when the other application uses another site/pool or the selected pool is stopped. Native local-path observations reject uncertain aliases, network paths and unknown environment expansion. IIS `%SystemDrive%`, `%SystemRoot%` and `%windir%` use native Windows facts; `%ProgramData%` uses the trusted known-folder resolver. These temporary observations release other applications' directory handles before returning. Replacement repeats the full gate after inventory and between deletion, copy and directory-retirement phases; individual file effects retain the narrow Stopped/zero-worker check. The independently trusted toolkit/Windows/.NET installation and restricted runtime access are the operational trust assumptions; approved validation executes elevated without a sandbox.
+V2 hook order is Preflight → BeforeStop → stop → AfterStop → replacement/start/readiness → AfterStart. Verify an online backup before any hook; no-hook V2 uses stopped backup. Started hooks always imply possible persistent mutation. SQL/DACPAC/Hangfire compatibility remains application-owned.
 
-The toolkit verifies `web.config` integrity and bounded XML structure; applications validate its IIS semantics in CI. An authorized release may change application-level IIS settings, managed through source/release review and independent infrastructure host configuration and authorization. The retained approved `web.config` in RestoreEmpty is recovery material, not an activation barrier; that outcome requires Stopped/zero workers and must remain stopped pending separately authorized deployment.
+Operator safeguards:
 
-Freeze competing trusted configuration, filesystem and IIS changes throughout deployment and recovery. Fresh IIS root checks do not provide atomic coordination with other applications, acquire their locks or stop/adopt their pools; conflicts require operator reconciliation. A held default-stream handle does not prevent another trusted writer from adding a named stream; fresh checks do not make stream absence atomic. These checks do not contain a compromised administrator or trusted application process.
+- Freeze competing configuration/filesystem/IIS writers. Checks provide no atomic cross-application coordination or containment of trusted administrators/application processes; even a held file cannot prevent another trusted writer adding a named stream.
+- Keep configuration, keys, logs and data outside replacement. Unexpected files are never cleanup candidates; recovery never restores configuration/keys with application files.
+- Trust the independently installed toolkit/Windows/.NET and enforce runtime access isolation. Approved validators/hooks execute elevated without sandboxing.
+- Let application CI qualify `web.config` semantics. The toolkit verifies bytes/bounded XML and never rewrites it; application-level IIS changes need source/release review and independent host configuration/approval.
 
-If a foreign different-pool root conflict appears after live effects, bounded failure handling can still stop the selected pool. That private safety-stop path re-proves the held target, native machine/root identities, selected site/root/pool association, sole selected-pool application and runtime SID; it omits only the foreign-root admission scan. It cannot start a pool, stop another pool, authorize replacement or publish success. Changed selected authority still requires operator intervention. Ordinary retries, Start and explicit recovery retain full physical isolation checks and refuse an unresolved conflict; failure evidence and approved files/backups remain retained.
+[Preflight contracts](contracts.md#iis-and-path-gates) define all-application physical-root checks and their repetition between replacement phases. After live effects, a foreign different-pool conflict may permit only bounded stop of the still-bound selected pool. Selected identity/authority checks remain; retries, Start and recovery refuse unresolved conflicts. Preserve evidence and reconcile independently.
 
 ## Failure behavior
 
@@ -158,15 +182,18 @@ If a foreign different-pool root conflict appears after live effects, bounded fa
 | Stop cannot be proven or helper lifetime is unknown | Report actual Started/Stopped/Unknown facts and require operator intervention; never claim a stopped target without observation |
 | Process termination or unexpected OS reboot during file copy | No cleanup guarantee. Files may be mixed, and IIS may activate them. Routine retry refuses the pending journal; manual recovery may be required |
 
-An OS reboot during physical replacement is an explicitly accepted operational limitation. There is no Closed/Candidate/Released fence, startup hook, named-pipe activation broker, job-object admission service or per-file transaction protocol.
+Pending state does not prevent IIS activation after reboot; no startup activation fence or per-file transaction protocol exists.
 
 ## Explicit recovery
 
-`Restore-ClcIisDeployment` requires the exact latest attempt, an explicit mode and a nonsecret incident/change reason. It takes the same lock, rechecks protected approvals, target identity, unchanged compatible external configuration and helper quiescence. It retains a before-recovery snapshot and never guesses an arbitrary backup path.
+Recovery selects the **latest attempt**, explicit mode and nonsecret reason. It uses the same lock, rechecks target/approvals, unchanged compatible configuration and helper quiescence, and retains a before-recovery snapshot. It never guesses backup paths or executes hooks.
 
-After possible hook mutation, also provide `-PersistentStateApprovalId` selecting independent protected authority for the exact latest journal, selected manifest and recovery mode. Infrastructure must confirm external-state compatibility and helper quiescence. Recovery records that exact approval, executes no hooks and does not claim database rollback. Existing generated releases still need their separate RecoveryApprovalId. A schema-1 release approval or a hook's `externalStateMayHaveChanged=false` alone cannot authorize this reconciliation. See [the exact record and operator obligations](application-hooks.md#failure-and-explicit-recovery).
+| Additional authority | Required when |
+| --- | --- |
+| `-RecoveryApprovalId` | Selected release was automatically admitted: independent schema-1 approval matching exact release/target/source/lineage/provenance/hashes. Standing authority cannot authorize recovery; revocation does not block separately approved recovery |
+| `-PersistentStateApprovalId` | Any possible hook mutation: independent exact latest-journal/manifest/mode approval of external-state compatibility and helper quiescence. Release approval or `externalStateMayHaveChanged=false` alone is insufficient |
 
-When the selected recovery release has an automatically generated approval, also supply `-RecoveryApprovalId` selecting an independent normal schema-1 approval with matching exact release/target/source/lineage/provenance/hashes. Standing authority does not authorize recovery. Preserve the generated approval and journal bytes; a revoked standing policy does not prevent this separately approved recovery. Existing manually approved recovery is unchanged.
+Both can be required. Preserve generated approval/journal bytes; follow [persistent-state obligations](application-hooks.md#failure-and-explicit-recovery). File recovery never proves database rollback safety.
 
 | Mode | Required material and outcome |
 | --- | --- |
@@ -174,18 +201,29 @@ When the selected recovery release has an automatically generated approval, also
 | AcceptCandidate | Enabled candidate approval and a complete exact installed candidate inventory. Validate, explicitly stop/start, check readiness and publish success. It cannot complete a partial copy |
 | RestoreEmpty | Failed first installation, verified empty backup and complete verified stage. Stop, remove only known candidate file paths, retain the approved web.config guard, preserve any matching uncommitted current as evidence and leave no ready current |
 
-Partial managed files can be overwritten by an explicitly selected verified backup; unexpected paths, unsafe filesystem objects, corrupt backup/source material or incompatible configuration refuse. Recovery failure after its live boundary attempts stop only and retains all evidence. No recovery recursively invokes another recovery.
+`RestoreEmpty` must remain Stopped/zero workers pending separately authorized deployment; retained `web.config` is recovery material, not an activation barrier.
+
+Verified backup may overwrite partial managed files. Unknown/unsafe paths, corrupt sources/backups or incompatible configuration refuse. Recovery failure after live effects attempts stop only, retains evidence and never invokes another recovery.
 
 ## Operator procedure
 
-1. Preserve the application tree, `journal.json`, `current.json`, attempt snapshots, staging, retained manifests and backup/index. Read the safe error's attempt, pool/worker observations and retained control path.
-2. Freeze concurrent configuration/deployment/IIS changes. Fence application exposure/activation if necessary. Confirm exact machine/pool/root identities and helper exit. Unknown launch identity, corrupt state or unsupported legacy journals require infrastructure maintenance; ordinary commands never reset or adopt them.
-3. Independently confirm enabled approval, exact backup/stage bytes and selected application/configuration/key compatibility. File restoration says nothing about database compatibility.
-4. Select the exact latest attempt and recovery mode with a nonsecret reason. Run the independently installed toolkit in a fresh trusted PowerShell process.
-5. Accept success only after exact readiness, final hashes and durable current/terminal state. Retain all recovery material until infrastructure authorizes retention cleanup.
+1. Read safe error facts: attempt, actual pool/workers, retained control path and operator action. Preserve application, journal/current, attempt snapshots, staging, manifests and backup/index. Never delete locks or infer completion from age/released handles.
+2. Freeze competing writers; fence exposure/activation as needed. Confirm exact machine/pool/root and helper exit, including exact recorded creation identity. Unknown helper lifetime/identity requires maintenance; reboot proves no quiescence.
+3. Independently verify enabled approvals, backup/stage bytes and application/configuration/key compatibility. Add the authorities above when required. Database safety requires application-owned evidence.
+4. Import the exact approved installed manifest in a fresh trusted process. Select the latest attempt/mode/reason, for example:
 
-A defective toolkit requires independent installation/activation of a reviewed compatible replacement. Lost approvals, unverifiable files, unknown helpers or unsupported state require a separately authorized manual maintenance plan. Do not edit a journal to Completed, delete evidence, adopt mixed content or assume a reboot made recovery safe. The shared elevated administrator is privileged; independent approval remains procedural against that account. Actual IIS/runtime-token/profile/TLS/storage behavior still needs real-host evidence.
+   ```powershell
+   Restore-ClcIisDeployment -TargetId $targetId -AttemptId $latestFailedAttemptId `
+       -Mode RestorePrevious -Reason $incidentReference
+   # Add -RecoveryApprovalId and/or -PersistentStateApprovalId when required above.
+   ```
+
+5. Verify the selected mode's pool/readiness, final hashes and durable current/terminal outcome. RestoreEmpty remains stopped with no ready current. Retain recovery material until infrastructure authorizes cleanup.
+
+Lost authority, unverifiable bytes, corrupt/unsupported state or unknown helpers need separately authorized maintenance. A defective toolkit needs independently installed/activated compatible replacement. Never edit journals to Completed, delete evidence, adopt mixed content or infer reboot safety. Independent approval against the elevated administrator remains procedural.
 
 ## Plan-only diagnostics
 
-Use the same approved invocation with `-Operation ValidateOnly`. Only the separately declared and policy-authorized planning entry point runs. It may retain reviewed SQL plan/report diagnostics locally, returns Planned on success and leaves IIS/current unchanged. It does not execute lifecycle hooks. Read-only behavior depends on independently reviewed code; it is not enforced by a sandbox. Failure or reported mutation requires reconciliation, and planning may have no file backup suitable for ordinary recovery. The separate optional [GitHub setup check](github-setup-check.md) reads GitHub settings and executes no application code.
+Add `-Operation ValidateOnly` to the approved invocation. Only separately declared, policy-authorized planning code runs; success returns Planned with IIS/current unchanged and no lifecycle hooks. Reviewed SQL diagnostics stay local.
+
+Read-only behavior depends on code review, without sandboxing. Failure/reported mutation needs reconciliation; planning may have no recoverable file backup. The [GitHub setup check](github-setup-check.md) separately reads settings without application execution.
