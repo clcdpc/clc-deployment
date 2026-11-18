@@ -26,7 +26,7 @@ The new site has zero bindings and the pool uses an inert ApplicationPoolIdentit
 
 ## 3. Configure the stopped site and pool
 
-In IIS Manager, configure the pool with the expected specific, distinct nonadministrator service account. Configure the site's dedicated HTTPS DNS hostname and port matching the readiness URI. Select an unexpired matching certificate with a private key from LocalMachine. Use a single HTTPS binding with a locally installed certificate. Set `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` to `Production` on the Production target. On the DEV target, match `devRuntimeEnvironment` in the consumer's `.clc/release.json`. The example uses `Production`, as required for the SSRS Web DEV pilot. Applications that use `Staging` on DEV can select it explicitly. Keep the site and pool stopped, with both auto-start flags disabled, until first deployment succeeds. [Shared workflow routing](shared-release-orchestration.md)
+In IIS Manager, configure the pool with the expected specific, distinct nonadministrator service account. Configure the site's dedicated HTTPS DNS hostname and port matching the readiness URI. Select an unexpired matching certificate with a private key from LocalMachine. Use a single HTTPS binding with a locally installed certificate. Set `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` to `Production` on the Production target. On the DEV target, match `devRuntimeEnvironment` in the consumer's `.clc/release.json`. The example uses `Production`, as required for the SSRS Web DEV pilot. Applications that use `Staging` on DEV can select it explicitly. Leave the site and pool stopped with both auto-start flags disabled for the first deployment. [Shared workflow routing](shared-release-orchestration.md)
 
 The administrator provides the application dependencies and operational settings. The app root is always under the operating system's ProgramData known folder. Assign the following access to the service account SID. Keep Administrators and SYSTEM as the trusted owners of protected paths.
 
@@ -53,6 +53,6 @@ $hostInputs = @{
 Test-ClcDeploymentHost @hostInputs
 ```
 
-Resolve the reported findings until the result is `ReadyForFirstDeployment`. Push an authorized release tag and observe the build, publication, deployment, and readiness result. A successful first deployment starts the site and pool and enables automatic startup. Future releases use the same deployment command.
+`Test-ClcDeploymentHost` is read-only. Resolve the reported findings until the result is `ReadyForFirstDeployment`. A protected DEV or stable tag pushed by a permitted release actor starts the GitHub workflow, which builds, publishes, verifies and deploys the release unattended. The deployment starts the site and pool for the readiness check and enables automatic startup after readiness succeeds. Subsequent releases use the same workflow.
 
 If a deployment fails, preserve local evidence and follow the [recovery procedure](deployment.md). Use the [IIS verification checklist](iis-verification.md) before operational acceptance.

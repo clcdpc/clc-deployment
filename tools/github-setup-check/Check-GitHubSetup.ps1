@@ -178,7 +178,7 @@ function Check-Controls([string[]] $Required, [string[]] $Present, [string[]] $E
     Observation -Missing $missing -Manual $manual -Confirmed 'Required restrictions and observable bypass confirmed.'
 }
 
-Add-Category 'Branch protection' '4-protect-master' "$repoUrl/settings/rules" 'Repository Settings > Rules > Rulesets / Settings > Branches' 'Existing integration branch; nonempty required status checks; force pushes and deletion restricted; no defeating bypass.' {
+Add-Category 'Branch protection' '3-protect-master' "$repoUrl/settings/rules" 'Repository Settings > Rules > Rulesets / Settings > Branches' 'Existing integration branch; nonempty required status checks; force pushes and deletion restricted; no defeating bypass.' {
     $branches = Read-List "$repoPath/branches"
     foreach ($branch in $branches) { Require-Strings $branch @('name'); Require-Bools $branch @('protected') }
     $branchMatches = @($branches | Where-Object { $_.name -ceq $IntegrationBranch })
@@ -235,7 +235,7 @@ Add-Category 'Branch protection' '4-protect-master' "$repoUrl/settings/rules" 'R
     Check-Controls @('status checks','force push','deletion') $present $enforced ($classicComplete -and $rulesComplete) $notes $bypassed $unknownBypass
 }
 
-Add-Category 'Tag protection' '3-protect-release-tags' "$repoUrl/settings/rules" 'Repository Settings > Rules > Rulesets > release-tag rules' "Active creation restriction covering $ReleaseTagPattern with designated creator bypass; independent update/deletion restrictions without routine release-actor bypass." {
+Add-Category 'Tag protection' '2-protect-release-tags' "$repoUrl/settings/rules" 'Repository Settings > Rules > Rulesets > release-tag rules' "Active creation restriction covering $ReleaseTagPattern with designated creator bypass; independent update/deletion restrictions without routine release-actor bypass." {
     $sets = Read-List "$repoPath/rulesets?includes_parents=true&targets=tag"
     $present = @(); $enforced = @(); $complete = $true; $bypassed = @(); $unknownBypass = @(); $creatorBypass = @()
     $protectionSets = @{ update=0; deletion=0 }
@@ -288,15 +288,15 @@ Add-Category 'Tag protection' '3-protect-release-tags' "$repoUrl/settings/rules"
     Observation -Missing $missing -Manual ($manual + $notes)
 }
 
-Add-Category 'Restrict actors' '2-restrict-github-actions' "$repoUrl/settings/actions/policies" 'Repository Settings > Actions > Policies > New policy > Restrict actors' 'Active repository-wide native Restrict actors policy covers all workflows, admits authorized release developers and has no event restrictions.' {
+Add-Category 'Restrict actors' '1-restrict-github-actions' "$repoUrl/settings/actions/policies" 'Repository Settings > Actions > Policies > New policy > Restrict actors' 'Active repository-wide native Restrict actors policy covers all workflows, admits authorized release developers and has no event restrictions.' {
     Observation -Manual 'Read-only APIs do not reliably expose this repository-wide policy. Review Restrict actors in GitHub; do not create a second application allowlist.'
 }
 
-Add-Category 'Workflow trigger' '7-configure-the-release-workflow' "$repoUrl/tree/$IntegrationBranch/.github/workflows" 'Repository > Code > .github/workflows > application release workflow' 'Version-tag push only; package then publication then deployment using needs; caller runs at the tag, including unmerged DEV commits.' {
+Add-Category 'Workflow trigger' '6-configure-the-release-workflow' "$repoUrl/tree/$IntegrationBranch/.github/workflows" 'Repository > Code > .github/workflows > application release workflow' 'Version-tag push only; package then publication then deployment using needs; caller runs at the tag, including unmerged DEV commits.' {
     Observation -Manual 'Review the tagged consumer workflow and immutable shared pins. No workflow_run or manual release trigger; ordinary build/test jobs use hosted runners. This diagnostic does not analyze workflow code.'
 }
 
-Add-Category 'Environment' '5-create-deployment-environments' "$repoUrl/settings/environments" "Repository Settings > Environments > $EnvironmentName > Deployment branches and tags / Deployment protection rules" 'No restriction for deployment branches and tags; no required reviewers, wait timers or additional deployment approval rules.' {
+Add-Category 'Environment' '4-create-deployment-environments' "$repoUrl/settings/environments" "Repository Settings > Environments > $EnvironmentName > Deployment branches and tags / Deployment protection rules" 'No restriction for deployment branches and tags; no required reviewers, wait timers or additional deployment approval rules.' {
     $environments = Read-List "$repoPath/environments" 'environments'
     foreach ($item in $environments) { Require-Strings $item @('name') }
     $found = @($environments | Where-Object { $_.name -ieq $EnvironmentName })
@@ -324,7 +324,7 @@ Add-Category 'Environment' '5-create-deployment-environments' "$repoUrl/settings
 }
 
 if ($RunnerGroup) {
-    Add-Category 'Runner group' '6-register-deployment-runners' $groupUrl "Organization Settings > Actions > Runner groups > $RunnerGroup > Repository access" 'Optional organization group grants the application repository access; labels select the runner.' {
+    Add-Category 'Runner group' '5-register-deployment-runners' $groupUrl "Organization Settings > Actions > Runner groups > $RunnerGroup > Repository access" 'Optional organization group grants the application repository access; labels select the runner.' {
         $groups = Read-List "/orgs/$owner/actions/runner-groups" 'runner_groups'
         foreach ($item in $groups) { Require-Fields $item @('id'); Require-Strings $item @('name') }
         $found = @($groups | Where-Object { $_.name -ceq $RunnerGroup })
@@ -340,7 +340,7 @@ if ($RunnerGroup) {
     }
 }
 
-Add-Category 'Runners' '6-register-deployment-runners' "$repoUrl/settings/actions/runners" 'Repository Settings > Actions > Runners (or Organization Settings > Actions > Runners)' "One online repository-accessible runner with labels: $($expectedLabels -join ', '). No runner group or routing variables required." {
+Add-Category 'Runners' '5-register-deployment-runners' "$repoUrl/settings/actions/runners" 'Repository Settings > Actions > Runners (or Organization Settings > Actions > Runners)' "One online repository-accessible runner with labels: $($expectedLabels -join ', '). No runner group or routing variables required." {
     $runners=Read-List "$repoPath/actions/runners" 'runners'
     if (-not $runners.Count) { return Observation -Missing 'No repository-accessible deployment runner is registered.' }
     foreach ($runner in $runners) {
@@ -354,7 +354,7 @@ Add-Category 'Runners' '6-register-deployment-runners' "$repoUrl/settings/action
 }
 
 if ($CheckReleaseImmutability) {
-    Add-Category 'Release immutability' '3-protect-release-tags' "$repoUrl/settings#releases" 'Repository Settings > General > Releases > Release immutability' 'Enable release immutability (or owner-enforced immutability).' {
+    Add-Category 'Release immutability' '2-protect-release-tags' "$repoUrl/settings#releases" 'Repository Settings > General > Releases > Release immutability' 'Enable release immutability (or owner-enforced immutability).' {
         $setting = (Read-GitHub "$repoPath/immutable-releases").Data
         Require-Bools $setting @('enabled','enforced_by_owner')
         if (-not $setting.enabled -and $setting.enforced_by_owner) { Uncertain 'Contradictory immutability settings.' }
@@ -387,7 +387,7 @@ foreach ($row in $rows) {
     $summary.Add("| $($row.Status) | [$($row.Name)]($($row.Guide)) | $details |")
 }
 $summary.Add('')
-$summary.Add('Optional GitHub configuration diagnostic. Separate host preparation, deployment preflight, authorization and application acceptance still apply.')
+$summary.Add('Optional GitHub configuration diagnostic. Follow the setup guide to initialize, configure and validate each host. Server and application owners coordinate live IIS acceptance.')
 $text = ($summary -join "`n") + "`n"
 if ($env:GITHUB_STEP_SUMMARY) { [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY,$text) }
 if ($env:GITHUB_OUTPUT) {
