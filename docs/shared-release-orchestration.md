@@ -1,8 +1,16 @@
 # Shared GitHub Actions release workflows
 
-Pin all reusable workflows to the same immutable Clc.Deployment commit. Use the [conventional](examples/shared-conventional-build.yml) or [prequalified](examples/shared-prequalified-build.yml) build example, and the [publication/deployment chain](examples/shared-application-deploy.yml). Configure the consumer's [`.clc/release.json`](examples/shared-release.json) with contract 3, the exact producer and shared revision, and `master` as the protected integration branch.
+Pin all reusable workflows to the same immutable Clc.Deployment commit. Use the [conventional](examples/shared-conventional-build.yml) or [prequalified](examples/shared-prequalified-build.yml) build example, and the [publication/deployment chain](examples/shared-application-deploy.yml). Configure the consumer's `.clc/release.json` with contract 3, the exact producer and shared revision, `master` as the protected integration branch, and the required `devRuntimeEnvironment`. [Example configuration](examples/shared-release.json)
 
-GitHub-hosted runners build or package the prequalified output, verify compiled identity, and publish an immutable tagged release. DEV `vX.Y.Z-dev.N` tags can point to authorized commits outside master. Stable `vX.Y.Z` tags require protected master ancestry. `-beta.N` and `-rc.N` publish artifacts only. The shared workflow derives the DEV and Production targets as `<application-id>-dev` and `<application-id>-production`, respectively. Use the corresponding GitHub environment and runner label, with each target on a separate server.
+GitHub-hosted runners build or package the prequalified output, verify compiled identity, and publish an immutable tagged release. DEV `vX.Y.Z-dev.N` tags can point to authorized commits outside master. Stable `vX.Y.Z` tags require protected master ancestry.
+
+| Release tag | Deployment channel | Deployment target ID | GitHub environment | ASP.NET Core runtime environment |
+| --- | --- | --- | --- | --- |
+| `vX.Y.Z-dev.N` | DEV | `<application-id>-dev` | `<application-id>-dev` | `devRuntimeEnvironment` |
+| `vX.Y.Z` | Production | `<application-id>-production` | `<application-id>-production` | `Production` |
+| `vX.Y.Z-beta.N` or `vX.Y.Z-rc.N` | Artifact-only | — | — | — |
+
+The tag selects the channel, which identifies the dedicated server target and the GitHub environment that governs its job. The runner labels are `self-hosted`, `Windows`, `X64`, and the target ID. The ASP.NET Core runtime environment controls application behavior on that server. For DEV, the workflow reads it from the authenticated `.clc/release.json` at the tagged revision. Use `Production` for the SSRS Web DEV pilot or explicitly select `Staging` for an application that expects it. Set the host's runtime environment to match.
 
 The hosted routing job verifies the producer and GitHub Actions artifact digest, inspects the package and matches its SHA-256 to the immutable GitHub release asset. The Windows deployment job repeats these checks and invokes Clc.Deployment with the authenticated release digest. Set `CLC_RUNTIME_ACCOUNT` as a target environment variable with the expected pool account name. Keep credentials and application configuration on the host. The checkout on the self-hosted deployment runner contains pinned shared toolkit code. Application build and test execution happens on GitHub-hosted runners.
 

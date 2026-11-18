@@ -3,6 +3,7 @@ BeforeAll {
     . "$PSScriptRoot/Support.ps1"
 
     function New-LifecycleFixture {
+        param([string] $TargetId='probe-dev')
         $parent=New-TestWorkspace
         $appRoot=Join-Path $parent 'clc-probe'
         $deployment=Join-Path $appRoot 'Deployment'
@@ -10,8 +11,8 @@ BeforeAll {
             config=(Join-Path $appRoot 'Config\application.json');keys=(Join-Path $appRoot 'Keys');logs=(Join-Path $appRoot 'Logs');
             inbox=(Join-Path $appRoot 'Inbox');hostRecord=(Join-Path $deployment 'host.json');state=(Join-Path $deployment 'state.json');
             lock=(Join-Path $deployment 'deployment.lock')}
-        $init=@{ApplicationId='probe';TargetId='probe-dev';SiteName='Probe Dev';ApplicationPoolName='Probe.Dev';ReadinessUri='https://probe.invalid/health/ready'}
-        $identity=@{ApplicationId='probe';TargetId='probe-dev';ExpectedRuntimeAccount='example\probe-service';RuntimeEnvironment='Staging'}
+        $init=@{ApplicationId='probe';TargetId=$TargetId;SiteName='Probe Dev';ApplicationPoolName='Probe.Dev';ReadinessUri='https://probe.invalid/health/ready'}
+        $identity=@{ApplicationId='probe';TargetId=$TargetId;ExpectedRuntimeAccount='example\probe-service';RuntimeEnvironment='Staging'}
         $pool=@{Name=$init.ApplicationPoolName;AutoStart=$false;State='Stopped';ManagedRuntimeVersion='';
             ManagedPipelineMode='Integrated';Enable32BitAppOnWin64=$false;
             ProcessModel=@{IdentityType='ApplicationPoolIdentity';UserName='';MaxProcesses=1;LoadUserProfile=$true};
@@ -81,7 +82,7 @@ BeforeAll {
             }
         }
         Mock Invoke-ClcApplicationValidation -ModuleName Clc.Deployment {
-            return @{revision='revision-one';keyStoreCompatibilityId='key-store-one';runtimeEnvironment='Staging'}
+            return @{revision='revision-one';keyStoreCompatibilityId='key-store-one';runtimeEnvironment=$Context.environment}
         }
         Mock Wait-ClcApplicationReady -ModuleName Clc.Deployment {
             if (-not $global:ClcTestLifecycle.health) { throw [Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Synthetic readiness identity failed.'),'Clc.ReadinessFailed','InvalidData',$null) }
@@ -103,20 +104,21 @@ BeforeAll {
     }
 
     function New-LifecycleRelease {
-        param($Fixture,[int] $Sequence,[string] $TargetId='probe-dev',[string] $ApplicationId='probe',[string] $ReleaseId)
+        param($Fixture,[int] $Sequence,[string] $ApplicationId='probe',[string] $ReleaseId,[string] $Tag)
+        if (-not $Tag) { $Tag='v1.0.0-dev.'+$Sequence }
         $build=Join-Path $Fixture.parent ('build-'+[guid]::NewGuid().ToString('N'))
         $inputs=New-TestPublish $build
         $metadata=Get-TestMetadata
         $metadata.applicationId=$ApplicationId
-        $metadata.targetId=$TargetId
-        $metadata.releaseId=if ($ReleaseId) {$ReleaseId} else {'v1-0-0-dev-'+$Sequence}
+        $metadata.targetId=$Fixture.identity.TargetId
+        $metadata.releaseId=if ($ReleaseId) {$ReleaseId} else {$Tag.Replace('.','-')}
         Write-TestJson $inputs.MetadataPath $metadata
         [IO.File]::WriteAllText((Join-Path $inputs.PublishRoot 'Probe.dll'),('synthetic release '+$Sequence))
         $package=New-ClcRelease @inputs
         $parameters=$Fixture.identity.Clone()
         $parameters.ArchivePath=$package.archivePath
         $parameters.ExpectedSha256=$package.archiveSha256
-        $parameters.ReleaseTag='v1.0.0-dev.'+$Sequence
+        $parameters.ReleaseTag=$Tag
         $parameters.ExpectedSourceCommit=$metadata.source.commit
         $parameters.ExpectedRepository=$metadata.source.repository
         return $parameters
@@ -232,6 +234,40 @@ Describe 'Host initialization and validation with synthetic IIS observations' {
     }
 }
 
+Describe 'Deployment admission by release tag and runtime' {
+    BeforeEach {
+        $fixture=New-LifecycleFixture -TargetId $Target
+        Set-LifecycleMocks
+        Initialize-TestTarget $fixture
+        $fixture.identity.RuntimeEnvironment=$Runtime
+        $deploy=New-LifecycleRelease $fixture 1 -Tag $Tag
+    }
+    AfterEach { Remove-TestWorkspace $fixture.parent }
+
+    It 'deploys <Tag> to <Target> with the <Runtime> runtime' -ForEach @(
+        @{Tag='v1.0.0-dev.1';Target='probe-dev';Runtime='Production'},
+        @{Tag='v1.0.0-dev.1';Target='probe-dev';Runtime='Staging'},
+        @{Tag='v1.0.0';Target='probe-production';Runtime='Production'}
+    ) {
+        (Invoke-ClcIisDeployment @deploy).status | Should -BeExactly 'Deployed'
+        (Get-LifecycleState $fixture).current.environment | Should -BeExactly $Runtime
+    }
+    It 'rejects <Tag> with the <Runtime> runtime before locking or touching IIS' -ForEach @(
+        @{Tag='v1.0.0';Target='probe-production';Runtime='Staging';ErrorId='Clc.ReleaseMismatch*'},
+        @{Tag='v1.0.0-beta.1';Target='probe-dev';Runtime='Production';ErrorId='Clc.ReleaseMismatch*'},
+        @{Tag='v1.0.0-beta.1';Target='probe-dev';Runtime='Staging';ErrorId='Clc.ReleaseMismatch*'},
+        @{Tag='v1.0.0-rc.1';Target='probe-dev';Runtime='Production';ErrorId='Clc.ReleaseMismatch*'},
+        @{Tag='v1.0.0-rc.1';Target='probe-dev';Runtime='Staging';ErrorId='Clc.ReleaseMismatch*'},
+        @{Tag='v1.0.0-dev.1';Target='probe-dev';Runtime='Development';ErrorId='ParameterArgumentValidationError*'},
+        @{Tag='v1.0.0-dev.1';Target='probe-dev';Runtime='production';ErrorId='ParameterArgumentValidationError*'}
+    ) {
+        { Invoke-ClcIisDeployment @deploy } | Should -Throw -ErrorId $ErrorId
+        [IO.File]::Exists($fixture.layout.lock) | Should -BeFalse
+        $fixture.operations.Count | Should -Be 0
+        (Get-LifecycleState $fixture).pending | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Deployment and recovery with native NTFS and synthetic IIS' {
     BeforeEach {
         $fixture=New-LifecycleFixture
@@ -260,7 +296,10 @@ Describe 'Deployment and recovery with native NTFS and synthetic IIS' {
                 $deploy.ExpectedSha256=(Get-FileHash -LiteralPath $deploy.ArchivePath).Hash.ToLowerInvariant()
             }
         }
-        { Invoke-ClcIisDeployment @deploy } | Should -Throw -ErrorId $ErrorId
+        foreach ($runtime in @('Staging','Production')) {
+            $deploy.RuntimeEnvironment=$runtime
+            { Invoke-ClcIisDeployment @deploy } | Should -Throw -ErrorId $ErrorId
+        }
         [IO.File]::Exists($fixture.layout.lock) | Should -BeFalse
         $fixture.operations.Count | Should -Be 0
         (Get-LifecycleState $fixture).pending | Should -BeNullOrEmpty

@@ -26,7 +26,7 @@ The new site has zero bindings and the pool uses an inert ApplicationPoolIdentit
 
 ## 3. Configure the stopped site and pool
 
-In IIS Manager, configure the pool with the expected specific, distinct nonadministrator service account. Configure the site's dedicated HTTPS DNS hostname and port matching the readiness URI. Select an unexpired matching certificate with a private key from LocalMachine. Use a single HTTPS binding with a locally installed certificate. Configure the `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` selector to `Staging` for DEV. Use `Production` for Production. Keep the site and pool stopped, with both auto-start flags disabled, until first deployment succeeds.
+In IIS Manager, configure the pool with the expected specific, distinct nonadministrator service account. Configure the site's dedicated HTTPS DNS hostname and port matching the readiness URI. Select an unexpired matching certificate with a private key from LocalMachine. Use a single HTTPS binding with a locally installed certificate. Set `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` to `Production` on the Production target. On the DEV target, match `devRuntimeEnvironment` in the consumer's `.clc/release.json`. The example uses `Production`, as required for the SSRS Web DEV pilot. Applications that use `Staging` on DEV can select it explicitly. Keep the site and pool stopped, with both auto-start flags disabled, until first deployment succeeds. [Shared workflow routing](shared-release-orchestration.md)
 
 The administrator provides the application dependencies and operational settings. The app root is always under the operating system's ProgramData known folder. Assign the following access to the service account SID. Keep Administrators and SYSTEM as the trusted owners of protected paths.
 
@@ -48,7 +48,7 @@ $hostInputs = @{
     ApplicationId = $target.ApplicationId
     TargetId = $target.TargetId
     ExpectedRuntimeAccount = $expectedServiceAccount
-    RuntimeEnvironment = 'Staging'
+    RuntimeEnvironment = 'Production'
 }
 Test-ClcDeploymentHost @hostInputs
 ```

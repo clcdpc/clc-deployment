@@ -11,7 +11,11 @@ Import the manifest from a trusted checkout or verified distribution. The module
 | `Invoke-ClcIisDeployment` | Host validation parameters plus `ArchivePath`, `ExpectedSha256`, `ReleaseTag`, `ExpectedSourceCommit`, `ExpectedRepository` | Deployed with release, attempt and IIS state |
 | `Restore-ClcIisDeployment` | Host validation parameters plus `AttemptId`, `Reason` | RestoredPrevious or RestoredEmpty with IIS state |
 
-Use canonical lowercase application and target IDs, up to 64 characters, and a dedicated HTTPS DNS hostname ending in `/health/ready`. The expected runtime account is the administrator-selected account name. Use `Staging` for DEV and `Production` for Production. Recovery takes the unresolved attempt GUID and a short nonsecret reason or incident reference. Validation is read-only. Unsafe mutation requests terminate with a `Clc.*` error and an actionable diagnostic.
+Use canonical lowercase application and target IDs, up to 64 characters, and a dedicated HTTPS DNS hostname ending in `/health/ready`. The expected runtime account is the administrator-selected account name. Set `RuntimeEnvironment` to the expected ASP.NET Core runtime environment on the selected target. `Invoke-ClcIisDeployment` accepts DEV tags with `Production` or `Staging` and stable tags with `Production`. Beta and RC tags are artifact-only. Recovery takes the unresolved attempt GUID and a short nonsecret reason or incident reference. Validation is read-only. Unsafe mutation requests terminate with a `Clc.*` error and an actionable diagnostic.
+
+## Consumer release configuration contract 3
+
+The consumer's `.clc/release.json` requires `devRuntimeEnvironment` with the exact string `Production` or `Staging`. The shared workflow reads this value from the authenticated tagged revision for DEV deployments. Stable tags always use the `Production` runtime environment. The verified tag determines the deployment channel, target ID and GitHub environment. [Example configuration](examples/shared-release.json) · [Shared workflow routing](shared-release-orchestration.md)
 
 ## Package contract 3
 

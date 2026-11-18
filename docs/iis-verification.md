@@ -6,7 +6,7 @@ Actual Windows Server 2022/IIS and consumer acceptance are **NOT RUN** for the r
 | --- | --- |
 | Initialization Preview | Exact canonical root and IIS settings, with no filesystem or IIS changes |
 | Initialize | One dedicated site and pool, stopped with zero workers, zero bindings, and both auto-start flags disabled |
-| Manual configuration | Correct expected account, HTTPS certificate, runtime access, external configuration and Staging/Production environment |
+| Manual configuration | Correct expected account, HTTPS certificate, runtime access, external configuration and the configured DEV runtime or fixed Production runtime for the target |
 | Read-only validation | ReadyForFirstDeployment with the configured site and pool still stopped |
 | First tagged release | Correct source/target, readiness matching release and configuration, Started site and pool, one worker, both auto-start flags enabled |
 | Routine upgrade | Verified prior inventory in the retained backup and intact external configuration, keys and logs |

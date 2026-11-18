@@ -68,7 +68,7 @@ function Get-ClcDeploymentRoute {
     Assert-ClcEnum $Source.identity.channel @('DEV','Production')
     $id=$Configuration.applicationId+'-'+$Source.identity.channel.ToLowerInvariant()
     Assert-ClcId $id
-    $runtimeEnvironment=if ($Source.identity.channel -ceq 'DEV') {'Staging'} else {'Production'}
+    $runtimeEnvironment=if ($Source.identity.channel -ceq 'DEV') {$Configuration.devRuntimeEnvironment} else {'Production'}
     return @{targetId=$id;environment=$id;runtimeEnvironment=$runtimeEnvironment;runnerLabels=@('self-hosted','Windows','X64',$id)}
 }
 

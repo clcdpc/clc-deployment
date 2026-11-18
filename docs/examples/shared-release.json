@@ -3,6 +3,7 @@
   "applicationId": "example",
   "repository": "example-org/example",
   "integrationBranch": "master",
+  "devRuntimeEnvironment": "Production",
   "producer": {
     "workflowPath": ".github/workflows/build.yml",
     "job": "build",

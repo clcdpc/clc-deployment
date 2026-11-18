@@ -5,7 +5,7 @@ function Invoke-ClcIisDeployment {
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $ApplicationId,
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $TargetId,
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $ExpectedRuntimeAccount,
-        [Parameter(Mandatory)][ValidateSet('Staging','Production')][string] $RuntimeEnvironment,
+        [Parameter(Mandatory)][ValidateSet('Staging','Production',IgnoreCase=$false)][string] $RuntimeEnvironment,
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $ArchivePath,
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $ExpectedSha256,
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $ReleaseTag,
@@ -18,8 +18,10 @@ function Invoke-ClcIisDeployment {
     Assert-ClcCommit $ExpectedSourceCommit
     Assert-ClcRepository $ExpectedRepository
     $tag=Get-ClcDeploymentTag $ReleaseTag
-    $channel=if ($RuntimeEnvironment -ceq 'Production') {'Production'} else {'DEV'}
-    if ($tag.channel -cne $channel) { Stop-ClcError Clc.ReleaseMismatch 'Use a DEV tag for Staging and a stable production tag for Production.' }
+    if ($tag.channel -ceq 'ArtifactOnly') { Stop-ClcError Clc.ReleaseMismatch 'Use a DEV or stable release tag for IIS deployment.' }
+    if ($tag.channel -ceq 'Production' -and $RuntimeEnvironment -cne 'Production') {
+        Stop-ClcError Clc.ReleaseMismatch 'Stable release tags require the Production runtime environment.'
+    }
     $handles=[Collections.Generic.List[IDisposable]]::new()
     $lock=$null; $attempt=$null; $committed=$false; $iisEffects=$false
     try {

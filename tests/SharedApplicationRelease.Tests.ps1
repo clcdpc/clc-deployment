@@ -2,7 +2,7 @@ BeforeAll {
     . "$PSScriptRoot/../tools/release/Workflow.Common.ps1"
     function New-ApplicationReleaseFixture {
         $script:sourceCommit='a'*40; $script:integrationCommit='b'*40
-        $script:configuration=@{contractVersion=3L;applicationId='ssrs-web';repository='clcdpc/ssrs-web';integrationBranch='master';producer=@{workflowPath='.github/workflows/build.yml';job='build'};requiredToolkitContractVersion=3L}
+        $script:configuration=@{contractVersion=3L;applicationId='ssrs-web';repository='clcdpc/ssrs-web';integrationBranch='master';devRuntimeEnvironment='Production';producer=@{workflowPath='.github/workflows/build.yml';job='build'};requiredToolkitContractVersion=3L}
         $script:responses=@{}
         $base='/repos/clcdpc/ssrs-web'
         $script:responses[$base+'/branches/master']=@{protected=$true;commit=@{sha=$script:integrationCommit}}
@@ -14,6 +14,54 @@ BeforeAll {
     function Set-UnmergedDevTagFixture {
         $base='/repos/clcdpc/ssrs-web'
         $script:responses[$base+'/compare/'+$script:sourceCommit+'...'+$script:integrationCommit]=@{status='diverged';merge_base_commit=@{sha=('c'*40)}}
+    }
+    function Get-TestProtectedDeploymentConfiguration([string] $Tag) {
+        $repository=$script:configuration.repository
+        $sharedRevision='d'*40
+        $script:configuration.orchestration=@{sharedRevision=$sharedRevision}
+        $contents=[Text.Encoding]::UTF8.GetBytes(($script:configuration | ConvertTo-Json -Depth 4 -Compress))
+        $script:responses['/repos/'+$repository+'/contents/.clc/release.json?ref='+$script:sourceCommit]=@{
+            type='file';encoding='base64';size=$contents.Length;content=[Convert]::ToBase64String($contents);sha=('f'*40)
+        }
+        $claims=@{iss='https://token.actions.githubusercontent.com';aud='clc-deployment';repository=$repository;event_name='push';
+            workflow_sha=$script:sourceCommit;workflow_ref="$repository/.github/workflows/build.yml@refs/tags/$Tag";
+            job_workflow_sha=$sharedRevision;job_workflow_ref="clcdpc/clc-deployment/.github/workflows/application-deploy.yml@$sharedRevision"}
+        (Get-ClcProtectedWorkflowConfiguration $claims $repository deploy $TestDrive $script:api).configuration
+    }
+}
+
+Describe 'Authenticated consumer runtime configuration and deployment routing' {
+    BeforeEach { New-ApplicationReleaseFixture }
+
+    It 'loads the documented example with the Production runtime on DEV' {
+        $configuration=Read-ClcConsumerConfiguration (Join-Path $PSScriptRoot '../docs/examples/shared-release.json')
+        $configuration.devRuntimeEnvironment | Should -BeExactly 'Production'
+    }
+    It 'routes <Tag> with configured <ConfiguredRuntime> to <Target> using <ExpectedRuntime>' -ForEach @(
+        @{Tag='v1.2.3-dev.1';ConfiguredRuntime='Production';Target='ssrs-web-dev';ExpectedRuntime='Production'},
+        @{Tag='v1.2.3-dev.1';ConfiguredRuntime='Staging';Target='ssrs-web-dev';ExpectedRuntime='Staging'},
+        @{Tag='v1.2.3';ConfiguredRuntime='Production';Target='ssrs-web-production';ExpectedRuntime='Production'},
+        @{Tag='v1.2.3';ConfiguredRuntime='Staging';Target='ssrs-web-production';ExpectedRuntime='Production'}
+    ) {
+        $script:configuration.devRuntimeEnvironment=$ConfiguredRuntime
+        $script:responses['/repos/clcdpc/ssrs-web/git/ref/tags/'+$Tag]=@{object=@{type='commit';sha=$script:sourceCommit}}
+        $configuration=Get-TestProtectedDeploymentConfiguration $Tag
+        $source=Get-ClcVerifiedSource $configuration $Tag $script:sourceCommit 123 $script:api
+        $route=Get-ClcDeploymentRoute $configuration $source
+        $route.targetId | Should -BeExactly $Target
+        $route.environment | Should -BeExactly $Target
+        ($route.runnerLabels -join ',') | Should -BeExactly "self-hosted,Windows,X64,$Target"
+        $route.runtimeEnvironment | Should -BeExactly $ExpectedRuntime
+    }
+    It 'rejects a DEV runtime of <Case> before qualifying source or artifacts' -ForEach @(
+        @{Case='missing';Value=$null},@{Case='null';Value=$null},@{Case='empty';Value=''},
+        @{Case='Development';Value='Development'},@{Case='wrong case';Value='production'},
+        @{Case='an array';Value=@('Production')},@{Case='a number';Value=1}
+    ) {
+        $script:configuration.devRuntimeEnvironment=$Value
+        if ($Case -ceq 'missing') { $script:configuration.Remove('devRuntimeEnvironment') }
+        { Get-TestProtectedDeploymentConfiguration 'v1.2.3-dev.1' } | Should -Throw -ErrorId 'Clc.InvalidContract*'
+        ($script:requests -join ',') | Should -BeExactly ('/repos/clcdpc/ssrs-web/contents/.clc/release.json?ref='+$script:sourceCommit)
     }
 }
 

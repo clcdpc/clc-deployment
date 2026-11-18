@@ -24,13 +24,14 @@ function Read-ClcConsumerConfiguration {
     if ($bytes.Length -gt 65536) { throw 'Consumer configuration exceeds its bound.' }
     $document=[Text.Json.JsonDocument]::Parse([ReadOnlyMemory[byte]]$bytes)
     try { $c=ConvertFrom-ClcJsonElement $document.RootElement } finally { $document.Dispose() }
-    $keys=@('contractVersion','applicationId','repository','integrationBranch','producer','requiredToolkitContractVersion')
+    $keys=@('contractVersion','applicationId','repository','integrationBranch','devRuntimeEnvironment','producer','requiredToolkitContractVersion')
     if ($c.Contains('project')) { $keys+='project' }
     foreach ($optional in @('testProject','orchestration')) { if ($c.Contains($optional)) { $keys+=$optional } }
     Assert-ClcObject $c $keys
     Assert-ClcInteger $c.contractVersion 3 3
     Assert-ClcId $c.applicationId; Assert-ClcRepository $c.repository
     Assert-ClcEnum $c.integrationBranch @('master')
+    Assert-ClcEnum $c.devRuntimeEnvironment @('Production','Staging')
     # Both conventional routes must fit the existing host identifier contract.
     Assert-ClcId ($c.applicationId+'-dev'); Assert-ClcId ($c.applicationId+'-production')
     $producerKeys=@('workflowPath','job'); if ($c.producer.Contains('jobName')) {$producerKeys+='jobName'}
