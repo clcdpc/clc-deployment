@@ -2,19 +2,19 @@
 
 Enter from [setup section 8](setup-guide.md#8-prepare-deployment-hosts) after host prerequisites. Initial order: bootstrap preparation → enrollment preparation/authorization → Apply installs/activates toolkit → verification below → first application deployment. Build-time `orchestration.sharedRevision` never authorizes host installation or activation.
 
-Published [v0.1.0-beta.4](https://github.com/clcdpc/clc-deployment/releases/tag/v0.1.0-beta.4), from [557192e](https://github.com/clcdpc/clc-deployment/tree/557192eff5eea651d6f1a393eb3b196053a985e5), includes format-3 `Clc.Deployment-0.1.0-beta.4.zip`. Publication is acquisition evidence, not installation approval. Historical format-1/2 distributions retain `CLC.Deployment` naming and cannot initialize this architecture. See [distribution reference](contracts.md#toolkit-distribution-reference) for format and reproduction details.
+The application-based ProgramData layout requires a newly published, independently approved format-3 distribution that implements it. Beta.4 derives the root from the target ID. Existing target-derived installations require independently scoped reconciliation before adopting the corrected layout. See the [distribution reference](contracts.md#toolkit-distribution-reference) and [beta.4 source](https://github.com/clcdpc/clc-deployment/tree/557192eff5eea651d6f1a393eb3b196053a985e5).
 
 ## Initial bootstrap provisioning
 
 1. **On a trusted infrastructure workstation**, select the full version, source commit and producer run/job/artifact. Authenticate these through the reviewed upstream release process and retain the exact archive SHA-256 in infrastructure change evidence. Download the selected ZIP from its [release](https://github.com/clcdpc/clc-deployment/releases). Review the verifier, extractor and dependencies from that exact source through an already trusted channel, before executing them. An adjacent identity file or archive cannot authenticate its own verifier.
 
-   For beta.4 acquisition, an already authenticated read-only GitHub CLI session can obtain public identity claims and download the selected asset into a new local directory:
+   An authenticated read-only GitHub CLI session can obtain identity claims for the selected release tag and download its exact versioned asset into a new local directory:
 
    ```powershell
-   gh api repos/clcdpc/clc-deployment/releases/tags/v0.1.0-beta.4 `
+   gh api "repos/clcdpc/clc-deployment/releases/tags/$selectedTag" `
        --jq '{tag: .tag_name, source: .target_commitish, assets: [.assets[] | {id, name, digest}]}'
-   gh release download v0.1.0-beta.4 --repo clcdpc/clc-deployment `
-       --pattern Clc.Deployment-0.1.0-beta.4.zip --dir $newAcquisitionDirectory
+   gh release download $selectedTag --repo clcdpc/clc-deployment `
+       --pattern "Clc.Deployment-$selectedVersion.zip" --dir $newAcquisitionDirectory
    ```
 
    The ZIP asset's `sha256:` digest is the archive digest; an Actions transport ZIP has a different digest. Independently reconcile asset/source claims with the retained successful `build-test-publish` producer run/job/artifact and [release-manifest](releasing.md#version-identity), then approve the selected bytes. The version/source/digest variables below come from that independent decision, never automatic acceptance of adjacent metadata.
@@ -42,7 +42,7 @@ $extracted = & "$reviewedTools\Expand-ToolkitDistribution.ps1" `
     -VersionRoot $preparedVersion -OperatorApprovalReference $changeReference
 ```
 
-5. After successful extraction (`extracted=true`, `activated=false`), independently protect the extracted tree and its destination ancestors. Move the complete prepared directory to the **absent** `$bootstrapRoot`, the target's exact `Deployment\bootstrap`. Use `Move-Item -LiteralPath $preparedVersion -Destination $bootstrapRoot` only after verifying both absolute paths and destination absence. Do not merge with an existing bootstrap. It contains exactly `Clc.Deployment`, `tools`, `source.commit` and `distribution.zip`. Failed extraction remains unactivated evidence outside Deployment.
+5. After successful extraction (`extracted=true`, `activated=false`), independently protect the extracted tree and its destination ancestors. Move the complete prepared directory to the **absent** `$bootstrapRoot` at native `%ProgramData%\clc-<application-id>\Deployment\bootstrap`. Use `Move-Item -LiteralPath $preparedVersion -Destination $bootstrapRoot` only after verifying both absolute paths and destination absence. Do not merge with an existing bootstrap. It contains exactly `Clc.Deployment`, `tools`, `source.commit` and `distribution.zip`. Failed extraction remains unactivated evidence outside Deployment.
 6. Recheck installed bytes at the final location:
 
 ```powershell
@@ -74,7 +74,5 @@ For an existing installation only, under separate upgrade approval. Afterwards, 
 2. Authenticate the replacement archive. Extract to a new exact `Deployment\toolkit\versions\<version>` directory; never overwrite an installed version. Verify bytes, owner/DACL/ancestor replacement rights and effective runtime isolation.
 3. Independently replace protected host policy with next generation and exact `activeToolkit` version/source/distribution digest/module inventory/absolute manifest. **No general activation command exists.** Extractor `OperatorApprovalReference` records a reference without authenticating approval or activating code.
 4. Use a fresh process/new manifest and update the independent inspection handoff when needed. Inspect the target; prove an old inactive manifest refuses before effects. Interrupted publication/incompatible state requires fenced maintenance; retain both versions/evidence.
-
-DEV and Production can pin different versions on one machine.
 
 For the separately authorized disposable harness only, `Set-QualificationToolkit.ps1 -Operation Inspect` and its independently authorized `activate-compatible-toolkit` procedure retain campaign-specific policy/history checks. It is not a production installer. See [IIS verification](iis-verification.md) and [testing/toolchain evidence](testing.md). **Real IIS and compatible-toolkit recovery qualification remain NOT RUN.**

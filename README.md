@@ -6,7 +6,7 @@ Clc.Deployment provides shared GitHub release orchestration and an independently
 
 **Configuring SSRS Web? Start with [clcdpc/ssrs-web/docs/clc-deployment.md](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md).** That application runbook controls its setup and release workflow, referring to toolkit procedures as needed. Generic shared-workflow examples do not replace it.
 
-Every target owns `%ProgramData%\clc-<target-id>\`, including its protected `Deployment` bootstrap/toolkit/policy/approvals/state. DEV and Production can pin different toolkit versions on one host. Infrastructure owns accounts, components, IIS/TLS/ACLs, protected configuration/keys, toolkit installation and approvals. Applications own builds, configuration/readiness semantics and database/hook compatibility. Deployment replaces managed application files only.
+Each target has a dedicated `%ProgramData%\clc-<application-id>\` on its server, including its protected `Deployment` bootstrap/toolkit/policy/approvals/state. DEV and Production use separate servers. Infrastructure owns accounts, components, IIS/TLS/ACLs, protected configuration/keys, toolkit installation and approvals. Applications own builds, configuration/readiness semantics and database/hook compatibility. Deployment replaces managed application files only.
 
 Exact-byte authority, physical-path/access checks, the machine/pool lock, durable journals, verified backups and expected-release readiness are mandatory. Validation/hooks run elevated without sandboxing; approval against the deployment administrator remains procedural.
 

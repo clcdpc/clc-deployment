@@ -16,6 +16,23 @@ Describe 'Host-local configuration and independent enrollment authorization' {
         Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
         Test-Path -LiteralPath $fixture.layout.root | Should -BeFalse
     }
+    It 'resolves <TargetId> on its own simulated host from the same application identity' -ForEach @(
+        @{TargetId='example-app-dev';Machine='11111111-1111-4111-8111-111111111111'},
+        @{TargetId='example-app-production';Machine='22222222-2222-4222-8222-222222222222'}
+    ) {
+        $example=New-HTestFixture -ApplicationId example-app -TargetId $TargetId -Workspace $fixture.workspace
+        $example.policy.machineIdentity=$Machine; Save-HTestAuthorization $example
+        Set-HTestMocks $example
+        $session=Open-HSession $example.configurationPath synthetic-enroll
+        $root=Join-Path $example.workspace 'clc-example-app'
+        $session.layout.targetRoot | Should -BeExactly $root
+        $session.layout.applicationId | Should -BeExactly example-app
+        $session.layout.targetId | Should -BeExactly $TargetId
+        $session.authorization.targetId | Should -BeExactly $TargetId
+        $session.authorization.hostPolicy.machineIdentity | Should -BeExactly $Machine
+        $session.layout.deploymentConfigurationPath | Should -BeExactly (Join-Path $root 'Config\deployment.json')
+        $session.target.operationalConfigPath | Should -BeExactly (Join-Path $root 'Config\application.json')
+    }
     It 'rejects physical root sharing in the actual enrollment IIS adapter through <Kind>' -ForEach @(@{Kind='application'},@{Kind='virtual-directory'}) {
         $vdirs=@([pscustomobject]@{Path='/';PhysicalPath=$fixture.target.applicationRoot})
         if ($Kind -ceq 'virtual-directory') {$vdirs=@([pscustomobject]@{Path='/';PhysicalPath=$fixture.configuration.enrollmentRoot},[pscustomobject]@{Path='/files';PhysicalPath=$fixture.target.applicationRoot})}
@@ -106,12 +123,19 @@ Describe 'Host-local configuration and independent enrollment authorization' {
         $result.HostState | Should -BeExactly DriftDetected
         { Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply } | Should -Throw
     }
-    It 'rejects overlapping application, keys, inbox and protected paths before effects' -ForEach @(@{Field='dataProtectionRoot'},@{Field='artifactInboxRoot'},@{Field='enrollmentRoot'}) {
+    It 'rejects noncanonical <Field> even with a matching configuration digest' -ForEach @(
+        @{Field='applicationId';Code='Clc.EnrollmentAuthorizationMismatch*'},@{Field='enrollmentRoot';Code='Clc.EnrollmentAuthorizationMismatch*'},
+        @{Field='applicationRoot';Code='Clc.UnsafePath*'},@{Field='operationalConfigPath';Code='Clc.UnsafePath*'},
+        @{Field='dataProtectionRoot';Code='Clc.UnsafePath*'},@{Field='artifactInboxRoot';Code='Clc.UnsafePath*'}
+    ) {
         $fixture.configuration[$Field]=Join-Path $fixture.target.applicationRoot 'nested'
+        if ($Field -ceq 'applicationId') { $fixture.configuration[$Field]='other-app' }
         Write-TestJson $fixture.configurationPath $fixture.configuration
         $fixture.authorization.deploymentConfigurationSha256=(Get-FileHash -LiteralPath $fixture.configurationPath).Hash.ToLowerInvariant(); Save-HTestAuthorization $fixture
-        { Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply } | Should -Throw
+        $before=Get-TestTreeHashes $fixture.workspace
+        { Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply } | Should -Throw -ErrorId $Code
         Should -Invoke Set-HNewResourceAcl -Times 0 -Exactly
+        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
     }
 }
 Describe 'Exact IIS enrollment and stopped-only changes' {

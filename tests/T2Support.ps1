@@ -5,9 +5,12 @@ function Invoke-T2Private {
     return & (Get-Module Clc.Deployment) { param($Name,$Arguments) & $Name @Arguments } $Name $Arguments
 }
 function New-T2Fixture {
+    param([switch] $LegacyTargetRoot)
     $workspace=New-TestWorkspace
-    $targetRoot=Join-Path $workspace 'clc-example'; $deploymentRoot=Join-Path $targetRoot 'Deployment'; $toolkit=Join-Path $deploymentRoot 'toolkit'; $version=Join-Path $toolkit 'versions\0.1.0-dev.1'; $module=Join-Path $version 'Clc.Deployment'
-    $layout=@{targetId='example';targetRoot=$targetRoot;deploymentRoot=$deploymentRoot;root=$toolkit;moduleRoot=$module;versionRoot=$version;manifestPath=(Join-Path $module 'Clc.Deployment.psd1');
+    $target=Get-Content -LiteralPath (Join-Path $script:FixtureRoot 'target.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
+    $rootId=if ($LegacyTargetRoot) { $target.targetId } else { $target.applicationId }
+    $targetRoot=Join-Path $workspace ('clc-'+$rootId); $deploymentRoot=Join-Path $targetRoot 'Deployment'; $toolkit=Join-Path $deploymentRoot 'toolkit'; $version=Join-Path $toolkit 'versions\0.1.0-dev.1'; $module=Join-Path $version 'Clc.Deployment'
+    $layout=@{applicationId=$target.applicationId;targetId=$target.targetId;targetRoot=$targetRoot;deploymentRoot=$deploymentRoot;root=$toolkit;moduleRoot=$module;versionRoot=$version;manifestPath=(Join-Path $module 'Clc.Deployment.psd1');
         policyRoot=(Join-Path $toolkit 'policy');policyPath=(Join-Path $toolkit 'policy\host-policy.json');
         targetCatalogRoot=(Join-Path $toolkit 'policy\targets');approvalCatalogRoot=(Join-Path $toolkit 'policy\approvals');
         sourcePath=(Join-Path $version 'source.commit');distributionPath=(Join-Path $version 'distribution.zip');
@@ -34,7 +37,6 @@ function New-T2Fixture {
     $policy.activeToolkit.inventorySha256=Invoke-T2Private Get-ClcInventoryHash @(,$files)
     $policy.activeToolkit.distributionSha256=(Get-FileHash -LiteralPath $layout.distributionPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-TestJson $layout.policyPath $policy
-    $target=Get-Content -LiteralPath (Join-Path $script:FixtureRoot 'target.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
     $target.applicationRoot=Join-Path $targetRoot 'Application'; $target.operationalConfigPath=Join-Path $targetRoot 'Config\application.json'
     $target.dataProtectionRoot=Join-Path $targetRoot 'Keys'; $target.artifactInboxRoot=Join-Path $targetRoot 'Inbox'
     [IO.File]::WriteAllText($target.operationalConfigPath,'synthetic external configuration; never executed')
@@ -54,7 +56,7 @@ function Set-T2FixtureInModule {
 }
 function Set-T2Mocks {
     Mock -ModuleName Clc.Deployment Get-ClcInstalledLayout {
-        if ($TargetId -cne $global:ClcTestFixture.target.targetId) { Invoke-T2Private Stop-ClcError @('Clc.ToolkitNotActive') }
+        if ($TargetId -cne $global:ClcTestFixture.layout.targetId) { Invoke-T2Private Stop-ClcError @('Clc.ToolkitNotActive') }
         return $global:ClcTestFixture.layout
     }
     Mock -ModuleName Clc.Deployment Get-ClcCallerSid { return 'S-1-5-19' }

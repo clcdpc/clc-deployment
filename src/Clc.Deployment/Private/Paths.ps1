@@ -292,12 +292,13 @@ function Get-ClcProgramDataRoot {
 }
 
 function Get-ClcTargetLayout {
-    param([Parameter(Mandatory)][string] $TargetId,[Parameter(Mandatory)][string] $Version)
-    Assert-ClcId $TargetId; Assert-ClcVersion $Version
-    $targetRoot=Join-Path (Get-ClcProgramDataRoot) ('clc-'+$TargetId)
+    param([Parameter(Mandatory)][string] $ApplicationId,[Parameter(Mandatory)][string] $TargetId,[Parameter(Mandatory)][string] $Version)
+    Assert-ClcId $ApplicationId; Assert-ClcId $TargetId; Assert-ClcVersion $Version
+    $targetRoot=Join-Path (Get-ClcProgramDataRoot) ('clc-'+$ApplicationId)
     $deploymentRoot=Join-Path $targetRoot 'Deployment'
     $root=Join-Path $deploymentRoot 'toolkit'; $versionRoot=Join-Path $root ('versions\'+$Version)
-    return @{targetId=$TargetId;targetRoot=$targetRoot;deploymentRoot=$deploymentRoot;root=$root;versionRoot=$versionRoot;
+    return @{applicationId=$ApplicationId;targetId=$TargetId;targetRoot=$targetRoot;deploymentRoot=$deploymentRoot;root=$root;versionRoot=$versionRoot;
+        deploymentConfigurationPath=(Join-Path $targetRoot 'Config\deployment.json');
         moduleRoot=(Join-Path $versionRoot 'Clc.Deployment');manifestPath=(Join-Path $versionRoot 'Clc.Deployment\Clc.Deployment.psd1');
         policyRoot=(Join-Path $root 'policy');policyPath=(Join-Path $root 'policy\host-policy.json');
         targetCatalogRoot=(Join-Path $root 'policy\targets');approvalCatalogRoot=(Join-Path $root 'policy\approvals');
@@ -308,7 +309,7 @@ function Get-ClcTargetLayout {
 
 function Assert-ClcTargetPaths {
     param($Target,$Layout)
-    if ($Target.targetId -cne $Layout.targetId) { Stop-ClcError Clc.HostPreflightFailed }
+    if ($Target.targetId -cne $Layout.targetId -or $Target.applicationId -cne $Layout.applicationId) { Stop-ClcError Clc.HostPreflightFailed }
     foreach ($pair in @(@('applicationRoot','Application'),@('operationalConfigPath','Config\application.json'),@('dataProtectionRoot','Keys'),@('artifactInboxRoot','Inbox'))) {
         if ($Target[$pair[0]] -cne (Join-Path $Layout.targetRoot $pair[1])) { Stop-ClcError Clc.UnsafePath }
     }

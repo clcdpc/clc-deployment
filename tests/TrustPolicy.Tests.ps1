@@ -9,8 +9,9 @@ Describe 'Installed toolkit and independently protected selection' {
         Test-TestRejection { [IO.File]::WriteAllText($fixture.layout.policyPath,'tamper') } '*'
         Test-TestRejection { Invoke-T2Private Open-ClcTrustedContext @('C:\caller-policy') } '*'
     }
-    It 'binds the loaded manifest location to the independently derived target namespace' {
-        $before=Get-T2TreeHashes $fixture
+    It 'binds the loaded manifest and protected identities from a <RootKind> module location' -ForEach @(@{RootKind='canonical'},@{RootKind='legacy'}) {
+        $installation=if ($RootKind -ceq 'legacy') { New-T2Fixture -LegacyTargetRoot } else { $fixture }
+        $before=Get-T2TreeHashes $installation
         $powerShell=[PowerShell]::Create(); $pending=$null
         try {
             # This isolated runspace has no Pester mocks. Exercise the actual
@@ -28,29 +29,68 @@ Describe 'Installed toolkit and independently protected selection' {
                 }
                 Remove-Module Clc.Deployment -Force
                 Import-Module $InstalledManifest -Force
-                $layout=& (Get-Module Clc.Deployment) { param($Root) function Get-ClcProgramDataRoot { $Root }; Get-ClcInstalledLayout example } $ProgramData
-                $otherRefused=$false
-                try { $null=& (Get-Module Clc.Deployment) { param($Root) function Get-ClcProgramDataRoot { $Root }; Get-ClcInstalledLayout other } $ProgramData }
-                catch { if ($_.FullyQualifiedErrorId -notlike 'Clc.ToolkitNotActive*') { throw }; $otherRefused=$true }
-                if (-not $otherRefused) { throw 'Wrong-target module was admitted.' }
-                return @{sourceRefusal=$sourceRefusal;layout=$layout}
-            }.ToString()).AddArgument($script:ModulePath).AddArgument($fixture.layout.manifestPath).AddArgument($fixture.workspace)
+                $observation=& (Get-Module Clc.Deployment) {
+                    param($Root)
+                    function Get-ClcProgramDataRoot { $Root }
+                    function Get-ClcCallerSid { 'S-1-5-19' }
+                    function Test-ClcAdministratorToken { $true }
+                    function Assert-ClcAccess { param($Path) (Get-ClcSecurityObservation $Path).sha256 }
+                    function Assert-ClcTrustAncestors { }
+                    function Assert-ClcRuntimeIdentity { }
+                    function Assert-ClcHelperDependencies { }
+                    $context=Open-ClcTrustedContext example
+                    try {
+                        $result=@{layout=$context.layout;applicationRefusal=$null;target=$null;wrongTargetRefusal=$null}
+                        try { $result.target=(Read-ClcProtectedTarget $context example).record }
+                        catch { if ($_.FullyQualifiedErrorId -notlike 'Clc.HostPreflightFailed*') { throw }; $result.applicationRefusal=$_.FullyQualifiedErrorId }
+                    } finally { Close-ClcTrustedContext $context }
+                    try { $null=Invoke-ClcIisDeployment -TargetId other -ReleaseApprovalId example-001 }
+                    catch { $result.wrongTargetRefusal=$_.FullyQualifiedErrorId }
+                    return $result
+                } $ProgramData
+                $observation.sourceRefusal=$sourceRefusal
+                return $observation
+            }.ToString()).AddArgument($script:ModulePath).AddArgument($installation.layout.manifestPath).AddArgument($installation.workspace)
             $pending=$powerShell.BeginInvoke()
             if (-not $pending.AsyncWaitHandle.WaitOne(30000)) { $powerShell.Stop(); throw 'Installed-layout observation exceeded its deadline.' }
             $observations=$powerShell.EndInvoke($pending)
-            @($powerShell.Streams.Error | Where-Object { $_.FullyQualifiedErrorId -notlike 'Clc.ToolkitNotActive*' }).Count | Should -Be 0
+            $powerShell.Streams.Error.Count | Should -Be 0
             $observations.Count | Should -Be 1
             $observations[0].sourceRefusal | Should -BeLike 'Clc.ToolkitNotActive*'
             $layout=$observations[0].layout
-            $layout.manifestPath | Should -BeExactly $fixture.layout.manifestPath
-            $layout.policyPath | Should -BeExactly $fixture.layout.policyPath
-            $layout.controlStateRoot | Should -BeExactly $fixture.layout.controlStateRoot
-            $layout.lockRoot | Should -BeExactly $fixture.layout.lockRoot
-            (Get-T2TreeHashes $fixture) | Should -BeExactly $before
+            $layout.targetId | Should -BeExactly 'example'
+            if ($RootKind -ceq 'legacy') {
+                $layout.applicationId | Should -BeExactly 'example'
+                $observations[0].applicationRefusal | Should -BeLike 'Clc.HostPreflightFailed*'
+                $observations[0].target | Should -BeNullOrEmpty
+            } else {
+                $layout.applicationId | Should -BeExactly 'probe'
+                $observations[0].target.applicationId | Should -BeExactly 'probe'
+                $observations[0].target.targetId | Should -BeExactly 'example'
+            }
+            $observations[0].wrongTargetRefusal | Should -BeLike 'Clc.HostPreflightFailed*'
+            $layout.manifestPath | Should -BeExactly $installation.layout.manifestPath
+            $layout.policyPath | Should -BeExactly $installation.layout.policyPath
+            $layout.controlStateRoot | Should -BeExactly $installation.layout.controlStateRoot
+            $layout.lockRoot | Should -BeExactly $installation.layout.lockRoot
+            (Get-T2TreeHashes $installation) | Should -BeExactly $before
         } finally {
             if ($pending) { $pending.AsyncWaitHandle.Dispose() }
             $powerShell.Dispose()
+            if ($RootKind -ceq 'legacy') { Remove-TestWorkspace $installation.workspace }
         }
+    }
+    It 'rejects a protected target record with a conflicting <Field> before deployment locking' -ForEach @(
+        @{Field='applicationId'},@{Field='targetId'}
+    ) {
+        $targetPath=Join-Path $fixture.layout.targetCatalogRoot 'example.json'
+        $fixture.target[$Field]='other'
+        Write-TestJson $targetPath $fixture.target
+        $before=Get-T2TreeHashes $fixture
+        Test-TestRejection {Invoke-ClcIisDeployment -TargetId example -ReleaseApprovalId example-001} 'Clc.HostPreflightFailed*'
+        Should -Invoke -ModuleName Clc.Deployment Get-ClcIisPoolNames -Times 0 -Exactly
+        @([IO.Directory]::EnumerateFileSystemEntries($fixture.layout.lockRoot)).Count | Should -Be 0
+        Get-T2TreeHashes $fixture | Should -BeExactly $before
     }
     It 'rejects reading another target through an already opened target context' {
         $context=Invoke-T2Private Open-ClcTrustedContext

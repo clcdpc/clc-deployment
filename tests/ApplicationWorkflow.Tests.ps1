@@ -68,8 +68,8 @@ Describe 'Tagged application workflow identity and conventional routing' {
         $route.target.standingAuthorizationId | Should -BeExactly $id
         ($route.target.runnerLabels -join ',') | Should -BeExactly ('self-hosted,Windows,X64,'+$id)
         $route.target.Contains('runnerGroup') | Should -BeFalse
-        $expected=Join-Path (Get-ClcProgramDataRoot) ('clc-'+$id+'\Deployment\toolkit\policy\host-policy.json')
-        Get-ClcWorkflowPolicyPath $route.target.targetId | Should -BeExactly $expected
+        $expected=Join-Path (Get-ClcProgramDataRoot) 'clc-example\Deployment\toolkit\policy\host-policy.json'
+        (Get-ClcTargetLayout $script:configuration.applicationId $route.target.targetId '0.0.0').policyPath | Should -BeExactly $expected
     }
     It 'keeps beta and RC releases off deployment runners' {
         $script:source.identity.channel='ArtifactOnly'
@@ -100,16 +100,17 @@ Describe 'Tagged application workflow identity and conventional routing' {
 }
 Describe 'Infrastructure-owned trust before the installed toolkit first import' {
     It 'rejects a runtime-writable fake policy before importing its selected module' {
-        $script:firstImportPolicy=Join-Path $TestDrive 'host-policy.json'
+        $script:firstImportPolicy=Join-Path $TestDrive 'clc-probe\Deployment\toolkit\policy\host-policy.json'
+        $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($script:firstImportPolicy))
         [IO.File]::WriteAllText($script:firstImportPolicy,'{"activeToolkit":{"moduleManifestPath":"C:\\fake\\Clc.Deployment.psd1"}}')
         $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
         $acl=Get-Acl -LiteralPath $script:firstImportPolicy; $acl.SetOwner($sid)
         $acl.SetAccessRuleProtection($true,$false)
         $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.AccessControlType]::Allow))
         Set-Acl -LiteralPath $script:firstImportPolicy -AclObject $acl
-        Mock Get-ClcWorkflowPolicyPath { return $script:firstImportPolicy }
+        Mock Get-ClcProgramDataRoot { return $TestDrive }
         Mock Import-Module { throw 'UNSAFE_IMPORT' }
-        { Open-ClcWorkflowToolkit probe-dev } | Should -Throw -ErrorId 'Clc.HostPreflightFailed*'
+        { Open-ClcWorkflowToolkit -ApplicationId probe -TargetId probe-dev } | Should -Throw -ErrorId 'Clc.HostPreflightFailed*'
         Should -Invoke Import-Module -Times 0 -Exactly
         # Failure must release the held read handle without altering evidence.
         $stream=[IO.File]::Open($script:firstImportPolicy,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)

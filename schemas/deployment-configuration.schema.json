@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "deployment-configuration",
-  "$comment": "Runtime verifies canonical target-specific Application, Config/application.json, Keys and Inbox sibling paths and independently binds exact approved bytes before mutation.",
+  "$comment": "Config/deployment.json and its canonical resource paths use native ProgramData/clc-<applicationId>. Enrollment requires an independent approval binding the exact configuration bytes and target ID before mutation.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -35,10 +35,12 @@
       "const": "deployment-configuration"
     },
     "targetId": {
-      "$ref": "#/$defs/id"
+      "$ref": "#/$defs/id",
+      "description": "Deployment target identity for routing and authorization."
     },
     "applicationId": {
-      "$ref": "#/$defs/id"
+      "$ref": "#/$defs/id",
+      "description": "Stable application identity used to derive the canonical ProgramData directory."
     },
     "environmentName": {
       "type": "string",
@@ -87,7 +89,7 @@
     },
     "enrollmentRoot": {
       "$ref": "#/$defs/path",
-      "description": "Must exactly equal native ProgramData\\\\clc-<authenticated targetId>\\\\Deployment; retained field is an assertion, never a root selector."
+      "description": "Must exactly equal Deployment beneath the authenticated application's native ProgramData directory."
     }
   },
   "$defs": {

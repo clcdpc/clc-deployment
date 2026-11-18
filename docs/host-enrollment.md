@@ -1,6 +1,6 @@
 # Host enrollment procedure
 
-Infrastructure enrolls each target using [Get-ClcHostEnrollment.ps1](../tools/host/Get-ClcHostEnrollment.ps1) and [Initialize-ClcHostEnrollment.ps1](../tools/host/Initialize-ClcHostEnrollment.ps1), as implemented at [557192e](https://github.com/clcdpc/clc-deployment/tree/557192eff5eea651d6f1a393eb3b196053a985e5). Release approval remains separate.
+Infrastructure enrolls each target using [Get-ClcHostEnrollment.ps1](../tools/host/Get-ClcHostEnrollment.ps1) and [Initialize-ClcHostEnrollment.ps1](../tools/host/Initialize-ClcHostEnrollment.ps1). Release approval remains separate.
 
 Enter from [bootstrap preparation](installation.md#initial-bootstrap-provisioning); section 1 supplies its host prerequisites. Complete sections 1–5 in order. Apply installs/activates the initial runtime toolkit from independently approved bytes; no prior runtime installation is required. **Next:** [installed-toolkit verification](installation.md#verification-and-activation), then first application deployment.
 
@@ -22,20 +22,21 @@ Enter from [bootstrap preparation](installation.md#initial-bootstrap-provisionin
 3. Derive the canonical namespace with the reviewed native path logic:
 
 ```powershell
-$targetId = 'example-app-dev' # Replace with the selected application's actual target ID.
+$applicationId = 'example-app'
+$targetId = 'example-app-dev'
 # $approvedVersion is the independently selected full toolkit version.
 . "$reviewedSource\src\Clc.Deployment\Private\Contracts.ps1"
 . "$reviewedSource\src\Clc.Deployment\Private\Paths.ps1"
-$layout = Get-ClcTargetLayout $targetId $approvedVersion
+$layout = Get-ClcTargetLayout $applicationId $targetId $approvedVersion
 $targetRoot = $layout.targetRoot
 $bootstrapRoot = $layout.bootstrapRoot
-$hostDeploymentJson = Join-Path $targetRoot 'Config\deployment.json'
+$hostDeploymentJson = $layout.deploymentConfigurationPath
 ```
 
-Native ProgramData fixes these paths; environment variables cannot redirect them. Layout relative to `$targetRoot`:
+Native ProgramData and the application ID fix these paths. The target ID binds the protected records within the application directory.
 
 ```text
-clc-<target-id>/
+clc-<application-id>/
   Application/; Config/application.json; Config/deployment.json; Keys/; Inbox/; Logs/ (optional)
   Deployment/
     bootstrap/                         # independently prepared executable bootstrap
@@ -61,12 +62,12 @@ Provision `Config\application.json`: infrastructure owns/writes; deployment/runt
 Before continuing, check:
 
 - Fresh `Deployment` contains only bootstrap and enrollment; do not precreate toolkit/control/locks.
-- Missing records with prior resources, intent, locks or state require independent reconciliation. Historical machine-wide installations are not adopted.
+- Missing records with prior resources, intent, locks or state require independent reconciliation. Historical machine-wide and target-derived roots require separately authorized maintenance. A different target already registered in the application's catalog is a collision.
 - Control roots fit 71 characters, lock roots 170, and prospective state paths 240.
 
 ## 2. Prepare Config/deployment.json
 
-Write UTF-8 JSON at `$hostDeploymentJson` using [the strict schema](../schemas/deployment-configuration.schema.json). The IDs, site/pool names, runtime account/SID and readiness hostname below are illustrative; replace them with application/infrastructure selections and actual host observations. Derive every path from native ProgramData and the selected target ID; `C:\ProgramData` is illustrative. This example grants no authority:
+Write UTF-8 JSON at `$hostDeploymentJson` using [the strict schema](../schemas/deployment-configuration.schema.json). Replace the illustrative IDs, site/pool names, runtime account/SID and readiness hostname with independently selected values and actual host observations. Derive the paths from native ProgramData and the application ID.
 
 ```json
 {
@@ -79,14 +80,14 @@ Write UTF-8 JSON at `$hostDeploymentJson` using [the strict schema](../schemas/d
   "runtimeEnvironment": "Production",
   "siteName": "example-app-dev",
   "applicationPoolName": "example-app-dev",
-  "applicationRoot": "C:\\ProgramData\\clc-example-app-dev\\Application",
-  "operationalConfigPath": "C:\\ProgramData\\clc-example-app-dev\\Config\\application.json",
-  "dataProtectionRoot": "C:\\ProgramData\\clc-example-app-dev\\Keys",
-  "artifactInboxRoot": "C:\\ProgramData\\clc-example-app-dev\\Inbox",
+  "applicationRoot": "C:\\ProgramData\\clc-example-app\\Application",
+  "operationalConfigPath": "C:\\ProgramData\\clc-example-app\\Config\\application.json",
+  "dataProtectionRoot": "C:\\ProgramData\\clc-example-app\\Keys",
+  "artifactInboxRoot": "C:\\ProgramData\\clc-example-app\\Inbox",
   "runtimeIdentitySid": "S-1-5-21-1-2-3-2001",
   "runtimeAccountName": "EXAMPLE\\svc-example-app",
   "readinessUri": "https://example-app-dev.example.invalid/health/ready",
-  "enrollmentRoot": "C:\\ProgramData\\clc-example-app-dev\\Deployment"
+  "enrollmentRoot": "C:\\ProgramData\\clc-example-app\\Deployment"
 }
 ```
 
@@ -123,11 +124,11 @@ try {
     $configuration = Read-HJson $configurationFile.bytes
     Assert-HConfiguration $configuration
     $target = Get-HTarget $configuration
-    $layout = Get-HLayout $target.targetId $approvedVersion
+    $layout = Get-ClcTargetLayout $target.applicationId $target.targetId $approvedVersion
     Assert-ClcTargetPaths $target $layout
     if ($configuration.enrollmentRoot -cne $layout.deploymentRoot -or
-        $hostDeploymentJson -cne (Join-Path $layout.targetRoot 'Config\deployment.json')) {
-        throw 'Configuration must use the canonical target-local paths.'
+        $hostDeploymentJson -cne $layout.deploymentConfigurationPath) {
+        throw 'Configuration must use the canonical application paths.'
     }
     Assert-HBootstrapProtection $layout $handles
     $verified = & "$bootstrapRoot\tools\Test-ToolkitDistribution.ps1" `
@@ -256,7 +257,7 @@ finally { $draftStream.Dispose() }
 4. The independently authorized infrastructure process installs those exact bytes with [protected ownership/ancestors](#protect-the-handoff-and-configuration) at:
 
 ```text
-%ProgramData%\clc-<target-id>\Deployment\enrollment\authorizations\<authorizationId>.json
+%ProgramData%\clc-<application-id>\Deployment\enrollment\authorizations\<authorizationId>.json
 ```
 
 5. Verify ownership/ancestors, bytes and enabled unexpired mutation window. Fence replacement/revocation against execution; retain evidence. Valid-target inspection can use durable `permittedOperations=[]`; disabled/expired authority cannot Apply.

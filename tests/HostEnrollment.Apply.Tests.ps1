@@ -199,6 +199,22 @@ Describe 'Authorized initialization with real NTFS, distribution and protected-r
         Get-TestTreeHashes $firstKeyRoot | Should -BeExactly $firstKeys
         @([IO.Directory]::EnumerateFiles($fixture.layout.targetCatalogRoot)).Count | Should -Be 1
     }
+    It 'refuses a second target for the same application on one host even with its own exact enrollment authorization' {
+        $null=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
+        $fixture.configuration.targetId='other-target'
+        Write-TestJson $fixture.configurationPath $fixture.configuration
+        $fixture.authorization.targetId='other-target'
+        $fixture.authorization.authorizationId='other-enrollment'
+        $fixture.authorizationPath=Join-Path $fixture.authorityRoot 'authorizations\other-enrollment.json'
+        $fixture.authorization.deploymentConfigurationSha256=(Get-FileHash -LiteralPath $fixture.configurationPath).Hash.ToLowerInvariant()
+        Save-HTestAuthorization $fixture
+        $before=Get-TestTreeHashes $fixture.workspace
+        $result=Invoke-HEnrollment $fixture.configurationPath other-enrollment Plan
+        $result.Code | Should -BeExactly 'Clc.EnrollmentTargetCollision'
+        $result.InitializationPerformed | Should -BeFalse
+        {Invoke-HEnrollment $fixture.configurationPath other-enrollment Apply $distribution.archive} | Should -Throw -ErrorId 'Clc.EnrollmentTargetCollision*'
+        Get-TestTreeHashes $fixture.workspace | Should -BeExactly $before
+    }
     It 'refuses contradictory IIS and cross-target paths before selected target effects' -ForEach @(@{Collision='pool'},@{Collision='keys'}) {
         $null=Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive
         $first=$fixture.target
@@ -306,7 +322,7 @@ Describe 'Stopped first cutover preserves exact unapproved legacy installation' 
         {Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive} | Should -Throw
         Get-TestTreeHashes $fixture.target.applicationRoot | Should -BeExactly $before
     }
-    It 'rejects another target or protected subtree as the retained legacy backup location' -ForEach @(@{Suffix='clc-other\Deployment\backup'},@{Suffix='clc-example\Deployment\bootstrap'},@{Suffix='clc-example\Deployment\toolkit'}) {
+    It 'rejects another target or protected subtree as the retained legacy backup location' -ForEach @(@{Suffix='clc-other\Deployment\backup'},@{Suffix='clc-probe\Deployment\bootstrap'},@{Suffix='clc-probe\Deployment\toolkit'}) {
         $fixture.authorization.cutover.backupRoot=Join-Path $fixture.workspace $Suffix;Save-HTestAuthorization $fixture
         $before=Get-TestTreeHashes $fixture.workspace
         {Invoke-HEnrollment $fixture.configurationPath synthetic-enroll Apply $distribution.archive} | Should -Throw

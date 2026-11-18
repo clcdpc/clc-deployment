@@ -48,7 +48,7 @@ Prerequisite: [verified installed toolkit](installation.md#verification-and-acti
 4. **On the intended host, infrastructure process:** create/protect the `standing` subdirectory if absent and install the exact approved record at:
 
 ```text
-%ProgramData%\clc-<target-id>\Deployment\toolkit\policy\approvals\standing\<standingAuthorizationId>.json
+%ProgramData%\clc-<application-id>\Deployment\toolkit\policy\approvals\standing\<standingAuthorizationId>.json
 ```
 
 Apply [ownership/ancestor protection](host-enrollment.md#protect-the-handoff-and-configuration), effective runtime isolation and no direct deployment-SID write ACE. The toolkit never creates/enables standing policy; approval against the elevated administrator remains procedural.
@@ -76,7 +76,7 @@ Repeat independently for Production: its target/standing ID, exact `environmentN
 
 ## Routine operation and revocation
 
-An authorized developer [pushes an eligible tag](setup-guide.md#10-routine-operation). The workflow qualifies its producer, publishes immutable bytes, then invokes installed admission. Authenticated channel selects target/environment/runner labels; native ProgramData/protected policy select the active toolkit. Beta/RC return before host lookup.
+An authorized developer [pushes an eligible tag](setup-guide.md#10-routine-operation). The workflow qualifies its producer, publishes immutable bytes, then invokes installed admission. The authenticated channel selects target/environment/runner labels. The authenticated application ID and native ProgramData locate the protected policy that pins the active toolkit. Beta/RC return before host lookup.
 
 The current explicit engine invocation is:
 
