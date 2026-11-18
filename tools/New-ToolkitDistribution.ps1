@@ -17,7 +17,7 @@ try {
     $null=Get-DistGit $RepositoryRoot @('archive','--format=zip',('--output='+$temporary),$SourceCommit)
     $zip=[IO.Compression.ZipFile]::OpenRead($temporary)
     $treeBlobs=Get-DistGitTreeBlobMap $RepositoryRoot $SourceCommit
-    $source=[Collections.Generic.List[object]]::new(); $module=[Collections.Generic.List[object]]::new(); $infrastructure=[Collections.Generic.List[object]]::new(); $payload=@{}; $versionBytes=$null
+    $source=[Collections.Generic.List[object]]::new(); $module=[Collections.Generic.List[object]]::new(); $payload=@{}; $versionBytes=$null
     $entries=@($zip.Entries | Where-Object { -not $_.FullName.EndsWith('/') } | Sort-Object FullName -CaseSensitive -Culture '')
     foreach ($entry in $entries) {
         Assert-DistName $entry.FullName
@@ -32,10 +32,6 @@ try {
             if ($relative -cnotmatch '^(Clc\.Deployment\.ps[dm]1|(Private|Public)/[A-Za-z0-9.-]+\.ps1)$') { throw 'Unexpected module runtime dependency.' }
             $module.Add([ordered]@{path=$relative;length=[long]$bytes.Length;sha256=(Get-DistHash $bytes)})
             $payload['Clc.Deployment/'+$relative]=$bytes
-        }
-        if ($entry.FullName -cin (Get-DistInfrastructureNames)) {
-            $infrastructure.Add([ordered]@{path=$entry.FullName;length=[long]$bytes.Length;sha256=(Get-DistHash $bytes)})
-            $payload[$entry.FullName]=$bytes
         }
     }
     # Refuse export-ignore, submodules, export transformations and incomplete
@@ -58,15 +54,10 @@ try {
     }
     $moduleFiles=Sort-DistFiles $module.ToArray()
     Assert-DistInventory $moduleFiles
-    $record=[ordered]@{distributionFormat='clc-toolkit-distribution';formatVersion=3;sourceCommit=$SourceCommit;moduleVersion=$version;
+    $record=[ordered]@{distributionFormat='clc-toolkit-distribution';formatVersion=4;sourceCommit=$SourceCommit;moduleVersion=$version;
         files=$moduleFiles;inventorySha256=(Get-DistInventoryHash $moduleFiles);sourceFiles=$sourceFiles;sourceInventorySha256=(Get-DistInventoryHash $sourceFiles);
         toolchain=[ordered]@{powershell=$PSVersionTable.PSVersion.ToString();dotnetRuntime=[Environment]::Version.ToString();git=(Get-DistGit $RepositoryRoot @('--version'))};
         reproducibility='Stored ZIP, ordinal inventory, fixed 1980 timestamps; exact bytes repeat with the same source and toolchain. Rebuilt apps and cross-runtime ZIP identity are not claimed.'}
-    if ($infrastructure.Count) {
-        if ($infrastructure.Count -ne @(Get-DistInfrastructureNames).Count) { throw 'Incomplete infrastructure tooling inventory.' }
-        $record.infrastructureFiles=Sort-DistFiles $infrastructure.ToArray()
-        $record.infrastructureInventorySha256=Get-DistInventoryHash $record.infrastructureFiles
-    } else { throw 'Renamed distributions require the exact infrastructure tooling inventory.' }
     $payload['distribution.json']=[Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json -Depth 16 -Compress))
     $payload['source.commit']=[Text.Encoding]::ASCII.GetBytes($SourceCommit)
     # Recheck before publication; do not claim a dirty checkout is a pinned input.

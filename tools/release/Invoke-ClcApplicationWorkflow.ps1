@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Admit','Release','Deploy')][string] $Action,
+    [Parameter(Mandatory)][ValidateSet('Route','Release','Deploy')][string] $Action,
     [Parameter(Mandatory)][string] $ClaimsJson,
     [Parameter(Mandatory)][string] $Repository,
     [Parameter(Mandatory)][string] $Reference,
@@ -8,7 +8,7 @@ param(
     [Parameter(Mandatory)][ValidateRange(1,[long]::MaxValue)][long] $RunId,
     [Parameter(Mandatory)][ValidateRange(1,1000)][long] $RunAttempt,
     [ValidateRange(0,[long]::MaxValue)][long] $ArtifactId=0,
-    [ValidateSet('Deploy','ValidateOnly')][string] $Operation='Deploy',
+    [string] $ExpectedRuntimeAccount,
     [string] $ExpectedConfigurationBlob,
     [Parameter(Mandatory)][string] $OutputDirectory
 )
@@ -30,34 +30,19 @@ Assert-ClcWorkflowSource $claims $c $Reference $SourceCommit $RunId $RunAttempt
 if ($Action -ceq 'Deploy' -and ($ExpectedConfigurationBlob -cnotmatch '^[a-f0-9]{40}$' -or $trusted.blob -cne $ExpectedConfigurationBlob)) { throw 'Protected routing configuration changed while queued.' }
 $qualified=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $ArtifactId $api
 $source=$qualified.source; $producer=$qualified.producer
-if ($Action -ceq 'Admit') {
-    $route=Get-ClcDeploymentRoute $c $source
-    if ($route.admitted) {
-        $archive=Save-ClcVerifiedArtifact $Repository $producer (Join-Path $OutputDirectory 'artifact') $api
-        Import-Module (Join-Path $PSScriptRoot '../../src/Clc.Deployment/Clc.Deployment.psd1') -Force
-        $null=New-ClcVerifiedPackageIdentity $c $source $producer $archive $route.target.targetId
-        $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
-        $route=Get-ClcDeploymentRoute $c $again.source
-    }
-    Write-WorkflowOutput admitted $route.admitted.ToString().ToLowerInvariant()
-    Write-WorkflowOutput status $route.status
-    Write-WorkflowOutput configuration_blob $trusted.blob
-    Write-WorkflowOutput artifact_id $producer.artifactId.ToString([Globalization.CultureInfo]::InvariantCulture)
-    if ($route.admitted) {
-        Write-WorkflowOutput environment $route.target.environment
-        Write-WorkflowOutput runner_labels ($route.target.runnerLabels | ConvertTo-Json -Compress)
-        Write-WorkflowOutput target_id $route.target.targetId
-    }
-    return [pscustomobject]@{status=$route.status;admitted=$route.admitted}
+
+$route=Get-ClcDeploymentRoute $c $source
+if ($Action -ceq 'Route' -and $null -eq $route.targetId) {
+    Write-WorkflowOutput deploy false
+    return
 }
-if ($Action -ceq 'Deploy') {
-    $route=Get-ClcDeploymentRoute $c $source
-    if (-not $route.admitted) { return [pscustomobject]@{status=$route.status;admitted=$false} }
-    if (-not $claims.Contains('environment') -or $claims.environment -cne $route.target.environment) { throw 'Queued job environment differs from protected target authorization.' }
+if ($Action -ceq 'Deploy' -and ($null -eq $route.targetId -or -not $ExpectedRuntimeAccount -or
+    -not $claims.Contains('environment') -or $claims.environment -cne $route.environment)) {
+    throw 'The job lacks the matching deployment environment or expected runtime account.'
 }
+Import-Module (Join-Path $PSScriptRoot '../../src/Clc.Deployment/Clc.Deployment.psd1') -Force
 $archive=Save-ClcVerifiedArtifact $Repository $producer (Join-Path $OutputDirectory 'artifact') $api
 if ($Action -ceq 'Release') {
-    Import-Module (Join-Path $PSScriptRoot '../../src/Clc.Deployment/Clc.Deployment.psd1') -Force
     $verified=Get-ClcVerifiedPackage $c $source $producer $archive
     # Reobserve mutable eligibility after the download and before publication.
     $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
@@ -68,47 +53,40 @@ if ($Action -ceq 'Release') {
     return Invoke-ClcApplicationPublication $source.identity @($asset) $api $hash $upload
 }
 
-# The authenticated workflow configuration and route select the namespace.
-# Only its protected host policy can select the active installed toolkit.
-$toolkit=Open-ClcWorkflowToolkit -ApplicationId $c.applicationId -TargetId $route.target.targetId
-try {
-$policy=$toolkit.policy
-$verified=New-ClcVerifiedPackageIdentity $c $source $producer $archive $route.target.targetId
-$baseName='workflow-'+$RunId+'-'+$RunAttempt+'-'+[guid]::NewGuid().ToString('N')
-$bytes=[Text.Encoding]::UTF8.GetBytes(($verified | ConvertTo-Json -Depth 12 -Compress))
-$handoff=& (Get-Module Clc.Deployment) {
-    param($TargetId,$ApplicationId,$Archive,$BaseName,$Bytes)
-    $context=$null
-    try {
-        $context=Open-ClcTrustedContext -TargetId $TargetId
-        $file=Read-ClcProtectedTarget $context $TargetId; $target=$file.record
-        if ($target.applicationId -cne $ApplicationId) { Stop-ClcError Clc.ApprovalMismatch }
-        $null=Add-ClcProtectedPathPin $context $target.artifactInboxRoot -Directory -Mutable -RuntimeSid $target.runtimeIdentitySid
-        $zip=Join-Path $target.artifactInboxRoot ($BaseName+'.zip'); $identity=Join-Path $target.artifactInboxRoot ($BaseName+'.json')
-        Assert-ClcPathSpelling $zip; Assert-ClcPathSpelling $identity
-        [IO.File]::Copy($Archive,$zip,$false)
-        $out=[IO.File]::Open($identity,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-        try { $out.Write($Bytes); $out.Flush($true) } finally { $out.Dispose() }
-        return @{target=$target;zip=$zip;identity=$identity}
-    } finally { Close-ClcTrustedContext $context }
-} $route.target.targetId $c.applicationId $archive $baseName $bytes
-$target=$handoff.target; $inboxZip=$handoff.zip; $inboxIdentity=$handoff.identity
-# Recheck exact tag/source, successful producer attempt and artifact identity
-# immediately before protected host admission, after runner queue and download.
+
+$verified=Get-ClcVerifiedPackage $c $source $producer $archive
 $again=Get-ClcWorkflowRelease $c $Reference $SourceCommit $RunId $RunAttempt $producer.artifactId $api
-$finalRoute=Get-ClcDeploymentRoute $c $again.source
-if (-not $finalRoute.admitted) { return [pscustomobject]@{status=$finalRoute.status;admitted=$false} }
-if (($again.source.identity | ConvertTo-Json -Compress) -cne ($source.identity | ConvertTo-Json -Compress)) { throw 'Release source changed before host admission.' }
+if (($again.source.identity | ConvertTo-Json -Compress) -cne ($source.identity | ConvertTo-Json -Compress) -or
+    $again.producer.transportSha256 -cne $producer.transportSha256) { throw 'Source or artifact identity changed during deployment verification.' }
+$expectedSha256=Assert-ClcPublishedPackage $again.source $verified $api
+if ($Action -ceq 'Route') {
+    Write-WorkflowOutput deploy true
+    Write-WorkflowOutput configuration_blob $trusted.blob
+    Write-WorkflowOutput artifact_id $producer.artifactId.ToString([Globalization.CultureInfo]::InvariantCulture)
+    Write-WorkflowOutput environment $route.environment
+    Write-WorkflowOutput runner_labels ($route.runnerLabels | ConvertTo-Json -Compress)
+    Write-WorkflowOutput target_id $route.targetId
+    return
+}
+
 $safePath=Join-Path $OutputDirectory 'deployment-summary.json'
 try {
-    $result=Invoke-ClcIisDeployment -TargetId $target.targetId -StandingAuthorizationId $route.target.standingAuthorizationId `
-        -ReleaseTag $source.identity.reference -ArchivePath $inboxZip -VerifiedReleasePath $inboxIdentity -Operation $Operation
-    [IO.File]::WriteAllText($safePath,($result | ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
-    if ($env:GITHUB_STEP_SUMMARY) { [IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY,'Deployment result: **'+$result.status+'**; target `'+$target.targetId+'`; release `'+$verified.releaseId+'`.'+"`n") }
-    return $result
+    $parameters=@{ApplicationId=$c.applicationId;TargetId=$route.targetId;ArchivePath=$archive;ExpectedSha256=$expectedSha256;
+        ReleaseTag=$source.identity.tag;ExpectedSourceCommit=$source.identity.sourceCommit;ExpectedRepository=$Repository;
+        RuntimeEnvironment=$route.runtimeEnvironment;ExpectedRuntimeAccount=$ExpectedRuntimeAccount}
+    $result=Invoke-ClcIisDeployment @parameters
 } catch {
-    $code=if ($_.FullyQualifiedErrorId -like 'Clc.*') {$_.FullyQualifiedErrorId.Split(',')[0]} else {'Clc.RecoveryRequired'}
-    [IO.File]::WriteAllText($safePath,(@{status='Failed';code=$code;targetId=$target.targetId;releaseId=$verified.releaseId;nextAction='InspectProtectedAttemptEvidence'} | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
-    throw 'Shared deployment failed. Inspect retained protected host evidence before retry or explicit recovery.'
+    $code=if ($_.FullyQualifiedErrorId -like 'Clc.*') {$_.FullyQualifiedErrorId.Split(',')[0]} else {'Clc.OperationFailed'}
+    try {
+        [IO.File]::WriteAllText($safePath,(@{status='Failed';code=$code;targetId=$route.targetId;releaseId=$verified.releaseId;
+            nextAction='InspectLocalAttemptEvidence'} | ConvertTo-Json))
+    } catch { Write-Warning 'The diagnostic summary could not be written.' }
+    throw 'Deployment failed. Inspect retained local host evidence before retry or explicit recovery.'
 }
-} finally { foreach ($handle in $toolkit.handles) { $handle.Dispose() } }
+
+
+# Reporting follows the durable deployment outcome.
+$result.PSObject.Properties.Remove('retainedPath')
+try { [IO.File]::WriteAllText($safePath,($result | ConvertTo-Json -Depth 8)) }
+catch { Write-Warning 'Deployment succeeded. The optional workflow summary could not be written.' }
+return $result

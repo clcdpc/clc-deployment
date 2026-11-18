@@ -1,5 +1,5 @@
 BeforeAll {
-    . "$PSScriptRoot/Support.ps1"; . "$PSScriptRoot/T2Support.ps1"
+    . "$PSScriptRoot/Support.ps1"
     if ($null -eq ('Clc.Test.ShortPaths' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
@@ -26,10 +26,11 @@ Describe 'Held-parent descendant walker preserves physical Windows rejection gua
         $leaf=Join-Path $nested 'long-descendant-fixture-name.txt'; [IO.File]::WriteAllText($leaf,'owned-leaf-sentinel')
         $outside=Join-Path $workspace 'outside'; $null=[IO.Directory]::CreateDirectory($outside)
         $sentinel=Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel,'outside-leaf-sentinel')
+        $expected=@(@{path="application/assets/"+[IO.Path]::GetFileName($leaf);length=[IO.FileInfo]::new($leaf).Length;sha256=(Get-FileHash -LiteralPath $leaf).Hash.ToLowerInvariant()})
     }
     AfterEach { Remove-TestWorkspace $workspace }
     It 'accepts a benign nested tree and releases every observation handle' {
-        Invoke-T2Private Assert-ClcSafeDescendants @($tree)
+        Invoke-TestPrivate Get-ClcTreeInventory @($tree,$expected)
         [IO.File]::WriteAllText($leaf,'observations-released')
         [IO.File]::ReadAllText($leaf) | Should -BeExactly 'observations-released'
     }
@@ -42,7 +43,7 @@ Describe 'Held-parent descendant walker preserves physical Windows rejection gua
             RootADS { [IO.File]::WriteAllText(($tree+':hidden'),'hidden-root-stream-sentinel') }
             AncestorADS { [IO.File]::WriteAllText(($workspace+':hidden'),'hidden-ancestor-stream-sentinel') }
         }
-        Test-TestRejection { Invoke-T2Private Assert-ClcSafeDescendants @($tree) } 'Clc.UnsafePath*'
+        Test-TestRejection { Invoke-TestPrivate Get-ClcTreeInventory @($tree,$expected) } 'Clc.*'
         [IO.File]::ReadAllText($sentinel) | Should -BeExactly 'outside-leaf-sentinel'
     }
     It 'rejects an actual descendant short-name alias against its held canonical parent' {
@@ -69,7 +70,7 @@ Describe 'Held-parent descendant walker preserves physical Windows rejection gua
         Mock -ModuleName Clc.Deployment Get-ClcDirectoryCaseFlags {
             if ([Clc.Foundation.NativePaths]::Observe($Handle).CanonicalPath -ceq $global:T3CasePath) { return 1 }; return 0
         }
-        Test-TestRejection { Invoke-T2Private Assert-ClcSafeDescendants @($tree) } 'Clc.UnsafePath*'
+        Test-TestRejection { Invoke-TestPrivate Get-ClcTreeInventory @($tree,$expected) } 'Clc.UnsafePath*'
         [IO.File]::ReadAllText($sentinel) | Should -BeExactly 'outside-leaf-sentinel'
     }
 }

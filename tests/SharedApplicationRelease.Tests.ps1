@@ -1,8 +1,8 @@
 BeforeAll {
-    . "$PSScriptRoot/../tools/release/Release.Common.ps1"
+    . "$PSScriptRoot/../tools/release/Workflow.Common.ps1"
     function New-ApplicationReleaseFixture {
         $script:sourceCommit='a'*40; $script:integrationCommit='b'*40
-        $script:configuration=@{contractVersion=2L;applicationId='ssrs-web';repository='clcdpc/ssrs-web';integrationBranch='master';producer=@{workflowPath='.github/workflows/build.yml';job='build'};requiredToolkitContractVersion=2L}
+        $script:configuration=@{contractVersion=3L;applicationId='ssrs-web';repository='clcdpc/ssrs-web';integrationBranch='master';producer=@{workflowPath='.github/workflows/build.yml';job='build'};requiredToolkitContractVersion=3L}
         $script:responses=@{}
         $base='/repos/clcdpc/ssrs-web'
         $script:responses[$base+'/branches/master']=@{protected=$true;commit=@{sha=$script:integrationCommit}}
@@ -33,24 +33,23 @@ Describe 'Shared application source eligibility' {
     It 'accepts exact SSRS unmerged DEV tag source without PR, review or feature-branch evidence' {
         Set-UnmergedDevTagFixture
         $result=Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api
-        $result.identity.sourceClass | Should -BeExactly 'UnmergedDevTag'
+        $result.identity.sourceCommit | Should -BeExactly $script:sourceCommit
         $result.identity.sourceCommit | Should -BeExactly $script:sourceCommit
         @($script:requests | Where-Object {$_ -match '/pulls|/collaborators/|/branches/(?!master$)'}).Count | Should -Be 0
     }
     It 'accepts integrated DEV and Production tags anywhere in protected master history' -ForEach @(@{Tag='v1.2.3-dev.1'},@{Tag='v1.2.3'}) {
         $script:responses['/repos/clcdpc/ssrs-web/git/ref/tags/'+$Tag]=@{object=@{type='commit';sha=$script:sourceCommit}}
-        (Get-ClcVerifiedSource $script:configuration $Tag $script:sourceCommit 123 $script:api).identity.sourceClass | Should -BeExactly IntegrationTag
+        (Get-ClcVerifiedSource $script:configuration $Tag $script:sourceCommit 123 $script:api).identity.sourceCommit | Should -BeExactly $script:sourceCommit
     }
     It 'accepts unmerged DEV workflow, script, configuration and shared-pin changes without reading master files' {
         Set-UnmergedDevTagFixture
-        (Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api).identity.sourceClass | Should -BeExactly UnmergedDevTag
+        (Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api).identity.sourceCommit | Should -BeExactly $script:sourceCommit
         @($script:requests | Where-Object {$_ -match '/contents/|/pulls|/collaborators/'}).Count | Should -Be 0
     }
     It 'admits a valid DEV commit without a common ancestor while refusing Production' {
         $script:responses['/repos/clcdpc/ssrs-web/compare/'+$script:sourceCommit+'...'+$script:integrationCommit]=$null
         $result=Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api
-        $result.identity.sourceClass | Should -BeExactly UnmergedDevTag
-        $result.identity.integrationCommit | Should -BeExactly $script:integrationCommit
+        $result.identity.sourceCommit | Should -BeExactly $script:sourceCommit
         $script:responses['/repos/clcdpc/ssrs-web/git/ref/tags/v1.2.3']=@{object=@{type='commit';sha=$script:sourceCommit}}
         { Get-ClcVerifiedSource $script:configuration 'v1.2.3' $script:sourceCommit 123 $script:api } | Should -Throw '*outside the protected integration history*'
     }
@@ -68,14 +67,11 @@ Describe 'Shared application source eligibility' {
         if ($History -ceq 'unmerged') { Set-UnmergedDevTagFixture }
         if ($History -ceq 'unrelated') { $script:responses[$base+'/compare/'+$script:sourceCommit+'...'+$script:integrationCommit]=$null }
         $source=Get-ClcVerifiedSource $script:configuration $Tag $script:sourceCommit 123 $script:api
-        $source.identity.sourceClass | Should -BeExactly ArtifactOnlyTag
         $source.identity.channel | Should -BeExactly ArtifactOnly
         $source.identity.tag | Should -BeExactly $Tag
         $source.identity.releaseId | Should -BeExactly $Tag.Replace('.','-')
         foreach ($value in $source.identity.Values) { $value | Should -Not -BeNullOrEmpty }
-        { New-ClcVerifiedPackageIdentity $script:configuration $source @{} 'unused.zip' 'ssrs-web-dev' } | Should -Throw '*cannot create a host*'
-        # Installed source policy is deliberately unchanged and rejects this class.
-        { Assert-ClcSourceIdentity $source.identity } | Should -Throw -ErrorId 'Clc.InvalidContract*'
+        (Get-ClcDeploymentRoute $script:configuration $source).targetId | Should -BeNullOrEmpty
     }
     It 'rejects annotated tag chains beyond five objects without unbounded API calls' {
         $base='/repos/clcdpc/ssrs-web'; $object='c'*40
@@ -132,18 +128,19 @@ Describe 'Shared application source eligibility' {
         $second=Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api
         ($second.identity | ConvertTo-Json -Compress) | Should -BeExactly ($first.identity | ConvertTo-Json -Compress)
     }
-    It 'requires the configured primary branch <Branch> to be protected for unmerged DEV tags' -ForEach @(@{Branch='master'},@{Branch='main'}) {
+    It 'requires master to be protected for unmerged DEV tags' {
+        $Branch='master'
         Set-UnmergedDevTagFixture
         $script:configuration.integrationBranch=$Branch
         $script:responses['/repos/clcdpc/ssrs-web/branches/'+$Branch]=@{protected=$false;commit=@{sha=$script:integrationCommit}}
         { Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api } | Should -Throw '*must be protected*'
         $script:responses['/repos/clcdpc/ssrs-web/branches/'+$Branch].protected=$true
-        (Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api).identity.integrationBranch | Should -BeExactly $Branch
+        (Get-ClcVerifiedSource $script:configuration 'v1.2.3-dev.1' $script:sourceCommit 123 $script:api).identity.sourceCommit | Should -BeExactly $script:sourceCommit
         @($script:requests | Where-Object {$_ -match '/branches/' -and $_ -cne ('/repos/clcdpc/ssrs-web/branches/'+$Branch)}).Count | Should -Be 0
     }
 }
 
-Describe 'Qualified producer and artifact admission' {
+Describe 'Qualified producer and artifact verification' {
     BeforeEach {
         New-ApplicationReleaseFixture
         Set-UnmergedDevTagFixture
@@ -390,8 +387,29 @@ Describe 'Application release publication preserves completed bytes' {
         { Invoke-ClcApplicationPublication $script:identity @($script:asset) $api $script:assetHash $upload } | Should -Throw '*Boolean immutable=true*'
         $script:uploads | Should -Be 1; $script:writes | Should -Be 0
     }
-    It 'never publishes protected-branch snapshots' {
-        $script:identity.kind='snapshot'
-        { Invoke-ClcApplicationPublication $script:identity @($script:asset) $script:publishApi $script:assetHash $script:upload } | Should -Throw '*do not create*'
+}
+
+
+Describe 'Immutable publication digest used by the deployment workflow' {
+    BeforeEach {
+        $source=@{identity=@{tag='v1.2.3-dev.1';repository='synthetic/probe';channel='DEV'}}
+        $inspection=@{archiveSha256=('a'*64)}
+        $response=@{tag_name=$source.identity.tag;draft=$false;immutable=$true;prerelease=$true;
+            assets=@(@{name='release.zip';state='uploaded';digest=('sha256:'+$inspection.archiveSha256)})}
+        $releaseApi={param($method,$url,$body) $response}
+    }
+    It 'uses the exact SHA-256 returned by GitHub' {
+        Assert-ClcPublishedPackage $source $inspection $releaseApi | Should -BeExactly $inspection.archiveSha256
+    }
+    It 'rejects <Case> before passing a digest to deployment' -ForEach @(
+        @{Case='mutable release'},@{Case='draft'},@{Case='wrong digest'},@{Case='duplicate assets'}
+    ) {
+        switch ($Case) {
+            'mutable release' { $response.immutable=$false }
+            draft { $response.draft=$true }
+            'wrong digest' { $response.assets[0].digest='sha256:'+('b'*64) }
+            'duplicate assets' { $response.assets+=@($response.assets[0]) }
+        }
+        { Assert-ClcPublishedPackage $source $inspection $releaseApi } | Should -Throw
     }
 }

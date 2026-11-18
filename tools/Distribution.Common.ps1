@@ -67,11 +67,6 @@ function Get-DistVersionedManifestBytes([byte[]] $SourceBytes,[string] $Version)
     return ,([Text.UTF8Encoding]::new($false).GetBytes($text))
 }
 
-function Get-DistInfrastructureNames {
-    @('tools/Distribution.Common.ps1','tools/Expand-ToolkitDistribution.ps1','tools/Test-ToolkitDistribution.ps1',
-        'tools/host/Get-ClcHostEnrollment.ps1','tools/host/Initialize-ClcHostEnrollment.ps1','tools/host/HostEnrollment.Common.ps1',
-        'tools/host/HostEnrollment.Iis.ps1','tools/host/HostEnrollment.Resources.ps1')
-}
 function Read-DistJson {
     param([byte[]] $Bytes)
     if ($Bytes.Length -gt 4194304) { throw 'Distribution JSON exceeds its bound.' }

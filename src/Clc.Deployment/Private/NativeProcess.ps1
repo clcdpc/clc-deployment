@@ -29,13 +29,6 @@ namespace Clc.Host {
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
         private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint mode, uint flags, IntPtr template);
         private static Exception Failure() { return new IOException("Required Windows observation failed."); }
-        public static FileStream OpenLock(string path) {
-            // OPEN_ALWAYS, OPEN_REPARSE_POINT; null security attributes means non-inheritable.
-            var h = CreateFileW(path,0xC0000000,0,IntPtr.Zero,4,0x00200080,IntPtr.Zero);
-            if (h.IsInvalid) { h.Dispose(); throw Failure(); }
-            try { return new FileStream(h,FileAccess.ReadWrite); }
-            catch { h.Dispose(); throw; }
-        }
         public static ProcessFacts Observe(SafeProcessHandle h, uint pid) {
             long created, exited, kernel, user; uint code;
             if (!GetProcessTimes(h,out created,out exited,out kernel,out user)) throw Failure();
@@ -123,24 +116,14 @@ namespace Clc.Host {
                 return memory.ToArray();
             }
         }
-        // Used only by the explicit read-only appcmd/dotnet query wrappers below.
-        public static byte[] Query(string executable, string operation, string poolName) {
-            string[] arguments;
-            switch (operation) {
-                case "PoolNames": arguments=new[] { "list","apppool","/text:name" }; break;
-                case "PoolState":
-                    if (poolName==null || !System.Text.RegularExpressions.Regex.IsMatch(poolName,@"\A[A-Za-z0-9_.-]{1,64}\z")) throw Failure();
-                    arguments=new[] { "list","apppool",poolName,"/text:state" }; break;
-                case "Runtimes": arguments=new[] { "--list-runtimes" }; break;
-                default: throw Failure();
-            }
-            string expected=operation=="Runtimes" ? "dotnet.exe" : "appcmd.exe";
-            if (!String.Equals(Path.GetFileName(executable),expected,StringComparison.OrdinalIgnoreCase)) throw Failure();
+
+        public static byte[] ListRuntimes(string executable) {
+            if (!String.Equals(Path.GetFileName(executable),"dotnet.exe",StringComparison.OrdinalIgnoreCase)) throw Failure();
             var info=new ProcessStartInfo(executable) { UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,WorkingDirectory=Path.GetDirectoryName(executable) };
             info.Environment.Clear();
             string windows=Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             info.Environment["SystemRoot"]=windows; info.Environment["WINDIR"]=windows;
-            foreach (string arg in arguments) info.ArgumentList.Add(arg);
+            info.ArgumentList.Add("--list-runtimes");
             using (var p=new Process { StartInfo=info }) {
                 if (!p.Start()) throw Failure();
                 var identity=Observe(p.SafeHandle,(uint)p.Id);

@@ -1,30 +1,27 @@
-# GitHub setup reference
+# GitHub setup
 
-Use [setup sections 2–7](setup-guide.md#2-restrict-github-actions) for the configuration checklist. This reference covers policy interactions and privileged runner boundaries.
+## 2. Restrict GitHub Actions
 
-## Effective policies
+Pin reusable workflow and action revisions. Protect the privileged runner with runner access restrictions that exclude arbitrary branches, pull requests and untrusted workflows. Restrict release actors using repository or organization policies. Keep build and test jobs on GitHub-hosted runners.
 
-Review repository, organization and enterprise [workflow execution policies](https://docs.github.com/en/actions/how-tos/administer/control-workflow-execution). **Restrict actors** controls workflow triggers; tag creation needs separate authority. Inspect insights/inherited scope in GitHub when APIs lack visibility; the [checker](github-setup-check.md) marks unverified facts CHECK MANUALLY.
+## 3. Protect release tags
 
-For [tag rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets):
+Restrict release tag creation to release operators or authorized workflows. Protect published tags from update or deletion. Enable immutable releases for the consumer repository.
 
-- **Restrict creations** admits only bypass actors. Empty bypass blocks matching tags; PR-only bypass cannot create them. Select release creators with **Always allow**.
-- Separate update/deletion rules: bypass applies to every rule in its ruleset.
-- Verify every applicable restriction, inherited rule, exclusion, repository permission and native team/role membership. CLC maintains no actor list.
+## 4. Protect master
 
-[Release immutability](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) separately protects published assets; enabling it leaves existing mutable Releases unchanged. New/existing/racing publication requires actual API Boolean `immutable=true`. Missing/malformed/false evidence preserves the Release and blocks deployment, without automatic deletion/repair. See [publication](shared-release-orchestration.md#publication-and-deployment).
+Use status checks and branch protections on master. Stable production releases require protected master ancestry. Authorized DEV tags may select unmerged commits.
 
-## Privileged runners
+## 5. Create deployment environments
 
-| Runner setting | Requirement |
-| --- | --- |
-| Labels | `self-hosted`, `Windows`, `X64`, `<applicationId>-dev` or `<applicationId>-production` |
-| Repository runner | No group required |
-| Organization runner | Repository access; inherited exact-workflow allowlists admit chosen tagged shared pin |
-| Routine routing | No per-PR allowlist update or routing variable |
+Create separate DEV and Production environments. Set the nonsecret `CLC_RUNTIME_ACCOUNT` variable to each target's expected IIS account name. Use rules compatible with the selected tag channel and unattended release deployment.
 
-Keep contributor PR CI/`pull_request_target` checkouts away from privileged hosts/credentials. Tag creators trust executable workflows/scripts/configuration/shared pins: DEV may be unmerged without PR approval; Production requires protected integration ancestry. Validators/hooks run elevated without sandboxing; independent approval against that administrator remains procedural.
+## 6. Register deployment runners
 
-The single workflow qualifies its completed producer job (overall run may remain in progress), publishes, then deploys through success-dependent jobs. No default-branch `workflow_run` handoff, checker activation flag or manual dispatch is needed; see [workflow integration](verified-workflow-integration.md).
+Use separate dedicated Windows servers and runner labels for DEV and Production. Restrict each privileged runner to its owning application repository and eligible workflows. Labels route jobs. Runner access settings control which workflows may reach the runner. Configure the expected IIS host according to the [setup guide](setup-guide.md).
 
-Host [enrollment](host-enrollment.md), [baseline](deployment.md#first-application-deployment), [standing policy](automated-deployments.md) and exceptional recovery retain independent authority. GitHub configuration observations do not qualify an IIS host or consumer. Actual runner-policy and Windows/IIS acceptance remain **NOT RUN** by repository tests.
+## 7. Configure the release workflow
+
+Use the [shared release chain](shared-release-orchestration.md) and minimal workflow token permissions. For manual initialization, enforce the trusted protected branch before scheduling the Windows job. GitHub dispatch allows ref selection.
+
+The optional [GitHub setup diagnostic](github-setup-check.md) reports GitHub settings. Perform [IIS acceptance](iis-verification.md) on a separately authorized target.

@@ -22,7 +22,7 @@ $owner = $repository.Split('/')[0]
 $repoPath = '/repos/' + $repository
 $repoUrl = 'https://github.com/' + $repository
 $groupUrl = 'https://github.com/organizations/' + $owner + '/settings/actions/runner-groups'
-$guideUrl = 'https://github.com/clcdpc/clc-deployment/blob/' + (git -C $PSScriptRoot rev-parse HEAD) + '/docs/setup-guide.md'
+$guideUrl = 'https://github.com/clcdpc/clc-deployment/blob/' + (git -C $PSScriptRoot rev-parse HEAD) + '/docs/github-setup.md'
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify reviewed checker source.' }
 $token = if ($env:CLC_INSPECTION_TOKEN) { $env:CLC_INSPECTION_TOKEN } else { $env:GITHUB_TOKEN }
 if (-not $token) { throw 'A GitHub read token is required.' }

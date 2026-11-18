@@ -37,16 +37,6 @@ Describe 'Ordinal streamed inventory identity' {
             Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json -Depth 10))) 'release-manifest' }
         }
     }
-    It 'validates manifest-shaped nonempty backup entries and rejects fake backups' {
-        $manifest = [IO.File]::ReadAllText((Join-Path $script:FixtureRoot 'release-manifest.json')) | ConvertFrom-Json -AsHashtable
-        $backup = [IO.File]::ReadAllText((Join-Path $script:FixtureRoot 'backup-index.json')) | ConvertFrom-Json -AsHashtable
-        $backup.priorEmpty = $false; $backup.priorApprovalId = 'example-001'; $backup.priorManifestSha256 = '0'*64
-        $backup.files = $manifest.files; $backup.inventorySha256 = $manifest.inventorySha256
-        $bytes = [Text.Encoding]::UTF8.GetBytes(($backup | ConvertTo-Json -Depth 10))
-        (Invoke-TestRecord $bytes 'backup-index').files.Count | Should -Be 4
-        $backup.files[0].unexpected = $true
-        Test-TestRejection { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes(($backup | ConvertTo-Json -Depth 10))) 'backup-index' }
-    }
     It 'enforces actual stream lengths and standard CRC-32 independently of declarations' {
         & (Get-Module Clc.Deployment) {
             $stream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes('123456789'))

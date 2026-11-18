@@ -1,5 +1,5 @@
 BeforeAll {
-    . "$PSScriptRoot/Support.ps1"; . "$PSScriptRoot/T2Support.ps1"
+    . "$PSScriptRoot/Support.ps1"
     if ($null -eq ('Clc.Test.LocalHealthPeer' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
@@ -52,7 +52,7 @@ Describe 'Production HTTPS client against bounded test-owned loopback peers with
     It 'rejects a self-signed loopback TLS certificate before sending application HTTP' {
         $peer=[Clc.Test.LocalHealthPeer]::new($true)
         try {
-            $response=Invoke-T2Private Invoke-ClcReadinessRequest @('https://127.0.0.1:'+$peer.Port+'/health/ready')
+            $response=Invoke-TestPrivate Invoke-ClcReadinessRequest @('https://127.0.0.1:'+$peer.Port+'/health/ready')
             $response.Accepted | Should -BeFalse; $response.Bytes.Length | Should -Be 0
         } finally { $peer.Dispose() }
         $peer.ReceivedHttp | Should -BeFalse
@@ -60,7 +60,7 @@ Describe 'Production HTTPS client against bounded test-owned loopback peers with
     It 'cancels an unresponsive loopback TLS peer within the fixed per-request budget' {
         $peer=[Clc.Test.LocalHealthPeer]::new($false); $clock=[Diagnostics.Stopwatch]::StartNew()
         try {
-            $response=Invoke-T2Private Invoke-ClcReadinessRequest @('https://127.0.0.1:'+$peer.Port+'/health/ready')
+            $response=Invoke-TestPrivate Invoke-ClcReadinessRequest @('https://127.0.0.1:'+$peer.Port+'/health/ready')
             $response.Accepted | Should -BeFalse; $response.Bytes.Length | Should -Be 0
             $clock.Elapsed.TotalSeconds | Should -BeLessThan 12
         } finally { $peer.Dispose() }

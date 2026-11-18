@@ -102,3 +102,8 @@ function Invoke-TestRecord {
     param([byte[]] $Bytes, [string] $Kind)
     return & (Get-Module Clc.Deployment) { param($Data,$RecordKind) Read-ClcJson $Data $RecordKind } $Bytes $Kind
 }
+
+function Invoke-TestPrivate {
+    param([string] $Name,[object[]] $Arguments)
+    & (Get-Module Clc.Deployment) { param($Command,$Values) & $Command @Values } $Name $Arguments
+}

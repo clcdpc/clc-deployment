@@ -4,7 +4,7 @@ Set-StrictMode -Version Latest; $ErrorActionPreference='Stop'
 . "$PSScriptRoot/Distribution.Common.ps1"
 Assert-DistLocalPath $DestinationRoot
 if ([IO.Directory]::Exists($DestinationRoot) -or [IO.File]::Exists($DestinationRoot)) { throw 'Provision SDK into a new test dependency directory.' }
-$pin=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'probe-sdk.lock.json') -Raw | ConvertFrom-Json -AsHashtable
+$pin=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'sdk.lock.json') -Raw | ConvertFrom-Json -AsHashtable
 $null=[IO.Directory]::CreateDirectory($DestinationRoot); $archive=Join-Path $DestinationRoot 'sdk.zip'
 Invoke-WebRequest -Uri $pin.url -OutFile $archive -TimeoutSec 180
 if ((Get-FileHash -LiteralPath $archive -Algorithm SHA512).Hash.ToLowerInvariant() -cne $pin.sha512) { throw 'Official SDK distribution digest differs.' }

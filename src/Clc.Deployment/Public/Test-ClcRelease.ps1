@@ -8,7 +8,7 @@ function Test-ClcRelease {
     try {
         if ($PSCmdlet.ParameterSetName -ceq 'Tag') {
             $tag=Get-ClcDeploymentTag $ReleaseTag
-            return [pscustomobject][ordered]@{tag=$tag.tag;releaseId=$tag.releaseId;channel=$tag.channel;releaseSequence=$tag.releaseSequence;authorizedForDeployment=$false}
+            return [pscustomobject][ordered]@{tag=$tag.tag;releaseId=$tag.releaseId;channel=$tag.channel;releaseSequence=$tag.releaseSequence}
         }
         $facts = Get-ClcPathObservation $ArchivePath $handles
         $stream = Open-ClcReadFile $ArchivePath $facts $handles
@@ -17,7 +17,7 @@ function Test-ClcRelease {
         $code = 'Clc.UnsafeArchive'
         if ($_.FullyQualifiedErrorId -like 'Clc.*') { $code = $_.FullyQualifiedErrorId.Split(',')[0] }
         $PSCmdlet.ThrowTerminatingError([Management.Automation.ErrorRecord]::new(
-            [IO.InvalidDataException]::new('Release inspection failed; no deployment authorization was issued.'), $code,
+            [IO.InvalidDataException]::new('Release inspection failed.'), $code,
             [Management.Automation.ErrorCategory]::InvalidData, $null))
     } finally { foreach ($handle in $handles) { $handle.Dispose() } }
 }

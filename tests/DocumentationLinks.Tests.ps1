@@ -25,7 +25,6 @@ Describe 'Repository documentation links' {
             Get-Item -LiteralPath (Join-Path $script:RepositoryRoot 'AGENTS.md')
             Get-ChildItem -LiteralPath (Join-Path $script:RepositoryRoot 'docs') -Recurse -File -Filter '*.md'
             Get-Item -LiteralPath (Join-Path $script:RepositoryRoot 'tests/Fixtures/README.md')
-            Get-Item -LiteralPath (Join-Path $script:RepositoryRoot 'tests/Qualification/README.md')
         )
         $broken=[Collections.Generic.List[string]]::new()
         foreach ($file in $markdownFiles) {

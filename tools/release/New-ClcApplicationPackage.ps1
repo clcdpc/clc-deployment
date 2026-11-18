@@ -29,7 +29,7 @@ if ($PSCmdlet.ParameterSetName -ceq 'Prequalified') {
     $lockPath=$qualified.dependencyLockPath
 } else {
 $env:DOTNET_GENERATE_ASPNET_CERTIFICATE='false'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; $env:DOTNET_NOLOGO='1'
-$sdk=& (Join-Path $PSScriptRoot '../Initialize-ProbeSdk.ps1') -DestinationRoot (Join-Path $OutputDirectory 'sdk')
+$sdk=& (Join-Path $PSScriptRoot '../Initialize-PinnedSdk.ps1') -DestinationRoot (Join-Path $OutputDirectory 'sdk')
 $dotnet=$sdk.dotnetPath
 $project=Join-Path $SourceRoot $c.project
 $properties=@(('-p:ClcApplicationId='+$c.applicationId),('-p:ClcReleaseId='+$source.identity.releaseId),('-p:ClcSourceCommit='+$SourceCommit))
@@ -57,17 +57,17 @@ $lockPath=Join-Path $lockDirectory 'packages.lock.json'
 if (-not [IO.File]::Exists($lockPath)) { throw 'Application dependency lock is required.' }
 }
 $lockHash=if ($null -ne $lockPath) { (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
-$embedded=Get-ProbeEmbeddedMetadata (Join-Path $publish ($assembly+'.dll'))
+$embedded=Get-ClcEmbeddedMetadata (Join-Path $publish ($assembly+'.dll'))
 Assert-ClcCompiledApplicationIdentity $embedded $c.applicationId $source.identity.releaseId $SourceCommit
 $sharedRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $distribution=& (Join-Path $sharedRoot 'tools/New-ToolkitDistribution.ps1') -RepositoryRoot $sharedRoot -SourceCommit $SharedSourceCommit -OutputPath (Join-Path $OutputDirectory 'toolkit.zip')
 Import-Module (Join-Path $sharedRoot 'src/Clc.Deployment/Clc.Deployment.psd1') -Force
-$metadata=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=2L;recordKind='release-metadata';applicationId=$c.applicationId;releaseId=$source.identity.releaseId;
+$route=Get-ClcDeploymentRoute $c $source
+$metadata=[ordered]@{contractFamily='clc-iis-release';schemaVersion=3L;recordKind='release-metadata';applicationId=$c.applicationId;targetId=$route.targetId;releaseId=$source.identity.releaseId;
     source=@{repository=$c.repository;commit=$SourceCommit};build=@{workflowPath=$c.producer.workflowPath;runId=$RunId;runAttempt=$RunAttempt;job=$c.producer.job;sdkVersion=$sdk.sdkVersion;dependencyLockSha256=$lockHash};
     builder=@{module='Clc.Deployment';version=$distribution.moduleVersion;sourceCommit=$SharedSourceCommit;distributionSha256=$distribution.distributionSha256};
-    runtime=@{framework='net10.0';rid='win-x64';architecture='x64';hostingModel='inprocess';workerLimit=1L};changeKind='application-deployment';validation=@{contractVersion=1L;entryPoint=$assembly+'.dll'};readinessContractVersion=1L}
+    runtime=@{framework='net10.0';rid='win-x64';architecture='x64';hostingModel='inprocess';workerLimit=1L};changeKind='files-only';validation=@{contractVersion=1L;entryPoint=$assembly+'.dll'};readinessContractVersion=1L}
 $parameters=@{PublishRoot=$publish;MetadataPath=(Join-Path $OutputDirectory 'metadata.json')}
-if ($c.Contains('hooks')) { $metadata.hooks=$c.hooks; $parameters.HookRoot=Join-Path $SourceRoot '.clc/hooks' }
 [IO.File]::WriteAllText($parameters.MetadataPath,($metadata | ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
 $bundle=Join-Path $OutputDirectory 'qualified'; $null=[IO.Directory]::CreateDirectory($bundle)
 $parameters.OutputPath=Join-Path $bundle 'release.zip'

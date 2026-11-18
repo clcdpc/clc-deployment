@@ -135,11 +135,8 @@ function Get-ClcRawZipEntries {
             if ($entry.directory) {
                 if (-not (@($files | Where-Object { $_.StartsWith($entry.name, [StringComparison]::Ordinal) }).Count -gt 0)) { Stop-ClcError Clc.UnsafeArchive }
             } elseif ($entry.name -cne 'manifest.json') {
-                if ($entry.name.StartsWith('hooks/',[StringComparison]::Ordinal)) { Assert-ClcHookAssetName $entry.name }
-                else {
-                    Assert-ClcArchiveName $entry.name -PayloadOnly
-                    Assert-ClcPublishName $entry.name.Substring(12)
-                }
+                Assert-ClcArchiveName $entry.name -PayloadOnly
+                Assert-ClcPublishName $entry.name.Substring(12)
             }
         }
         if (-not $files.Contains('manifest.json') -or -not (@($entries | Where-Object { $_.name -ceq 'manifest.json' }).Count -eq 1)) { Stop-ClcError Clc.UnsafeArchive }
@@ -204,10 +201,12 @@ function Read-ClcZipPayload {
 }
 
 function Test-ClcArchiveStream {
-    param([IO.Stream] $Stream, [Diagnostics.Stopwatch] $Clock)
-    $raw = Get-ClcRawZipEntries $Stream $Clock
+    param([IO.Stream] $Stream, [Diagnostics.Stopwatch] $Clock, [string] $ExpectedSha256, [switch] $IncludeManifest)
     $Stream.Position = 0
     $archiveDigest = Read-ClcStream $Stream $script:ClcLimits.Compressed $Clock
+    $Stream.Position = 0
+    if ($ExpectedSha256 -and $archiveDigest.sha256 -cne $ExpectedSha256) { Stop-ClcError Clc.HashMismatch 'Artifact SHA-256 differs from the trusted workflow value.' }
+    $raw = Get-ClcRawZipEntries $Stream $Clock
     $Stream.Position = 0
     $zip = [IO.Compression.ZipArchive]::new($Stream, [IO.Compression.ZipArchiveMode]::Read, $true)
     try {
@@ -246,7 +245,6 @@ function Test-ClcArchiveStream {
         }
         $manifest = Read-ClcJson $manifestBytes 'release-manifest' ([int] $script:ClcLimits.Json)
         $expectedFiles=@($manifest.files)
-        if ($manifest.Contains('hooks')) { $expectedFiles+=@($manifest.hooks.files) }
         if ($expectedFiles.Count -ne $payload.Count) { Stop-ClcError Clc.HashMismatch }
         $total = 0L
         foreach ($file in $expectedFiles) {
@@ -257,11 +255,13 @@ function Test-ClcArchiveStream {
         if (-not $captured.ContainsKey('application/web.config') -or -not $captured.ContainsKey($runtimeName)) { Stop-ClcError Clc.UnsafeArchive }
         Assert-ClcWebConfig $captured['application/web.config']
         Assert-ClcRuntimeConfig $captured[$runtimeName] $manifest.runtime.framework
-        return [pscustomobject][ordered]@{
-            contractFamily='clc-file-iis-v1'; packageContractVersion=$manifest.schemaVersion; integrityVerified=$true; authorizedForDeployment=$false;
-            applicationId=$manifest.applicationId; releaseId=$manifest.releaseId; sourceCommit=$manifest.source.commit;
+        $result = [ordered]@{
+            contractFamily='clc-iis-release'; packageContractVersion=$manifest.schemaVersion; integrityVerified=$true;
+            applicationId=$manifest.applicationId; targetId=$manifest.targetId; releaseId=$manifest.releaseId; sourceCommit=$manifest.source.commit;
             archiveSha256=$archiveDigest.sha256; manifestSha256=(Get-ClcBytesHash $manifestBytes); inventorySha256=$manifest.inventorySha256;
             fileCount=$payload.Count; totalBytes=$total; builderVersion=$manifest.builder.version
         }
+        if ($IncludeManifest) { $result.manifest=$manifest; $result.manifestBytes=$manifestBytes }
+        return [pscustomobject]$result
     } finally { $zip.Dispose() }
 }
