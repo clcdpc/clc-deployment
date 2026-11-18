@@ -111,7 +111,7 @@ Assert-ClcRecord $releaseCandidate release-approval
 3. **Enrolled host, authorized infrastructure process:** install the final schema-1 approval at:
 
 ```text
-%ProgramData%\clc-<target-id>\Deployment\toolkit\policy\approvals\<approvalId>.json
+%ProgramData%\clc-<application-id>\Deployment\toolkit\policy\approvals\<approvalId>.json
 ```
 
 4. Apply [enrollment's ownership/ancestor protection](host-enrollment.md#protect-the-handoff-and-configuration), without individual deployment-SID writes. Transfer unchanged reviewed bytes to the target's `Inbox\<approvalId>.zip`; recompare SHA-256 with approval. Inspection/self-declared hashes grant no authority.

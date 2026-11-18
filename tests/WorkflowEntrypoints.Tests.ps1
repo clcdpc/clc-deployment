@@ -375,6 +375,7 @@ Describe 'Actual shared workflow entry point with offline GitHub boundaries' {
         (Get-Content -LiteralPath (Join-Path $script:parameters.OutputDirectory 'deployment-summary.json') -Raw | ConvertFrom-Json).status | Should -BeExactly $expected
         [IO.File]::ReadAllText($env:GITHUB_STEP_SUMMARY) | Should -Match $expected
         $script:heldToolkit.CanRead | Should -BeFalse
+        Should -Invoke Open-ClcWorkflowToolkit -Times 1 -Exactly -ParameterFilter { $ApplicationId -ceq 'probe' -and $TargetId -ceq 'probe-dev' }
         Should -Invoke Invoke-ClcIisDeployment -Times 1 -Exactly
     }
 }

@@ -35,16 +35,19 @@ Describe 'Format-3 infrastructure distribution admission' {
         {& "$script:RepositoryRoot/tools/Expand-ToolkitDistribution.ps1" -ArchivePath $distribution.archive -ExpectedSha256 $distribution.identity.distributionSha256 -ExpectedSourceCommit $distribution.commit -ExpectedVersion '0.1.0-dev.1' -VersionRoot $versionRoot -OperatorApprovalReference synthetic-fixture} | Should -Throw
         Get-TestTreeHashes $versionRoot | Should -BeExactly $before
     }
-    It 'checks actual packaged bootstrap inventory and refuses identical code from another target location' {
+    It 'checks packaged bootstrap inventory and refuses a foreign application before authorization lookup' {
         $versions=Join-Path $workspace 'versions';[void][IO.Directory]::CreateDirectory($versions)
         $version=Join-Path $versions '0.1.0-dev.1'
         $null=& "$script:RepositoryRoot/tools/Expand-ToolkitDistribution.ps1" -ArchivePath $distribution.archive -ExpectedSha256 $distribution.identity.distributionSha256 -ExpectedSourceCommit $distribution.commit -ExpectedVersion '0.1.0-dev.1' -VersionRoot $version -OperatorApprovalReference synthetic-bootstrap
-        $bootstrap=Join-Path $workspace 'clc-a\Deployment\bootstrap';[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($bootstrap))
+        $installed=New-HTestFixture -ApplicationId 'app-a' -Workspace $workspace
+        $foreign=New-HTestFixture -ApplicationId 'app-b' -Workspace $workspace
+        $bootstrap=$installed.layout.bootstrapRoot
         Copy-Item -LiteralPath $version -Destination $bootstrap -Recurse
         $ps=[PowerShell]::Create()
         try {
-            $null=$ps.AddScript({param($Bootstrap,$Wrong)
+            $null=$ps.AddScript({param($Bootstrap,$NativeProgramData,$ForeignConfig)
                 . (Join-Path $Bootstrap 'tools/host/HostEnrollment.Common.ps1')
+                function Get-ClcProgramDataRoot { $NativeProgramData }
                 # Synthetic ACL observations only; native identities, inventory,
                 # directory shape and retained distribution checks remain real.
                 function Assert-HAuthorityProtection($Path,$Handles,[switch]$Directory) {$null=Get-ClcPathObservation $Path $Handles -Directory:$Directory}
@@ -57,11 +60,15 @@ Describe 'Format-3 infrastructure distribution admission' {
                     try {[IO.File]::AppendAllText($protected,'# changed after inventory')} catch [IO.IOException] {$writeRefused=$true}
                     try {[IO.File]::Delete($protected)} catch [IO.IOException] {$deleteRefused=$true}
                     if (-not $writeRefused -or -not $deleteRefused -or (Get-HBootstrapInventory) -cne $hash) {throw 'Bootstrap bytes changed after verification.'}
-                    try {Assert-HBootstrapProtection @{bootstrapRoot=$Wrong} $handles;throw 'Wrong target admitted'}
+                    # The other namespace contains matching configuration and
+                    # authorization, including the same target and approval IDs.
+                    # This bootstrap must never try to read the foreign authority.
+                    function Assert-HAuthorityProtection { throw 'Foreign authority lookup occurred.' }
+                    try { $null=Open-HSession $ForeignConfig synthetic-enroll;throw 'Wrong application admitted' }
                     catch {if ($_.FullyQualifiedErrorId -notlike 'Clc.EnrollmentBootstrapMismatch*') {throw}}
                     return $hash
                 } finally {foreach ($handle in $handles) {$handle.Dispose()}}
-            }).AddArgument($bootstrap).AddArgument((Join-Path $workspace 'clc-b\Deployment\bootstrap'))
+            }).AddArgument($bootstrap).AddArgument($workspace).AddArgument($foreign.configurationPath)
             $hash=$ps.Invoke()
             @($ps.Streams.Error | Where-Object {$_.FullyQualifiedErrorId -notlike 'Clc.EnrollmentBootstrapMismatch*'}).Count | Should -Be 0
             $hash.Count | Should -Be 1

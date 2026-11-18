@@ -177,7 +177,7 @@ Describe 'Actual Windows NTFS path scope and identity' {
     }
 }
 
-Describe 'Canonical target namespaces from the native Windows known folder' {
+Describe 'Canonical application namespaces from the native Windows known folder' {
     It 'rejects forged ProgramData and SystemDrive environment values without touching host resources' {
         $before=& (Get-Module Clc.Deployment) { Get-ClcProgramDataRoot }
         $oldData=$env:ProgramData;$oldDrive=$env:SystemDrive
@@ -187,15 +187,13 @@ Describe 'Canonical target namespaces from the native Windows known folder' {
             $env:ProgramData=$oldData;$env:SystemDrive='Z:'
             {& (Get-Module Clc.Deployment) {Get-ClcProgramDataRoot}} | Should -Throw -ErrorId 'Clc.UnsafePath*'
             $env:SystemDrive=$oldDrive
-            $layout=& (Get-Module Clc.Deployment) { Get-ClcTargetLayout ssrs-web-dev '1.2.3' }
-            $layout.targetRoot | Should -BeExactly (Join-Path $before 'clc-ssrs-web-dev')
-            $layout.policyPath | Should -BeExactly (Join-Path $before 'clc-ssrs-web-dev\Deployment\toolkit\policy\host-policy.json')
-            $production=& (Get-Module Clc.Deployment) { Get-ClcTargetLayout ssrs-web-production '4.5.6' }
-            $production.moduleRoot | Should -BeExactly (Join-Path $before 'clc-ssrs-web-production\Deployment\toolkit\versions\4.5.6\Clc.Deployment')
-            $production.lockRoot | Should -Not -Be $layout.lockRoot
+            $layout=& (Get-Module Clc.Deployment) { Get-ClcTargetLayout example-app example-app-dev '1.2.3' }
+            $layout.targetRoot | Should -BeExactly (Join-Path $before 'clc-example-app')
+            $layout.policyPath | Should -BeExactly (Join-Path $before 'clc-example-app\Deployment\toolkit\policy\host-policy.json')
         } finally {$env:ProgramData=$oldData;$env:SystemDrive=$oldDrive}
     }
-    It 'refuses a caller-selected namespace or unsafe target identity' -ForEach @(@{Id='../other'},@{Id='Other'},@{Id='a\b'},@{Id='a:b'}) {
-        {& (Get-Module Clc.Deployment) {param($id) Get-ClcTargetLayout $id '1.2.3'} $Id} | Should -Throw
+    It 'refuses caller-selected paths and unsafe IDs in either identity' -ForEach @(@{Id='../other'},@{Id='Other'},@{Id='a\b'},@{Id='a:b'}) {
+        {& (Get-Module Clc.Deployment) {param($id) Get-ClcTargetLayout example-app $id '1.2.3'} $Id} | Should -Throw
+        {& (Get-Module Clc.Deployment) {param($id) Get-ClcTargetLayout $id example-app-dev '1.2.3'} $Id} | Should -Throw
     }
 }

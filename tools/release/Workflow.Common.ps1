@@ -8,15 +8,12 @@ $ErrorActionPreference='Stop'
 # installed code is not imported to authenticate its own first execution.
 foreach ($helper in @('Paths','Inventory','NativeProcess','Trust')) { . (Join-Path $PSScriptRoot ('../../src/Clc.Deployment/Private/'+$helper+'.ps1')) }
 
-function Get-ClcWorkflowPolicyPath([string] $TargetId) {
-    return (Get-ClcTargetLayout $TargetId '0.0.0').policyPath
-}
 function Open-ClcWorkflowToolkit {
-    param([Parameter(Mandatory)][string] $TargetId)
+    param([Parameter(Mandatory)][string] $ApplicationId,[Parameter(Mandatory)][string] $TargetId)
     $handles=[Collections.Generic.List[IDisposable]]::new()
     $context=$null
     try {
-        $path=Get-ClcWorkflowPolicyPath $TargetId
+        $path=(Get-ClcTargetLayout $ApplicationId $TargetId '0.0.0').policyPath
         # Same fixed first-authority rule as host enrollment. Never obtain this
         # first owner/writer allowlist from the policy being authenticated.
         $trusted=[string[]]@('S-1-5-18','S-1-5-32-544')
@@ -36,29 +33,25 @@ function Open-ClcWorkflowToolkit {
             $cursor=[IO.Path]::GetDirectoryName($cursor)
         }
         $file=Read-ClcHeldRecord $path host-policy $handles; $policy=$file.record
-        $layout=Get-ClcTargetLayout $TargetId $policy.activeToolkit.version
+        $layout=Get-ClcTargetLayout $ApplicationId $TargetId $policy.activeToolkit.version
         foreach ($name in @('targetCatalogRoot','approvalCatalogRoot','controlStateRoot','lockRoot')) {
             if ($policy[$name] -cne $layout[$name]) { Stop-ClcError Clc.ToolkitNotActive }
         }
-        $root=[IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($path))
-        $versionRoot=Join-Path $root ('versions\'+$policy.activeToolkit.version)
-        $moduleRoot=Join-Path $versionRoot 'Clc.Deployment'
-        $manifest=Join-Path $moduleRoot 'Clc.Deployment.psd1'
-        if ($policy.activeToolkit.moduleManifestPath -cne $manifest) { Stop-ClcError Clc.ToolkitNotActive }
-        $context=@{policyFile=$file;layout=@{root=$root;moduleRoot=$moduleRoot};handles=$handles;pathPins=@{};ancestorPins=@{};pinGeneration=0L;
+        if ($policy.activeToolkit.moduleManifestPath -cne $layout.manifestPath) { Stop-ClcError Clc.ToolkitNotActive }
+        $context=@{policyFile=$file;layout=$layout;handles=$handles;pathPins=@{};ancestorPins=@{};pinGeneration=0L;
             helperRuntimeSids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);closed=$false}
         Assert-ClcDeploymentToken $policy
-        foreach ($directory in @($root,(Join-Path $root 'versions'),$versionRoot,$moduleRoot)) { $null=Add-ClcProtectedPathPin $context $directory -Directory }
-        Assert-ClcTrustAncestors $context $moduleRoot
+        foreach ($directory in @($layout.root,(Join-Path $layout.root 'versions'),$layout.versionRoot,$layout.moduleRoot)) { $null=Add-ClcProtectedPathPin $context $directory -Directory }
+        Assert-ClcTrustAncestors $context $layout.moduleRoot
         if ((Get-ClcToolkitInventory $context) -cne $policy.activeToolkit.inventorySha256) { Stop-ClcError Clc.ToolkitNotActive }
-        foreach ($name in @('distribution.zip','source.commit')) { $null=Add-ClcProtectedPathPin $context (Join-Path $versionRoot $name) }
-        $source=Read-ClcHeldFile (Join-Path $versionRoot 'source.commit') $handles 40
+        foreach ($path in @($layout.distributionPath,$layout.sourcePath)) { $null=Add-ClcProtectedPathPin $context $path }
+        $source=Read-ClcHeldFile $layout.sourcePath $handles 40
         if ([Text.Encoding]::UTF8.GetString($source.bytes) -cne $policy.activeToolkit.sourceCommit) { Stop-ClcError Clc.ToolkitNotActive }
-        $null=& (Join-Path $PSScriptRoot '../Test-ToolkitDistribution.ps1') -ArchivePath (Join-Path $versionRoot 'distribution.zip') `
-            -ExpectedSha256 $policy.activeToolkit.distributionSha256 -ExpectedSourceCommit $policy.activeToolkit.sourceCommit -ExpectedVersion $policy.activeToolkit.version -InstalledModuleRoot $moduleRoot
+        $null=& (Join-Path $PSScriptRoot '../Test-ToolkitDistribution.ps1') -ArchivePath $layout.distributionPath `
+            -ExpectedSha256 $policy.activeToolkit.distributionSha256 -ExpectedSourceCommit $policy.activeToolkit.sourceCommit -ExpectedVersion $policy.activeToolkit.version -InstalledModuleRoot $layout.moduleRoot
         # All installed executable files and policy bytes remain held against
         # write/delete while the authenticated import and host invocation run.
-        Import-Module $manifest -Force -Global
+        Import-Module $layout.manifestPath -Force -Global
         return @{policy=$policy;handles=$handles}
     } catch { foreach ($handle in $handles) { $handle.Dispose() }; throw }
 }

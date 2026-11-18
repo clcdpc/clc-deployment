@@ -2,8 +2,12 @@
 # These checks reject drift in already installed code; they cannot authenticate themselves.
 function Get-ClcInstalledLayout {
     param([Parameter(Mandatory)][string] $TargetId)
-    $layout=Get-ClcTargetLayout $TargetId (Get-ClcToolkitVersion)
     $moduleRoot = $ExecutionContext.SessionState.Module.ModuleBase
+    $prefix=(Get-ClcProgramDataRoot)+'\clc-'
+    if (-not $moduleRoot.StartsWith($prefix,[StringComparison]::Ordinal)) { Stop-ClcError Clc.ToolkitNotActive }
+    # The protected target record must confirm this application ID before use.
+    $applicationId=$moduleRoot.Substring($prefix.Length).Split('\',2)[0]
+    $layout=Get-ClcTargetLayout $applicationId $TargetId (Get-ClcToolkitVersion)
     if ($moduleRoot -cne $layout.moduleRoot) { Stop-ClcError Clc.ToolkitNotActive }
     return $layout
 }

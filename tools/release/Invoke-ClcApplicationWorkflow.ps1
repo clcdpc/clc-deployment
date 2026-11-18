@@ -68,9 +68,9 @@ if ($Action -ceq 'Release') {
     return Invoke-ClcApplicationPublication $source.identity @($asset) $api $hash $upload
 }
 
-# This fixed policy location is infrastructure-owned. No artifact/config input
-# can choose an installed toolkit, target root, inbox, or approval catalog.
-$toolkit=Open-ClcWorkflowToolkit -TargetId $route.target.targetId
+# The authenticated workflow configuration and route select the namespace.
+# Only its protected host policy can select the active installed toolkit.
+$toolkit=Open-ClcWorkflowToolkit -ApplicationId $c.applicationId -TargetId $route.target.targetId
 try {
 $policy=$toolkit.policy
 $verified=New-ClcVerifiedPackageIdentity $c $source $producer $archive $route.target.targetId

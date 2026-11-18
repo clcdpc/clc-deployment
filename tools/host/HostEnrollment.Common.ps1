@@ -20,17 +20,8 @@ function Get-ClcInstalledLayout([string] $TargetId) {
     return $script:HLayout
 }
 function Get-ClcToolkitVersion { return $script:HVersion }
-function Get-HAuthorityRoot([string] $TargetId) {
-    (Get-ClcTargetLayout $TargetId '0.0.0').enrollmentAuthorityRoot
-}
-function Get-HCanonicalEnrollmentRoot([string] $TargetId) {
-    (Get-ClcTargetLayout $TargetId '0.0.0').deploymentRoot
-}
 function Get-HNow { [DateTimeOffset]::UtcNow }
 function Test-HExists([string] $Path) { [IO.File]::Exists($Path) -or [IO.Directory]::Exists($Path) }
-function Get-HLayout([string] $TargetId,[string] $Version) {
-    Get-ClcTargetLayout $TargetId $Version
-}
 function Read-HJson([byte[]] $Bytes) {
     if ($Bytes.Length -eq 0 -or $Bytes.Length -gt 4194304) { Stop-ClcError Clc.InvalidContract }
     $document=$null
@@ -125,23 +116,21 @@ function Open-HSession([string] $ConfigurationPath,[string] $AuthorizationId) {
         # acquire authority only after the independent exact approval matches.
         $configurationFile=Read-ClcHeldFile $ConfigurationPath $handles
         $configuration=Read-HJson $configurationFile.bytes; Assert-HConfiguration $configuration
-        $canonicalRoot=Get-HCanonicalEnrollmentRoot $configuration.targetId
-        if ($configuration.enrollmentRoot -cne $canonicalRoot) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
-        $configurationPathExpected=Join-Path ([IO.Path]::GetDirectoryName($canonicalRoot)) 'Config\deployment.json'
-        if ($ConfigurationPath -cne $configurationPathExpected) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
+        $candidateLayout=Get-ClcTargetLayout $configuration.applicationId $configuration.targetId '0.0.0'
+        if ($configuration.enrollmentRoot -cne $candidateLayout.deploymentRoot -or
+            $ConfigurationPath -cne $candidateLayout.deploymentConfigurationPath) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
         # Reject a bootstrap for another namespace before reading its authority.
         # Bootstrap placement is independent of the as-yet unknown active pin.
-        Assert-HBootstrapProtection (Get-HLayout $configuration.targetId '0.0.0') $handles
-        $authorityRoot=Get-HAuthorityRoot $configuration.targetId
+        Assert-HBootstrapProtection $candidateLayout $handles
+        $authorityRoot=$candidateLayout.enrollmentAuthorityRoot
         Assert-HAuthorityProtection $authorityRoot $handles -Directory
         $authorizationPath=Join-Path $authorityRoot ('authorizations\'+$AuthorizationId+'.json')
         Assert-HAuthorityProtection $authorizationPath $handles
         $authorizationFile=Read-ClcHeldFile $authorizationPath $handles
         $authorization=Read-HJson $authorizationFile.bytes; Assert-HAuthorization $authorization $AuthorizationId
         if ($configurationFile.sha256 -cne $authorization.deploymentConfigurationSha256) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
-        if ($configuration.targetId -cne $authorization.targetId -or $configuration.enrollmentRoot -cne $authorization.enrollmentRoot -or
-            $configuration.enrollmentRoot -cne $canonicalRoot) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
-        $layout=Get-HLayout $configuration.targetId $authorization.hostPolicy.activeToolkit.version
+        if ($configuration.targetId -cne $authorization.targetId -or $candidateLayout.deploymentRoot -cne $authorization.enrollmentRoot) { Stop-ClcError Clc.EnrollmentAuthorizationMismatch }
+        $layout=Get-ClcTargetLayout $configuration.applicationId $configuration.targetId $authorization.hostPolicy.activeToolkit.version
         Assert-ClcTargetPaths (Get-HTarget $configuration) $layout
         # Protected executable read streams are held before the independently
         # approved inventory/source comparison, through all subsequent use.
@@ -204,7 +193,7 @@ function Open-HInstalledContext($Session) {
     foreach ($name in @('machineIdentity','targetCatalogRoot','approvalCatalogRoot','controlStateRoot','lockRoot','dotnetPath','appcmdPath','infrastructureOwnerSids','deploymentSids')) {
         if (-not (Test-ClcValueEqual $policy[$name] $Session.authorization.hostPolicy[$name])) { Stop-ClcError Clc.EnrollmentConfigurationDrift }
     }
-    $script:HLayout=Get-HLayout $Session.target.targetId $policy.activeToolkit.version
+    $script:HLayout=Get-ClcTargetLayout $Session.target.applicationId $Session.target.targetId $policy.activeToolkit.version
     $script:HVersion=$policy.activeToolkit.version
     if ($policy.activeToolkit.moduleManifestPath -cne $script:HLayout.manifestPath) { Stop-ClcError Clc.ToolkitNotActive }
     # Verify the entire distribution and installed bytes before any candidate import.
@@ -221,6 +210,8 @@ function Assert-HActiveCompatibility($Session,$TargetFile=$null) {
     $active=Import-Module -Name $Session.context.layout.manifestPath -Force -Scope Local -PassThru
     & $active {
         param($Context,$Target,$TargetFile)
+        $installedLayout=Get-ClcInstalledLayout $Target.targetId
+        Assert-ClcTargetPaths $Target $installedLayout
         foreach ($name in @('applicationRoot','operationalConfigPath','dataProtectionRoot','artifactInboxRoot')) {
             Assert-ClcPathSpelling $Target[$name]; Assert-ClcProtectedPath $Target[$name]
         }

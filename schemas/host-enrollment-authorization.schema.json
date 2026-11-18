@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "host-enrollment-authorization",
-  "$comment": "Shape only. Strict UTF-8, integer tokens, duplicates, physical identity, access, exact-byte binding and independent authority require the PowerShell verifier. Enrollment root is the canonical native ProgramData/clc-<targetId>/Deployment. Cutover backupRoot must equal its control/<targetKey>/legacy-cutover-<authorizationId>, with all prospective full paths within bounds.",
+  "$comment": "Shape only. Strict UTF-8, integer tokens, duplicates, physical identity, access, exact-byte binding and independent authority require the PowerShell verifier. Enrollment root is native ProgramData/clc-<applicationId>/Deployment using the application ID from the exact approved configuration. The authorization targetId must match that configuration. Cutover backupRoot must equal its control/<targetKey>/legacy-cutover-<authorizationId>, with all prospective full paths within bounds.",
   "type": "object",
   "additionalProperties": false,
   "required": [

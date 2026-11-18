@@ -12,20 +12,21 @@ foreach ($name in Get-DistInfrastructureNames) {
 [IO.File]::WriteAllText((Join-Path $script:HBootstrapRoot 'source.commit'),('a'*40))
 . (Join-Path $script:HBootstrapRoot 'tools/host/HostEnrollment.Common.ps1')
 function New-HTestFixture {
-    param([string] $TargetId='example',[string] $Workspace)
-    $workspace=if ($Workspace) {$Workspace} else {New-TestWorkspace}; $targetRoot=Join-Path $workspace ('clc-'+$TargetId); $enrollment=Join-Path $targetRoot 'Deployment'; $authority=Join-Path $enrollment 'enrollment'
+    param([string] $TargetId='example',[string] $ApplicationId='probe',[string] $Workspace,[switch] $LegacyTargetRoot)
+    $rootId=if ($LegacyTargetRoot) {$TargetId} else {$ApplicationId}
+    $workspace=if ($Workspace) {$Workspace} else {New-TestWorkspace}; $targetRoot=Join-Path $workspace ('clc-'+$rootId); $enrollment=Join-Path $targetRoot 'Deployment'; $authority=Join-Path $enrollment 'enrollment'
     foreach ($path in @($authority,(Join-Path $authority 'authorizations'),(Join-Path $authority 'evidence'),(Join-Path $targetRoot 'Config'),(Join-Path $targetRoot 'Application'),(Join-Path $targetRoot 'Keys'),(Join-Path $targetRoot 'Inbox'),(Join-Path $workspace 'bin'))) { $null=[IO.Directory]::CreateDirectory($path) }
     [IO.File]::WriteAllBytes((Join-Path $authority 'enrollment.lock'),[byte[]]::new(0))
     $configuration=Get-Content -LiteralPath (Join-Path $script:FixtureRoot 'target.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
     $configuration.contractFamily='clc-host-enrollment-v1'; $configuration.recordKind='deployment-configuration'
-    $configuration.targetId=$TargetId
+    $configuration.targetId=$TargetId; $configuration.applicationId=$ApplicationId
     $configuration.enrollmentRoot=$enrollment; $configuration.runtimeAccountName='SYNTHETIC\runtime$'
     $configuration.applicationRoot=Join-Path $targetRoot 'Application'; $configuration.operationalConfigPath=Join-Path $targetRoot 'Config\application.json'
     $configuration.dataProtectionRoot=Join-Path $targetRoot 'Keys'; $configuration.artifactInboxRoot=Join-Path $targetRoot 'Inbox'
     [IO.File]::WriteAllText($configuration.operationalConfigPath,'CLC_SYNTHETIC_CONFIG_MUST_REMAIN_UNCHANGED')
     [IO.File]::WriteAllText((Join-Path $configuration.dataProtectionRoot 'key.xml'),'CLC_SYNTHETIC_KEY_MUST_REMAIN_UNCHANGED')
     $configurationPath=Join-Path $targetRoot 'Config\deployment.json'; Write-TestJson $configurationPath $configuration
-    $layout=& { function Get-ClcProgramDataRoot { $workspace }; Get-HLayout $configuration.targetId '0.1.0-dev.1' }
+    $layout=& { function Get-ClcProgramDataRoot { $workspace }; Get-ClcTargetLayout $rootId $TargetId '0.1.0-dev.1' }
     $policy=Get-Content -LiteralPath (Join-Path $script:FixtureRoot 'host-policy.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
     foreach ($name in @('targetCatalogRoot','approvalCatalogRoot','controlStateRoot','lockRoot')) { $policy[$name]=$layout[$name] }
     $policy.activeToolkit.moduleManifestPath=$layout.manifestPath
@@ -102,7 +103,7 @@ function New-HTestDistribution {
     @{workspace=$workspace;repository=$repository;archive=$archive;identity=$identity;commit=$commit}
 }
 function Set-HTestDistribution($Fixture,$Distribution) {
-    $Fixture.layout=Get-HLayout $Fixture.target.targetId $Distribution.identity.moduleVersion
+    $Fixture.layout=Get-ClcTargetLayout $Fixture.target.applicationId $Fixture.target.targetId $Distribution.identity.moduleVersion
     $Fixture.policy.activeToolkit.moduleManifestPath=$Fixture.layout.manifestPath
     foreach ($key in @('version','sourceCommit','distributionSha256','inventorySha256')) {
         $Fixture.policy.activeToolkit[$key]=if ($key -ceq 'version') {$Distribution.identity.moduleVersion} else {$Distribution.identity.PSObject.Properties[$key].Value}
@@ -111,7 +112,7 @@ function Set-HTestDistribution($Fixture,$Distribution) {
 }
 function Select-HSecondTestTarget($Fixture) {
     $pin=$Fixture.policy.activeToolkit
-    $next=New-HTestFixture -TargetId synthetic-second -Workspace $Fixture.workspace
+    $next=New-HTestFixture -TargetId synthetic-second -ApplicationId second-app -Workspace $Fixture.workspace
     foreach ($name in @('version','sourceCommit','distributionSha256','inventorySha256')) {$next.policy.activeToolkit[$name]=$pin[$name]}
     $next.configuration.siteName='SecondSite';$next.configuration.applicationPoolName='SecondPool';$next.configuration.runtimeIdentitySid='S-1-5-21-1-2-3-2002'
     $next.target=Get-HTarget $next.configuration

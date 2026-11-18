@@ -29,7 +29,7 @@ Describe 'Enrollment schemas, output and fixed installation boundary' {
         $result.PSObject.Properties.Name | Should -Not -Contain IisPreStateSha256
     }
     It 'refuses a second installation root even with a matching independently-shaped config and policy' {
-        $different=Join-Path $fixture.workspace 'other';$newLayout=Get-HLayout 'other' '0.1.0-dev.1'
+        $different=Join-Path $fixture.workspace 'other';$newLayout=Get-ClcTargetLayout 'other-app' $fixture.target.targetId '0.1.0-dev.1'
         $fixture.configuration.enrollmentRoot=$different;$fixture.authorization.enrollmentRoot=$different
         foreach ($name in @('targetCatalogRoot','approvalCatalogRoot','controlStateRoot','lockRoot')) {$fixture.policy[$name]=$newLayout[$name]}
         $fixture.policy.activeToolkit.moduleManifestPath=$newLayout.manifestPath
@@ -47,9 +47,15 @@ Describe 'Enrollment schemas, output and fixed installation boundary' {
     }
     It 'rejects a foreign bootstrap namespace before selecting or reading its authorization' {
         Mock Assert-HBootstrapProtection {Stop-ClcError Clc.EnrollmentBootstrapMismatch}
-        Mock Get-HAuthorityRoot {throw 'Foreign authority lookup occurred.'}
         {Open-HSession $fixture.configurationPath synthetic-enroll} | Should -Throw -ErrorId 'Clc.EnrollmentBootstrapMismatch*'
-        Should -Invoke Get-HAuthorityRoot -Times 0 -Exactly
+        Should -Invoke Assert-HAuthorityProtection -Times 0 -Exactly
+    }
+    It 'refuses an independently approved legacy target-derived root without changing its contents' {
+        $legacy=New-HTestFixture -LegacyTargetRoot -Workspace $fixture.workspace
+        $before=Get-TestTreeHashes $legacy.workspace
+        {Invoke-HEnrollment $legacy.configurationPath synthetic-enroll Apply} | Should -Throw -ErrorId 'Clc.EnrollmentAuthorizationMismatch*'
+        Should -Invoke Assert-HAuthorityProtection -Times 0 -Exactly
+        Get-TestTreeHashes $legacy.workspace | Should -BeExactly $before
     }
     It 'rejects a prospective physical alias before initialization intent or filesystem effects' {
         $global:HProspectiveApp=$fixture.target.applicationRoot
@@ -84,7 +90,7 @@ Describe 'Enrollment schemas, output and fixed installation boundary' {
     }
     It 'admits only dedicated ProgramData namespaces without modifying ProgramData' {
         $programData=Get-ClcProgramDataRoot
-        foreach ($suffix in @('clc-example-app-dev\Config\application.json')) {
+        foreach ($suffix in @('clc-example-app\Config\application.json')) {
             {Assert-ClcProtectedPath (Join-Path $programData $suffix)} | Should -Not -Throw
         }
         foreach ($path in @($programData,(Join-Path $programData 'Microsoft\config'),(Join-Path $programData 'CLCOther\config'),(Join-Path $programData 'clc-\config'),(Join-Path $programData 'CLC\Deployment'))) {

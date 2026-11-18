@@ -14,9 +14,10 @@ function Read-QConfiguration([string] $Path) {
     if ($configuration.siteName -cne ('clc-t4-'+$configuration.campaignId) -or $configuration.poolName -cne $configuration.siteName) { throw 'Test resource names must match the exact campaign.' }
     foreach ($name in @('ownedRoot','evidenceRoot','operationalConfigPath','dataProtectionRoot','artifactInboxRoot','applicationRoot')) { Assert-DistLocalPath $configuration[$name] }
     $root=$configuration.ownedRoot
-    $layout=Get-ClcTargetLayout $configuration.targetId $configuration.toolkit.version
-    if ($root -cne $layout.targetRoot) { throw 'Qualification requires the canonical target-specific ProgramData root.' }
-    Assert-ClcTargetPaths @{targetId=$configuration.targetId;applicationRoot=$configuration.applicationRoot;operationalConfigPath=$configuration.operationalConfigPath;dataProtectionRoot=$configuration.dataProtectionRoot;artifactInboxRoot=$configuration.artifactInboxRoot} $layout
+    $applicationId='clc-qualification-probe'
+    $layout=Get-ClcTargetLayout $applicationId $configuration.targetId $configuration.toolkit.version
+    if ($root -cne $layout.targetRoot) { throw 'Qualification requires the canonical application ProgramData root.' }
+    Assert-ClcTargetPaths @{applicationId=$applicationId;targetId=$configuration.targetId;applicationRoot=$configuration.applicationRoot;operationalConfigPath=$configuration.operationalConfigPath;dataProtectionRoot=$configuration.dataProtectionRoot;artifactInboxRoot=$configuration.artifactInboxRoot} $layout
     foreach ($name in @('applicationRoot','operationalConfigPath','dataProtectionRoot','artifactInboxRoot')) {
         if (-not $configuration[$name].StartsWith($root+'\',[StringComparison]::Ordinal)) { throw 'Test root escapes owned scope.' }
     }

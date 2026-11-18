@@ -20,7 +20,7 @@ Follow this order. Complete each linked procedure, then use its **Next** link to
 
 GitHub administrators begin with naming in [section 1](#1-establish-naming-conventions), then GitHub Settings in [sections 2–7](#2-restrict-github-actions). Infrastructure administrators begin at [section 8](#8-prepare-deployment-hosts), then prepare trusted bootstrap. Application owners prepare external configuration and application-specific release/readiness requirements before baseline.
 
-Paths below are relative to `%ProgramData%\clc-<target-id>\`:
+Paths below are relative to `%ProgramData%\clc-<application-id>\`:
 
 | File | Preparation point and owner |
 | --- | --- |
@@ -32,16 +32,16 @@ Paths below are relative to `%ProgramData%\clc-<target-id>\`:
 
 ## 1. Establish naming conventions
 
-Choose a stable lowercase `applicationId`, at most 53 letters, digits or hyphens, beginning with a letter or digit. Derive the two identifiers once:
+Choose a stable lowercase `applicationId`, at most 53 letters, digits or hyphens, beginning with a letter or digit. Use the same application ID in every environment. For `example-app`, the canonical root on both servers is `C:\ProgramData\clc-example-app` when native ProgramData is `C:\ProgramData`.
 
 ```text
 DEV:        example-app-dev
 Production: example-app-production
 ```
 
-Use the corresponding identifier for the target, GitHub environment, runner label, enrollment authorization ID and standing authorization ID. These remain distinct resources. Consumer configuration version 2 derives routing from `applicationId`.
+Use the corresponding deployment target ID for routing, the GitHub environment, runner label, enrollment authorization ID and standing authorization ID. Consumer configuration version 2 derives routing from `applicationId`.
 
-Each host target owns `%ProgramData%\clc-<target-id>\`, including `Application`, `Config`, `Keys`, `Inbox` and protected `Deployment`. DEV and Production have separate installations and approvals, even on one server.
+DEV and Production use separate servers with independent installations and approvals. The protected `Deployment` directory on each server serves exactly one target.
 
 ## 2. Restrict GitHub Actions
 

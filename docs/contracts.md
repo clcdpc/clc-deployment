@@ -6,7 +6,7 @@
 | --- | --- |
 | [a3a94cd](https://github.com/clcdpc/clc-deployment/tree/a3a94cd26daa583d392f73e99e56872876a88467), MIT beta.3 | Four exact-approval/file-only commands, journal 2 |
 | [7f814ef](https://github.com/clcdpc/clc-deployment/tree/7f814ef838abcfd12ade494c429918657598c35d) | Retained tag/standing admission |
-| [557192e](https://github.com/clcdpc/clc-deployment/tree/557192eff5eea651d6f1a393eb3b196053a985e5), beta.4 | Target-local format-3 distribution and current contracts below |
+| [557192e](https://github.com/clcdpc/clc-deployment/tree/557192eff5eea651d6f1a393eb3b196053a985e5), beta.4 | Target-local format-3 distribution with the historical target-derived root |
 
 Offline fixtures prove supported shapes/paths, not published-artifact, real-host or consumer qualification. The optional [GitHub check](github-setup-check.md) reads settings without granting authority.
 
@@ -104,7 +104,7 @@ Application-level IIS changes require source/release review, independent infrast
 
 ## Existing protected authority and preflight
 
-All policy/state is target-local beneath native `%ProgramData%\clc-<target-id>\Deployment`; no global catalog/lock exists.
+All policy and state for one target are local to native `%ProgramData%\clc-<application-id>\Deployment`. Deployment and recovery derive the application ID from the installed module's canonical location. The active policy must pin that exact installation and the protected catalog must contain only the requested target, with the same application ID and canonical resource paths.
 
 | Record/boundary | Requirement |
 | --- | --- |
