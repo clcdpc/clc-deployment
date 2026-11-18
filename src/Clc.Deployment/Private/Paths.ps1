@@ -100,6 +100,13 @@ namespace Clc.Foundation {
             if (error == 2 || error == 3) return null; // genuine file/path absence only
             throw new IOException("Windows path observation failed.", new System.ComponentModel.Win32Exception(error));
         }
+
+        public static FileStream OpenDeploymentLock(string path) {
+            var handle = CreateFileW(path, 0xC0000000, 0, IntPtr.Zero, 4, 0x02200000, IntPtr.Zero);
+            if (handle.IsInvalid) { handle.Dispose(); throw Failure(); }
+            try { return new FileStream(handle, FileAccess.ReadWrite); }
+            catch { handle.Dispose(); throw; }
+        }
         public static FileStream CreateOutput(string path) {
             // CREATE_NEW with DELETE access permits rename/delete of this exact held file.
             // Only the derived owned temp uses an extended DOS path: its GUID leaf may
@@ -204,7 +211,7 @@ function Assert-ClcPathComponent {
 }
 
 function Assert-ClcArchiveName {
-    param($Name, [switch] $PayloadOnly, [switch] $Directory, [switch] $AllowTemporary, [switch] $HookOnly)
+    param($Name, [switch] $PayloadOnly, [switch] $Directory, [switch] $AllowTemporary)
     if ($Name -isnot [string] -or $Name.Length -gt 240 -or $Name.Length -eq 0) { Stop-ClcError Clc.UnsafeArchive }
     if ($Directory) {
         if (-not $Name.EndsWith('/')) { Stop-ClcError Clc.UnsafeArchive }
@@ -212,7 +219,6 @@ function Assert-ClcArchiveName {
     }
     foreach ($part in $Name.Split('/')) { Assert-ClcPathComponent $part Clc.UnsafeArchive -Ascii -AllowTemporary:$AllowTemporary }
     if ($PayloadOnly -and (-not $Name.StartsWith('application/', [StringComparison]::Ordinal) -or $Name.Length -eq 12)) { Stop-ClcError Clc.UnsafeArchive }
-    if ($HookOnly -and (-not $Name.StartsWith('hooks/', [StringComparison]::Ordinal) -or $Name.Length -eq 6)) { Stop-ClcError Clc.UnsafeArchive }
 }
 
 function Get-ClcNamePrefixes {
@@ -261,7 +267,7 @@ function Assert-ClcProtectedPath {
         }
     }
     # Infrastructure may provision dedicated CLC namespaces in ProgramData for
-    # host-local configuration/keys/enrollment. Never admit ProgramData itself or
+    # host-local application resources. Never admit ProgramData itself or
     # another product's namespace. The ordinary physical/ACL/disjoint checks are
     # still mandatory; this is a path admission rule, never authorization.
     $programData=Get-ClcProgramDataRoot
@@ -289,30 +295,6 @@ function Get-ClcProgramDataRoot {
         if ($env:ProgramData -and -not $env:ProgramData.Equals($path,[StringComparison]::OrdinalIgnoreCase)) { Stop-ClcError Clc.UnsafePath }
         return $path
     } catch { Stop-ClcError Clc.UnsafePath }
-}
-
-function Get-ClcTargetLayout {
-    param([Parameter(Mandatory)][string] $ApplicationId,[Parameter(Mandatory)][string] $TargetId,[Parameter(Mandatory)][string] $Version)
-    Assert-ClcId $ApplicationId; Assert-ClcId $TargetId; Assert-ClcVersion $Version
-    $targetRoot=Join-Path (Get-ClcProgramDataRoot) ('clc-'+$ApplicationId)
-    $deploymentRoot=Join-Path $targetRoot 'Deployment'
-    $root=Join-Path $deploymentRoot 'toolkit'; $versionRoot=Join-Path $root ('versions\'+$Version)
-    return @{applicationId=$ApplicationId;targetId=$TargetId;targetRoot=$targetRoot;deploymentRoot=$deploymentRoot;root=$root;versionRoot=$versionRoot;
-        deploymentConfigurationPath=(Join-Path $targetRoot 'Config\deployment.json');
-        moduleRoot=(Join-Path $versionRoot 'Clc.Deployment');manifestPath=(Join-Path $versionRoot 'Clc.Deployment\Clc.Deployment.psd1');
-        policyRoot=(Join-Path $root 'policy');policyPath=(Join-Path $root 'policy\host-policy.json');
-        targetCatalogRoot=(Join-Path $root 'policy\targets');approvalCatalogRoot=(Join-Path $root 'policy\approvals');
-        sourcePath=(Join-Path $versionRoot 'source.commit');distributionPath=(Join-Path $versionRoot 'distribution.zip');
-        bootstrapRoot=(Join-Path $deploymentRoot 'bootstrap');enrollmentAuthorityRoot=(Join-Path $deploymentRoot 'enrollment');
-        controlStateRoot=(Join-Path $deploymentRoot 'control');lockRoot=(Join-Path $deploymentRoot 'locks')}
-}
-
-function Assert-ClcTargetPaths {
-    param($Target,$Layout)
-    if ($Target.targetId -cne $Layout.targetId -or $Target.applicationId -cne $Layout.applicationId) { Stop-ClcError Clc.HostPreflightFailed }
-    foreach ($pair in @(@('applicationRoot','Application'),@('operationalConfigPath','Config\application.json'),@('dataProtectionRoot','Keys'),@('artifactInboxRoot','Inbox'))) {
-        if ($Target[$pair[0]] -cne (Join-Path $Layout.targetRoot $pair[1])) { Stop-ClcError Clc.UnsafePath }
-    }
 }
 
 function Get-ClcDirectoryCaseFlags {

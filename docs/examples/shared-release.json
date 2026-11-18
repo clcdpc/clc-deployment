@@ -1,14 +1,15 @@
 {
-  "contractVersion": 2,
+  "contractVersion": 3,
   "applicationId": "example",
   "repository": "example-org/example",
   "integrationBranch": "master",
+  "devRuntimeEnvironment": "Production",
   "producer": {
     "workflowPath": ".github/workflows/build.yml",
     "job": "build",
     "jobName": "package / build"
   },
-  "requiredToolkitContractVersion": 2,
+  "requiredToolkitContractVersion": 3,
   "project": "src/Example/Example.csproj",
   "testProject": "tests/Example.Tests/Example.Tests.csproj",
   "orchestration": {

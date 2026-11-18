@@ -1,57 +1,3 @@
-function Invoke-ClcIisReadQuery {
-    param($Context, [ValidateSet('PoolNames','PoolState')][string] $Query, [string] $PoolName)
-    Assert-ClcHelperProtection $Context
-    if ($Query -ceq 'PoolState') { Assert-ClcText $PoolName 64 '^[A-Za-z0-9_.-]{1,64}$' }
-    try {
-        $bytes=[Clc.Host.Native]::Query($Context.policyFile.record.appcmdPath,$Query,$PoolName)
-        return [Text.UTF8Encoding]::new($false,$true).GetString($bytes)
-    } catch { Stop-ClcError Clc.HostPreflightFailed }
-}
-
-function Get-ClcIisPoolNames {
-    param($Context)
-    $type=Get-ClcAdmittedMwaType $Context
-    $manager=$null
-    try {
-        $manager=New-ClcMwaServerManager $type
-        if ($manager.ApplicationPools.Count -gt 4096) { Stop-ClcError Clc.HostPreflightFailed }
-        return @($manager.ApplicationPools | ForEach-Object { [string]$_.Name })
-    } catch { Stop-ClcError Clc.HostPreflightFailed }
-    finally { if ($null -ne $manager) { $manager.Dispose() } }
-}
-
-function Resolve-ClcAccountSid {
-    param([string] $Name)
-    try { return [Security.Principal.NTAccount]::new($Name).Translate([Security.Principal.SecurityIdentifier]).Value }
-    catch { Stop-ClcError Clc.HostPreflightFailed }
-}
-
-function Get-ClcMwaAssemblyObservation {
-    $type='Microsoft.Web.Administration.ServerManager' -as [type]
-    if ($null -eq $type) { return $null }
-    return @{type=$type;path=$type.Assembly.Location;dynamic=$type.Assembly.IsDynamic;moduleVersionId=$type.Module.ModuleVersionId.ToString('D')}
-}
-
-
-
-function New-ClcMwaServerManager {
-    param([type] $ServerManagerType)
-    if ($ServerManagerType.FullName -cne 'Microsoft.Web.Administration.ServerManager') { Stop-ClcError Clc.HostPreflightFailed }
-    return [Activator]::CreateInstance($ServerManagerType)
-}
-
-function Get-ClcAdmittedMwaType {
-    param($Context)
-    if ($Context.ContainsKey('mwaType')) { return $Context.mwaType }
-    Assert-ClcHelperProtection $Context
-    $path=Join-Path ([IO.Path]::GetDirectoryName($Context.policyFile.record.appcmdPath)) 'Microsoft.Web.Administration.dll'
-    $assembly=Get-ClcMwaAssemblyObservation
-    if ($null -eq $assembly) { Add-Type -LiteralPath $path -ErrorAction Stop; $assembly=Get-ClcMwaAssemblyObservation }
-    if ($null -eq $assembly -or $assembly.dynamic -or -not $assembly.path.Equals($path,[StringComparison]::OrdinalIgnoreCase)) { Stop-ClcError Clc.HostPreflightFailed }
-    $Context.mwaType=$assembly.type
-    return $assembly.type
-}
-
 function Get-ClcIisPhysicalRoot {
     param([string] $Path,[Diagnostics.Stopwatch] $Clock)
     # Read-only IIS configuration observation, not a selectable deployment root.
@@ -94,7 +40,7 @@ function Get-ClcIisPhysicalRoot {
 }
 
 function Assert-ClcIisPhysicalIsolation {
-    param($Manager,$Target)
+    param($Manager,$Target,[switch] $IncludeSelected)
     $clock=[Diagnostics.Stopwatch]::StartNew()
     if ($Manager.Sites.Count -gt 4096 -or $Manager.ApplicationPools.Count -gt 4096) {Stop-ClcError Clc.HostPreflightFailed}
     $selected=Get-ClcIisPhysicalRoot $Target.applicationRoot $clock
@@ -106,7 +52,7 @@ function Assert-ClcIisPhysicalIsolation {
                 Assert-ClcDeadline $clock 30
                 $directories++;if ($directories -gt 4096) {Stop-ClcError Clc.HostPreflightFailed}
                 # Only the selected root application/root vdir may use this tree.
-                if ($site.Name -ieq $Target.siteName -and $app.Path -ceq '/' -and $directory.Path -ceq '/' -and $app.ApplicationPoolName -ieq $Target.applicationPoolName) {continue}
+                if (-not $IncludeSelected -and $site.Name -ieq $Target.siteName -and $app.Path -ceq '/' -and $directory.Path -ceq '/' -and $app.ApplicationPoolName -ieq $Target.applicationPoolName) {continue}
                 $other=Get-ClcIisPhysicalRoot ([string]$directory.PhysicalPath) $clock
                 if (($null -ne $selected.fileId -and $null -ne $other.fileId -and $selected.volumeId -ceq $other.volumeId -and $selected.fileId -ceq $other.fileId) -or
                     (Test-ClcPathAncestry $selected.physicalPath $other.physicalPath) -or (Test-ClcPathAncestry $other.physicalPath $selected.physicalPath)) {Stop-ClcError Clc.HostPreflightFailed}
@@ -116,72 +62,235 @@ function Assert-ClcIisPhysicalIsolation {
     Assert-ClcDeadline $clock 30
 }
 
-function Get-ClcIisObservation {
-    param($Context, $Target, [switch] $SafetyStop)
-    Assert-ClcHelperDependencies $Context $Target.runtimeIdentitySid
-    $type=Get-ClcAdmittedMwaType $Context
-    # MWA reads bounded physical-root associations and selected configuration
-    # properties. Never read ProcessModel.Password, dump a configuration section,
-    # or import WebAdministration into PowerShell 7.
-    $manager=$null
+
+function Open-ClcIis {
+    $path = Join-Path ([Clc.Foundation.NativePaths]::WindowsDirectory()) 'System32\inetsrv\Microsoft.Web.Administration.dll'
+    $handles = [Collections.Generic.List[IDisposable]]::new()
     try {
-        $manager=New-ClcMwaServerManager $type
-        # Failure handling may stop only its still-bound selected pool even when
-        # another pool gained a conflicting root. All selected authority checks
-        # below remain; normal admission/start/recovery retain full isolation.
-        if (-not $SafetyStop) {Assert-ClcIisPhysicalIsolation $manager $Target}
-        if ($manager.Sites.Count -gt 4096 -or $manager.ApplicationPools.Count -gt 4096) { Stop-ClcError Clc.HostPreflightFailed }
-        $sites=@($manager.Sites | Where-Object { [string]::Equals($_.Name,$Target.siteName,[StringComparison]::OrdinalIgnoreCase) })
-        $pools=@($manager.ApplicationPools | Where-Object { [string]::Equals($_.Name,$Target.applicationPoolName,[StringComparison]::OrdinalIgnoreCase) })
-        if ($sites.Count -ne 1 -or $pools.Count -ne 1) { Stop-ClcError Clc.HostPreflightFailed }
-        $site=$sites[0]; $pool=$pools[0]; $apps=[Collections.Generic.List[object]]::new(); $count=0
-        if ($site.Applications.Count -ne 1) { Stop-ClcError Clc.HostPreflightFailed }
-        foreach ($otherSite in $manager.Sites) {
-            foreach ($app in $otherSite.Applications) {
-                $count++; if ($count -gt 4096) { Stop-ClcError Clc.HostPreflightFailed }
-                if ([string]::Equals($app.ApplicationPoolName,$pool.Name,[StringComparison]::OrdinalIgnoreCase)) {
-                    $roots=@($app.VirtualDirectories | Where-Object { $_.Path -ceq '/' })
-                    if ($roots.Count -ne 1 -or $app.VirtualDirectories.Count -ne 1) { Stop-ClcError Clc.HostPreflightFailed }
-                    $apps.Add(@{ siteName=$otherSite.Name; path=$app.Path; poolName=$app.ApplicationPoolName; physicalPath=$roots[0].PhysicalPath })
-                }
-            }
+        $null = Get-ClcPathObservation $path $handles -SystemFile
+        $type = 'Microsoft.Web.Administration.ServerManager' -as [type]
+        if ($null -eq $type) {
+            Add-Type -LiteralPath $path
+            $type = 'Microsoft.Web.Administration.ServerManager' -as [type]
         }
-        $account=switch ($pool.ProcessModel.IdentityType.ToString()) {
-            SpecificUser { $pool.ProcessModel.UserName }
-            ApplicationPoolIdentity { 'IIS APPPOOL\'+$pool.Name }
-            LocalSystem { 'NT AUTHORITY\SYSTEM' }
-            LocalService { 'NT AUTHORITY\LOCAL SERVICE' }
-            NetworkService { 'NT AUTHORITY\NETWORK SERVICE' }
-            default { Stop-ClcError Clc.HostPreflightFailed }
+        if ($null -eq $type -or $type.Assembly.IsDynamic -or $type.Assembly.Location -ine $path) {
+            Stop-ClcError Clc.IisUnavailable 'Load IIS management components from the native Windows IIS installation.'
         }
-        $environment=[Collections.Generic.List[object]]::new()
-        $machine=[Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Machine)
-        foreach ($key in $machine.Keys) { if ($key -imatch '^(DOTNET_|ASPNETCORE_|COMPlus_|CORECLR_)') { $environment.Add(@{name=[string]$key;value=[string]$machine[$key];scope='Machine'}) } }
-        foreach ($element in $pool.GetCollection('environmentVariables')) { $environment.Add(@{name=[string]$element['name'];value=[string]$element['value'];scope='Pool'}) }
-        $config=$manager.GetWebConfiguration($site.Name)
-        $ancm=$config.GetSection('system.webServer/aspNetCore')
-        foreach ($element in $ancm.GetCollection('environmentVariables')) { $environment.Add(@{name=[string]$element['name'];value=[string]$element['value'];scope='Application'}) }
-        $modules=@($manager.GetApplicationHostConfiguration().GetSection('system.webServer/globalModules').GetCollection() | Where-Object { $_['name'] -ceq 'AspNetCoreModuleV2' })
-        if ($modules.Count -ne 1) { Stop-ClcError Clc.HostPreflightFailed }
-        $image=[string]$modules[0]['image']
-        $image=$image.Replace('%ProgramFiles%', [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)).Replace('%windir%', [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows))
-        $workers=@($manager.WorkerProcesses | Where-Object { [string]::Equals($_.AppPoolName,$pool.Name,[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [long]$_.ProcessId })
-        return @{ siteName=$site.Name; siteState=$site.State.ToString(); poolName=$pool.Name;
-            poolState=$pool.State.ToString(); applications=$apps.ToArray();
-            runtimeSid=(Resolve-ClcAccountSid $account); maxProcesses=[long]$pool.ProcessModel.MaxProcesses;
-            disallowOverlappingRotation=[bool]$pool.Recycling.DisallowOverlappingRotation; enable32Bit=[bool]$pool.Enable32BitAppOnWin64;
-            workers=$workers; environment=$environment.ToArray(); ancmPath=$image;
-            bindings=@($site.Bindings | ForEach-Object { @{protocol=$_.Protocol;host=$_.Host;port=[long]$_.EndPoint.Port;address=$_.EndPoint.Address.ToString()} }) }
-    } catch { Stop-ClcError Clc.HostPreflightFailed }
-    finally { if ($null -ne $manager) { $manager.Dispose() } }
+        return [Activator]::CreateInstance($type)
+    } catch { Stop-ClcError Clc.IisUnavailable 'Install IIS and its management components and use an elevated x64 PowerShell session.' }
+    finally { foreach ($handle in $handles) { $handle.Dispose() } }
 }
 
-function Assert-ClcIisTargetBinding {
-    param($Target, $Iis, [string] $NormalizedPool)
-    if (-not [string]::Equals($Iis.siteName,$Target.siteName,[StringComparison]::OrdinalIgnoreCase) -or
-        -not [string]::Equals($Iis.poolName,$NormalizedPool,[StringComparison]::OrdinalIgnoreCase) -or $Iis.applications.Count -ne 1) { Stop-ClcError Clc.HostPreflightFailed }
-    $app=$Iis.applications[0]
-    if (-not [string]::Equals($app.siteName,$Target.siteName,[StringComparison]::OrdinalIgnoreCase) -or $app.path -cne '/' -or
-        -not [string]::Equals($app.poolName,$NormalizedPool,[StringComparison]::OrdinalIgnoreCase) -or
-        -not [string]::Equals($app.physicalPath,$Target.applicationRoot,[StringComparison]::OrdinalIgnoreCase)) { Stop-ClcError Clc.HostPreflightFailed }
+function Get-ClcIisResources {
+    param($Manager,$Target)
+    if ($Manager.Sites.Count -gt 4096 -or $Manager.ApplicationPools.Count -gt 4096) {
+        Stop-ClcError Clc.IisConflict 'The IIS inventory exceeds the supported inspection bound.'
+    }
+    return @{
+        site=$Manager.Sites[$Target.siteName]
+        pool=$Manager.ApplicationPools[$Target.applicationPoolName]
+    }
+}
+
+function Assert-ClcIisOwnership {
+    param($Manager,$Target,$Resources)
+    $site=$Resources.site; $pool=$Resources.pool
+    if ($null -eq $site -or $null -eq $pool -or $site.Applications.Count -ne 1) {
+        Stop-ClcError Clc.IisConflict 'The recorded site and pool must exist with exactly one root application.'
+    }
+    $app=$site.Applications['/']
+    if ($null -eq $app -or $app.ApplicationPoolName -ine $Target.applicationPoolName -or
+        $app.VirtualDirectories.Count -ne 1 -or $app.VirtualDirectories['/'].PhysicalPath -ine $Target.applicationRoot) {
+        Stop-ClcError Clc.IisConflict 'The recorded site must use the dedicated pool and canonical Application directory.'
+    }
+    $count=0
+    foreach ($other in $Manager.Sites) {
+        foreach ($entry in $other.Applications) {
+            $count++
+            if ($count -gt 4096 -or ($entry.ApplicationPoolName -ieq $pool.Name -and $other.Name -ine $site.Name)) {
+                Stop-ClcError Clc.IisConflict 'Remove competing IIS applications from the dedicated pool through IIS Manager.'
+            }
+        }
+    }
+}
+
+function Test-ClcIisPoolSettings {
+    param($Pool)
+    return $Pool.ManagedRuntimeVersion -ceq '' -and $Pool.ManagedPipelineMode.ToString() -ceq 'Integrated' -and
+        -not $Pool.Enable32BitAppOnWin64 -and $Pool.ProcessModel.MaxProcesses -eq 1 -and
+        $Pool.ProcessModel.LoadUserProfile -and $Pool.Recycling.DisallowOverlappingRotation
+}
+
+function Add-ClcIisResources {
+    param($Manager,$Target)
+    $resources=Get-ClcIisResources $Manager $Target
+    if ($null -ne $resources.site -or $null -ne $resources.pool) {
+        Stop-ClcError Clc.IisConflict 'An IIS site or pool with the requested name already exists.'
+    }
+    Assert-ClcIisPhysicalIsolation $Manager $Target -IncludeSelected
+    $pool=$Manager.ApplicationPools.Add($Target.applicationPoolName)
+    $pool.AutoStart=$false
+    $pool.ManagedRuntimeVersion=''
+    $pool.ManagedPipelineMode='Integrated'
+    $pool.Enable32BitAppOnWin64=$false
+    $pool.ProcessModel.MaxProcesses=1
+    $pool.ProcessModel.LoadUserProfile=$true
+    $pool.ProcessModel.IdentityType='ApplicationPoolIdentity'
+    $pool.Recycling.DisallowOverlappingRotation=$true
+
+    # The IIS site schema allows an omitted bindings collection. The typed
+    # Add overloads require a binding, so add the site configuration element.
+    $id=1L
+    $used=[Collections.Generic.HashSet[long]]::new()
+    foreach ($existing in $Manager.Sites) { $null=$used.Add([long]$existing.Id) }
+    while ($used.Contains($id)) { $id++ }
+    $sites=$Manager.GetApplicationHostConfiguration().GetSection('system.applicationHost/sites').GetCollection()
+    $site=$sites.CreateElement('site')
+    $site['name']=$Target.siteName
+    $site['id']=$id
+    $site['serverAutoStart']=$false
+    # Clear inherited siteDefaults bindings before this element is committed.
+    $site.GetCollection('bindings').Clear()
+    $apps=$site.GetCollection()
+    $app=$apps.CreateElement('application')
+    $app['path']='/'
+    $app['applicationPool']=$Target.applicationPoolName
+    $directories=$app.GetCollection()
+    $directory=$directories.CreateElement('virtualDirectory')
+    $directory['path']='/'
+    $directory['physicalPath']=$Target.applicationRoot
+    $directories.Add($directory)
+    $apps.Add($app)
+    $sites.Add($site)
+}
+function Get-ClcIisState {
+    param($Manager,$Resources)
+    $workers=0; $observed=0
+    foreach ($worker in $Manager.WorkerProcesses) {
+        if (++$observed -gt 4096) { Stop-ClcError Clc.IisStateUnknown 'IIS worker inventory exceeded the inspection bound.' }
+        if ($worker.AppPoolName -ieq $Resources.pool.Name) { $workers++ }
+    }
+    return @{siteState=$Resources.site.State.ToString();poolState=$Resources.pool.State.ToString();workerCount=$workers;
+        siteAutoStart=[bool]$Resources.site.ServerAutoStart;poolAutoStart=[bool]$Resources.pool.AutoStart}
+}
+
+function Test-ClcIisHttpsBinding {
+    param($Manager,$Site,[uri] $ReadinessUri)
+    if ($Site.Bindings.Count -ne 1) { return $false }
+    $binding=$Site.Bindings[0]
+    if ($binding.Protocol -cne 'https' -or $binding.Host -ine $ReadinessUri.IdnHost -or
+        $binding.EndPoint.Port -ne $ReadinessUri.Port -or ([int]$binding.SslFlags -band 2) -ne 0) { return $false }
+    # A competing binding can answer readiness even when the expected site is stopped.
+    $count=0
+    foreach ($other in $Manager.Sites) {
+        if ($other.Name -ieq $Site.Name) { continue }
+        foreach ($entry in $other.Bindings) {
+            if (++$count -gt 4096) { return $false }
+            if ($entry.Protocol -ceq 'https' -and $entry.EndPoint.Port -eq $binding.EndPoint.Port -and
+                (-not $entry.Host -or $entry.Host -ieq $binding.Host) -and
+                ($entry.EndPoint.Address.Equals($binding.EndPoint.Address) -or
+                    $entry.EndPoint.Address.ToString() -in @('0.0.0.0','::') -or $binding.EndPoint.Address.ToString() -in @('0.0.0.0','::'))) {
+                return $false
+            }
+        }
+    }
+    $hash=$binding.CertificateHash
+    if ($null -eq $hash -or $hash.Length -eq 0 -or $binding.CertificateStoreName -notmatch '^[a-z0-9]+$') { return $false }
+    $store=[Security.Cryptography.X509Certificates.X509Store]::new($binding.CertificateStoreName,'LocalMachine')
+    try {
+        $store.Open('ReadOnly, OpenExistingOnly')
+        $certificates=$store.Certificates.Find('FindByThumbprint',[Convert]::ToHexString($hash),$false)
+        try {
+            $now=[DateTime]::Now
+            return $certificates.Count -eq 1 -and $certificates[0].HasPrivateKey -and
+                $certificates[0].NotBefore -le $now -and $certificates[0].NotAfter -gt $now -and
+                $certificates[0].MatchesHostname($ReadinessUri.IdnHost,$true,$false)
+        } finally { foreach ($certificate in $certificates) { $certificate.Dispose() } }
+    } catch { return $false }
+    finally { $store.Dispose() }
+}
+
+function Invoke-ClcIisChange {
+    param($HostContext,[ValidateSet('DisableStartup','EnableStartup','StopSite','StopPool','StartPool','StartSite')][string] $Operation)
+    $manager=Open-ClcIis
+    try {
+        $target=$HostContext.target
+        $resources=Get-ClcIisResources $manager $target
+        Assert-ClcIisOwnership $manager $target $resources
+        if ($resources.site.Id -ne $HostContext.siteId) { Stop-ClcError Clc.IisConflict 'The recorded IIS site ID changed during the attempt.' }
+        $clock=[Diagnostics.Stopwatch]::StartNew()
+        switch ($Operation) {
+            DisableStartup {
+                $resources.site.ServerAutoStart=$false
+                $resources.pool.AutoStart=$false
+                $manager.CommitChanges()
+            }
+            EnableStartup {
+                $resources.site.ServerAutoStart=$true
+                $resources.pool.AutoStart=$true
+                $manager.CommitChanges()
+            }
+            StopSite { if ($resources.site.State.ToString() -ne 'Stopped') { $null=$resources.site.Stop() } }
+            StopPool { if ($resources.pool.State.ToString() -ne 'Stopped') { $null=$resources.pool.Stop() } }
+            StartPool { if ($resources.pool.State.ToString() -ne 'Started') { $null=$resources.pool.Start() } }
+            StartSite { if ($resources.site.State.ToString() -ne 'Started') { $null=$resources.site.Start() } }
+        }
+        Assert-ClcDeadline $clock 60
+    } finally { $manager.Dispose() }
+}
+
+function Get-ClcLiveIisState {
+    param($HostContext)
+    $manager=Open-ClcIis
+    try {
+        $resources=Get-ClcIisResources $manager $HostContext.target
+        Assert-ClcIisOwnership $manager $HostContext.target $resources
+        if ($resources.site.Id -ne $HostContext.siteId) { Stop-ClcError Clc.IisConflict 'The recorded IIS site ID changed.' }
+        return Get-ClcIisState $manager $resources
+    } finally { $manager.Dispose() }
+}
+
+function Wait-ClcIisState {
+    param($HostContext,[ValidateSet('Stopped','Started')][string] $State)
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    do {
+        $iis=Get-ClcLiveIisState $HostContext
+        if ($clock.Elapsed.TotalSeconds -lt 60 -and $iis.siteState -ceq $State -and $iis.poolState -ceq $State -and
+            $iis.workerCount -le 1 -and ($State -ceq 'Started' -or $iis.workerCount -eq 0)) { return $iis }
+        Start-Sleep -Milliseconds 500
+    } while ($clock.Elapsed.TotalSeconds -lt 60)
+    Stop-ClcError Clc.IisStateUnknown 'Could not verify the requested site, pool and worker state within 60 seconds. Inspect IIS before recovery.'
+}
+
+
+function Test-ClcIisEnvironment {
+    param($Manager,$Resources,[string] $Environment,[switch] $SkipApplicationConfiguration)
+    $seen=0
+    $values=[Collections.Generic.List[object]]::new()
+    $machine=[Environment]::GetEnvironmentVariables('Machine')
+    foreach ($key in $machine.Keys) {
+        if ($key -imatch '^(DOTNET_|ASPNETCORE_|COMPlus_|CORECLR_)') { $values.Add(@{name=$key;value=$machine[$key]}) }
+    }
+    foreach ($element in $Resources.pool.GetCollection('environmentVariables')) {
+        $values.Add(@{name=$element['name'];value=$element['value']})
+    }
+    # Observe effective application-level selectors only once a web.config exists.
+    $root=$Resources.site.Applications['/'].VirtualDirectories['/'].PhysicalPath
+    $webConfig=Join-Path $root 'web.config'
+    if (-not $SkipApplicationConfiguration -and (Test-ClcStorageEntry $webConfig)) {
+        Assert-ClcStoragePath $webConfig
+        $config=$Manager.GetWebConfiguration($Resources.site.Name)
+        $ancm=$config.GetSection('system.webServer/aspNetCore')
+        if ($ancm['hostingModel'].ToString() -ine 'inprocess') { return $false }
+        foreach ($element in $ancm.GetCollection('environmentVariables')) {
+            $values.Add(@{name=$element['name'];value=$element['value']})
+        }
+    }
+    foreach ($entry in $values) {
+        if ($entry.name -iin @('ASPNETCORE_ENVIRONMENT','DOTNET_ENVIRONMENT')) {
+            $seen++
+            if ($entry.value -cne $Environment) { return $false }
+        } elseif ($entry.name -imatch '^(DOTNET_|ASPNETCORE_|COMPlus_|CORECLR_)') { return $false }
+    }
+    return $seen -gt 0 -or $Environment -ceq 'Production'
 }

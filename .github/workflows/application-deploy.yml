@@ -17,24 +17,21 @@ on:
       artifact-id:
         type: number
         default: 0
-      operation:
-        type: string
-        default: Deploy
 permissions:
   contents: read
   actions: read
   id-token: write
 jobs:
-  admit:
+  route:
     runs-on: windows-2022
     timeout-minutes: 15
     outputs:
-      admitted: ${{ steps.admission.outputs.admitted }}
-      environment: ${{ steps.admission.outputs.environment }}
-      runner-labels: ${{ steps.admission.outputs.runner_labels }}
-      target-id: ${{ steps.admission.outputs.target_id }}
-      configuration-blob: ${{ steps.admission.outputs.configuration_blob }}
-      artifact-id: ${{ steps.admission.outputs.artifact_id }}
+      deploy: ${{ steps.routing.outputs.deploy }}
+      environment: ${{ steps.routing.outputs.environment }}
+      runner-labels: ${{ steps.routing.outputs.runner_labels }}
+      target-id: ${{ steps.routing.outputs.target_id }}
+      configuration-blob: ${{ steps.routing.outputs.configuration_blob }}
+      artifact-id: ${{ steps.routing.outputs.artifact_id }}
     steps:
       - &bootstrap
         name: Authenticate immutable shared workflow revision
@@ -58,8 +55,8 @@ jobs:
           repository: clcdpc/clc-deployment
           ref: ${{ steps.bootstrap.outputs.sha }}
           persist-credentials: false
-      - name: Verify deployment admission before routing
-        id: admission
+      - name: Verify release and select deployment runner
+        id: routing
         shell: pwsh
         env: &release-inputs
           GH_TOKEN: ${{ github.token }}
@@ -70,20 +67,20 @@ jobs:
           CLC_RUN: ${{ inputs.producer-run-id }}
           CLC_ATTEMPT: ${{ inputs.producer-run-attempt }}
           CLC_ARTIFACT: ${{ inputs.artifact-id }}
-          CLC_OPERATION: ${{ inputs.operation }}
+          CLC_RUNTIME_ACCOUNT: ${{ vars.CLC_RUNTIME_ACCOUNT }}
         run: |
-          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Admit -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_ARTIFACT) -Operation $env:CLC_OPERATION -OutputDirectory (Join-Path $env:RUNNER_TEMP 'clc-application-admission')
+          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Route -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_ARTIFACT) -OutputDirectory (Join-Path $env:RUNNER_TEMP 'clc-application-routing')
   deploy:
-    needs: admit
+    needs: route
     env:
-      CLC_QUEUED_ARTIFACT: ${{ needs.admit.outputs.artifact-id }}
-      CLC_CONFIG_BLOB: ${{ needs.admit.outputs.configuration-blob }}
-    if: needs.admit.outputs.admitted == 'true'
+      CLC_QUEUED_ARTIFACT: ${{ needs.route.outputs.artifact-id }}
+      CLC_CONFIG_BLOB: ${{ needs.route.outputs.configuration-blob }}
+    if: needs.route.outputs.deploy == 'true'
     timeout-minutes: 45
-    environment: ${{ needs.admit.outputs.environment }}
-    runs-on: ${{ fromJSON(needs.admit.outputs.runner-labels) }}
+    environment: ${{ needs.route.outputs.environment }}
+    runs-on: ${{ fromJSON(needs.route.outputs.runner-labels) }}
     concurrency:
-      group: clc-application-${{ github.repository }}-${{ needs.admit.outputs.target-id }}
+      group: clc-application-${{ github.repository }}-${{ needs.route.outputs.target-id }}
       cancel-in-progress: false
     steps:
       - *bootstrap
@@ -92,11 +89,11 @@ jobs:
           repository: clcdpc/clc-deployment
           ref: ${{ steps.bootstrap.outputs.sha }}
           persist-credentials: false
-      - name: Repeat verification and invoke installed toolkit
+      - name: Repeat verification and deploy from the pinned toolkit checkout
         shell: pwsh
         env: *release-inputs
         run: |
-          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Deploy -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_QUEUED_ARTIFACT) -Operation $env:CLC_OPERATION -ExpectedConfigurationBlob $env:CLC_CONFIG_BLOB -OutputDirectory (Join-Path $env:RUNNER_TEMP ('clc-application-deployment-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT))
+          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Deploy -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_QUEUED_ARTIFACT) -ExpectedRuntimeAccount $env:CLC_RUNTIME_ACCOUNT -ExpectedConfigurationBlob $env:CLC_CONFIG_BLOB -OutputDirectory (Join-Path $env:RUNNER_TEMP ('clc-application-deployment-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT))
       - name: Retain safe deployment summary
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

@@ -4,58 +4,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'Release.Common.ps1')
-# These readers are from the independently pinned workflow checkout. Candidate
-# installed code is not imported to authenticate its own first execution.
-foreach ($helper in @('Paths','Inventory','NativeProcess','Trust')) { . (Join-Path $PSScriptRoot ('../../src/Clc.Deployment/Private/'+$helper+'.ps1')) }
-
-function Open-ClcWorkflowToolkit {
-    param([Parameter(Mandatory)][string] $ApplicationId,[Parameter(Mandatory)][string] $TargetId)
-    $handles=[Collections.Generic.List[IDisposable]]::new()
-    $context=$null
-    try {
-        $path=(Get-ClcTargetLayout $ApplicationId $TargetId '0.0.0').policyPath
-        # Same fixed first-authority rule as host enrollment. Never obtain this
-        # first owner/writer allowlist from the policy being authenticated.
-        $trusted=[string[]]@('S-1-5-18','S-1-5-32-544')
-        $null=Get-ClcPathObservation $path $handles
-        $null=Assert-ClcAccess $path $trusted $trusted @()
-        $structural=[string[]]@($trusted+'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
-        $cursor=[IO.Path]::GetDirectoryName($path)
-        while ($cursor) {
-            $security=Get-ClcSecurityObservation $cursor
-            if ($structural -cnotcontains $security.ownerSid) { Stop-ClcError Clc.ToolkitNotActive }
-            foreach ($ace in $security.dacl) {
-                if ($ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and
-                    ($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly) -eq 0 -and
-                    (([long]$ace.AccessMask -band 0x000D0040L) -ne 0 -or ([long]$ace.AccessMask -band 0xF0000000L) -ne 0) -and
-                    $structural -cnotcontains $ace.SecurityIdentifier.Value) { Stop-ClcError Clc.ToolkitNotActive }
-            }
-            $cursor=[IO.Path]::GetDirectoryName($cursor)
-        }
-        $file=Read-ClcHeldRecord $path host-policy $handles; $policy=$file.record
-        $layout=Get-ClcTargetLayout $ApplicationId $TargetId $policy.activeToolkit.version
-        foreach ($name in @('targetCatalogRoot','approvalCatalogRoot','controlStateRoot','lockRoot')) {
-            if ($policy[$name] -cne $layout[$name]) { Stop-ClcError Clc.ToolkitNotActive }
-        }
-        if ($policy.activeToolkit.moduleManifestPath -cne $layout.manifestPath) { Stop-ClcError Clc.ToolkitNotActive }
-        $context=@{policyFile=$file;layout=$layout;handles=$handles;pathPins=@{};ancestorPins=@{};pinGeneration=0L;
-            helperRuntimeSids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);closed=$false}
-        Assert-ClcDeploymentToken $policy
-        foreach ($directory in @($layout.root,(Join-Path $layout.root 'versions'),$layout.versionRoot,$layout.moduleRoot)) { $null=Add-ClcProtectedPathPin $context $directory -Directory }
-        Assert-ClcTrustAncestors $context $layout.moduleRoot
-        if ((Get-ClcToolkitInventory $context) -cne $policy.activeToolkit.inventorySha256) { Stop-ClcError Clc.ToolkitNotActive }
-        foreach ($path in @($layout.distributionPath,$layout.sourcePath)) { $null=Add-ClcProtectedPathPin $context $path }
-        $source=Read-ClcHeldFile $layout.sourcePath $handles 40
-        if ([Text.Encoding]::UTF8.GetString($source.bytes) -cne $policy.activeToolkit.sourceCommit) { Stop-ClcError Clc.ToolkitNotActive }
-        $null=& (Join-Path $PSScriptRoot '../Test-ToolkitDistribution.ps1') -ArchivePath $layout.distributionPath `
-            -ExpectedSha256 $policy.activeToolkit.distributionSha256 -ExpectedSourceCommit $policy.activeToolkit.sourceCommit -ExpectedVersion $policy.activeToolkit.version -InstalledModuleRoot $layout.moduleRoot
-        # All installed executable files and policy bytes remain held against
-        # write/delete while the authenticated import and host invocation run.
-        Import-Module $layout.manifestPath -Force -Global
-        return @{policy=$policy;handles=$handles}
-    } catch { foreach ($handle in $handles) { $handle.Dispose() }; throw }
-}
-
 function Assert-ClcWorkflowClaims {
     param($Claims,[string] $Repository,[ValidateSet('build','release','deploy')][string] $Workflow)
     Assert-ClcRepository $Repository
@@ -99,8 +47,10 @@ function Get-ClcProtectedWorkflowConfiguration {
 function Assert-ClcWorkflowSource {
     param($Claims,$Configuration,[string] $Reference,[string] $SourceCommit,[long] $RunId,[long] $RunAttempt)
     $tag=(Get-ClcApplicationTag $Reference).tag
+    $currentAttempt=0L
+    if (-not [long]::TryParse([string]$Claims.run_attempt,[ref]$currentAttempt)) { throw 'Invalid GitHub run attempt.' }
     if ($Claims.workflow_sha -cne $SourceCommit -or $Claims.workflow_ref -cne ($Configuration.repository+'/'+$Configuration.producer.workflowPath+'@refs/tags/'+$tag) -or
-        [string]$Claims.run_id -cne [string]$RunId -or [string]$Claims.run_attempt -cne [string]$RunAttempt) { throw 'Executing tag, source, run or attempt differs from selected producer.' }
+        [string]$Claims.run_id -cne [string]$RunId -or $RunAttempt -lt 1 -or $RunAttempt -gt $currentAttempt) { throw 'Executing tag, source or run differs from the selected producer, or its attempt has not run yet.' }
 }
 
 function Get-ClcQualifiedArtifactId {
@@ -114,11 +64,12 @@ function Get-ClcQualifiedArtifactId {
 
 function Get-ClcDeploymentRoute {
     param($Configuration,$Source)
-    if ($Source.identity.channel -ceq 'ArtifactOnly') { return @{admitted=$false;status='ArtifactOnly'} }
+    if ($Source.identity.channel -ceq 'ArtifactOnly') { return @{targetId=$null} }
     Assert-ClcEnum $Source.identity.channel @('DEV','Production')
     $id=$Configuration.applicationId+'-'+$Source.identity.channel.ToLowerInvariant()
     Assert-ClcId $id
-    return @{admitted=$true;status='Admitted';target=@{targetId=$id;environment=$id;standingAuthorizationId=$id;runnerLabels=@('self-hosted','Windows','X64',$id)}}
+    $runtimeEnvironment=if ($Source.identity.channel -ceq 'DEV') {$Configuration.devRuntimeEnvironment} else {'Production'}
+    return @{targetId=$id;environment=$id;runtimeEnvironment=$runtimeEnvironment;runnerLabels=@('self-hosted','Windows','X64',$id)}
 }
 
 function Get-ClcWorkflowRelease {

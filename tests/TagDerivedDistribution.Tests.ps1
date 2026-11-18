@@ -1,19 +1,12 @@
 BeforeAll {
     . "$PSScriptRoot/Support.ps1"
     . "$script:RepositoryRoot/tools/Distribution.Common.ps1"
-    function New-TaggedDistributionFixture([switch] $WithInfrastructure) {
+    function New-TaggedDistributionFixture {
         $root=New-TestWorkspace
         $repo=Join-Path $root 'repo'
         [void][IO.Directory]::CreateDirectory((Join-Path $repo 'src'))
         Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'src/Clc.Deployment') -Destination (Join-Path $repo 'src') -Recurse
         Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot 'VERSION') -Destination $repo
-        if ($true) {
-            foreach ($name in (Get-DistInfrastructureNames)) {
-                $destination=Join-Path $repo $name
-                [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
-                Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot $name) -Destination $destination
-            }
-        }
         $null=Get-DistGit $repo @('init','--initial-branch=codex/version-fixture')
         $null=Get-DistGit $repo @('config','user.name','CLC Version Fixture')
         $null=Get-DistGit $repo @('config','user.email','version@example.invalid')
@@ -57,7 +50,7 @@ Describe 'Tag-derived module distribution versions' {
         $identity=& "$script:RepositoryRoot/tools/New-ToolkitDistribution.ps1" -RepositoryRoot $fixture.repo -SourceCommit $fixture.commit -OutputPath $archive -ReleaseVersion $Version
         $identity.moduleVersion | Should -BeExactly $Version
         $verified=& "$script:RepositoryRoot/tools/Test-ToolkitDistribution.ps1" -ArchivePath $archive -ExpectedSha256 $identity.distributionSha256 -ExpectedSourceCommit $fixture.commit -ExpectedVersion $Version
-        $verified.formatVersion | Should -Be 3
+        $verified.formatVersion | Should -Be 4
         $record=Read-TaggedDistributionRecord $archive
         ($record.sourceFiles | Where-Object path -CEQ 'src/Clc.Deployment/Clc.Deployment.psd1').sha256 | Should -BeExactly (Get-DistHash $original)
         (Get-DistHash ([IO.File]::ReadAllBytes($manifestPath))) | Should -BeExactly (Get-DistHash $original)
@@ -68,9 +61,9 @@ Describe 'Tag-derived module distribution versions' {
         $second.distributionSha256 | Should -BeExactly $identity.distributionSha256
         $versions=Join-Path $fixture.root 'versions'
         [void][IO.Directory]::CreateDirectory($versions)
-        $expanded=& "$script:RepositoryRoot/tools/Expand-ToolkitDistribution.ps1" -ArchivePath $archive -ExpectedSha256 $identity.distributionSha256 -ExpectedSourceCommit $fixture.commit -ExpectedVersion $Version -VersionRoot (Join-Path $versions $Version) -OperatorApprovalReference 'offline-version-test'
+        $expanded=& "$script:RepositoryRoot/tools/Expand-ToolkitDistribution.ps1" -ArchivePath $archive -ExpectedSha256 $identity.distributionSha256 -ExpectedSourceCommit $fixture.commit -ExpectedVersion $Version -DestinationRoot (Join-Path $versions $Version)
         (Get-DistModuleVersion ([IO.File]::ReadAllText($expanded.moduleManifestPath))) | Should -BeExactly $Version
-        $expanded.activated | Should -BeFalse
+        Test-Path -LiteralPath $expanded.moduleManifestPath | Should -BeTrue
     }
     It 'rejects an incorrect stamped version even when the output inventory is recomputed' {
         $archive=Join-Path $fixture.root 'tampered.zip'
@@ -88,27 +81,5 @@ Describe 'Tag-derived module distribution versions' {
             $record.inventorySha256=Get-DistInventoryHash $record.files
         }
         { & "$script:RepositoryRoot/tools/Test-ToolkitDistribution.ps1" -ArchivePath $archive -ExpectedSha256 $digest -ExpectedSourceCommit $fixture.commit -ExpectedVersion '7.8.9' } | Should -Throw '*manifest version differs*'
-    }
-    It 'preserves infrastructure inventory and supports protected extraction of format-2 bundles' {
-        $withTools=New-TaggedDistributionFixture -WithInfrastructure
-        try {
-            $archive=Join-Path $withTools.root 'with-tools.zip'
-            $identity=& "$script:RepositoryRoot/tools/New-ToolkitDistribution.ps1" -RepositoryRoot $withTools.repo -SourceCommit $withTools.commit -OutputPath $archive -ReleaseVersion '7.8.9-beta.2'
-            $verified=& "$script:RepositoryRoot/tools/Test-ToolkitDistribution.ps1" -ArchivePath $archive -ExpectedSha256 $identity.distributionSha256 -ExpectedSourceCommit $withTools.commit -ExpectedVersion '7.8.9-beta.2' -RequireInfrastructureTools
-            $verified.formatVersion | Should -Be 3
-            $versions=Join-Path $withTools.root 'versions'
-            [void][IO.Directory]::CreateDirectory($versions)
-            $expanded=& "$script:RepositoryRoot/tools/Expand-ToolkitDistribution.ps1" -ArchivePath $archive -ExpectedSha256 $identity.distributionSha256 -ExpectedSourceCommit $withTools.commit -ExpectedVersion '7.8.9-beta.2' -VersionRoot (Join-Path $versions '7.8.9-beta.2') -OperatorApprovalReference 'offline-version-test'
-            $expanded.activated | Should -BeFalse
-            Test-Path -LiteralPath (Join-Path $versions '7.8.9-beta.2/tools/host/Initialize-ClcHostEnrollment.ps1') | Should -BeTrue
-        } finally { Remove-TestWorkspace $withTools.root }
-    }
-    It 'refuses producing a renamed distribution without the required infrastructure inventory' {
-        $archive=Join-Path $fixture.root 'no-tools.zip'
-        $null=Get-DistGit $fixture.repo @('rm','-r','tools')
-        $null=Get-DistGit $fixture.repo @('commit','-m','Synthetic absent infrastructure')
-        $commit=Get-DistGit $fixture.repo @('rev-parse','HEAD')
-        { & "$script:RepositoryRoot/tools/New-ToolkitDistribution.ps1" -RepositoryRoot $fixture.repo -SourceCommit $commit -OutputPath $archive -ReleaseVersion '7.8.9' } | Should -Throw '*require the exact infrastructure*'
-        Test-Path -LiteralPath $archive | Should -BeFalse
     }
 }

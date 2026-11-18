@@ -49,16 +49,9 @@ if ($toolkitIdentity.moduleVersion -cne $version -or $toolkitIdentity.sourceComm
     throw 'Toolkit distribution identity differs from the shared release.'
 }
 $null=& (Join-Path $PSScriptRoot 'Test-ToolkitDistribution.ps1') -ArchivePath $distributionPath -ExpectedSha256 $toolkitIdentity.distributionSha256 -ExpectedSourceCommit $SourceCommit -ExpectedVersion $version
-$versions=Join-Path $work 'versions'
-$null=[IO.Directory]::CreateDirectory($versions)
-$installed=& (Join-Path $PSScriptRoot 'Expand-ToolkitDistribution.ps1') -ArchivePath $distributionPath -ExpectedSha256 $toolkitIdentity.distributionSha256 -ExpectedSourceCommit $SourceCommit -ExpectedVersion $version -VersionRoot (Join-Path $versions $version) -OperatorApprovalReference 'release-integrity-check'
-if ($installed.activated -or -not $installed.extracted) { throw 'Release distribution extraction did not remain unactivated.' }
 
-$candidateOutput=Join-Path $work 'candidate-probe-tests'
-$candidateEvidence=& (Join-Path $PSScriptRoot 'Test-Candidate.ps1') -DotnetPath $DotnetPath -OutputRoot $candidateOutput -ProducerRunId $ProducerRunId -ProducerRunAttempt $ProducerRunAttempt -ProducerJob $ProducerJob -PrebuiltDistributionPath $distributionPath -PrebuiltDistributionSha256 $toolkitIdentity.distributionSha256 -PrebuiltVersion $version
-if ($candidateEvidence.sourceCommit -cne $SourceCommit -or $candidateEvidence.toolkit.distributionSha256 -cne $toolkitIdentity.distributionSha256 -or $candidateEvidence.reproducible) {
-    throw 'Candidate tests did not consume the exact prebuilt release distribution.'
-}
+$extraction=& (Join-Path $PSScriptRoot 'Expand-ToolkitDistribution.ps1') -ArchivePath $distributionPath -ExpectedSha256 $toolkitIdentity.distributionSha256 -ExpectedSourceCommit $SourceCommit -ExpectedVersion $version -DestinationRoot (Join-Path $work 'extracted-toolkit')
+$null=Test-ModuleManifest -Path $extraction.moduleManifestPath
 
 $toolkitFile='Clc.Deployment-'+$version+'.zip'
 $packageFile=$packageResult.package

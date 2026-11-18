@@ -45,20 +45,6 @@ namespace Clc.Lifecycle {
             foreach (var arg in new[] {dll,"--validate-deployment","--configuration-path",configuration,"--data-protection-root",keys,"--environment",environment}) info.ArgumentList.Add(arg);
             return Start(info,8192);
         }
-        public static Running Hook(string executable, string script, string context) {
-            if (Path.GetFileName(executable)!="pwsh.exe" || Path.GetExtension(script)!=".ps1") throw new IOException("Invalid hook.");
-            var info=Info(executable,Path.GetDirectoryName(script));
-            foreach (var arg in new[] {"-NoLogo","-NoProfile","-NonInteractive","-File",script,"-ContextPath",context}) info.ArgumentList.Add(arg);
-            return Start(info,8192);
-        }
-        public static Running Iis(string executable, string operation, string pool) {
-            if (!String.Equals(Path.GetFileName(executable),"appcmd.exe",StringComparison.OrdinalIgnoreCase) ||
-                (operation!="Stop" && operation!="Start") ||
-                !System.Text.RegularExpressions.Regex.IsMatch(pool,@"\A[A-Z0-9_.-]{1,64}\z")) throw new IOException("Invalid IIS operation.");
-            var info=Info(executable,Path.GetDirectoryName(executable));
-            foreach (var arg in new[] {operation=="Start" ? "start" : "stop","apppool","/apppool.name:"+pool}) info.ArgumentList.Add(arg);
-            return Start(info,8192);
-        }
         public static ValidationOutput Finish(Running running, int milliseconds) {
             var clock=Stopwatch.StartNew(); var all=Task.WhenAll(running.Output,running.Errors);
             if (!all.Wait(milliseconds)) return new ValidationOutput { Failed=true };
@@ -108,95 +94,58 @@ namespace Clc.Lifecycle {
 '@
 }
 
-function Open-ClcConfiguration {
-    param($Lock)
-    $target=$Lock.targetFile.record
-    $file=Read-ClcHeldFile $target.operationalConfigPath $Lock.context.handles 4194304 -NoCapture
-    return @{file=$file;record=@{privateSha256=$file.sha256;revision='pending-validation';keyStoreCompatibilityId='pending-validation';runtimeEnvironment=$target.runtimeEnvironment}}
-}
 
-function Assert-ClcConfigurationUnchanged {
-    param($Session, [Diagnostics.Stopwatch] $Clock=$null, [int] $Seconds=300)
-    if ($null -eq $Clock) { $Clock=[Diagnostics.Stopwatch]::StartNew() }
-    $file=$Session.configuration.file
-    $file.stream.Position=0
-    try { $digest=Read-ClcStream $file.stream 4194304 $Clock -Seconds $Seconds }
-    finally { $file.stream.Position=0 }
-    if ($digest.sha256 -cne $file.sha256) { Stop-ClcError Clc.ConfigurationRevisionDrift }
-}
-
-function Invoke-ClcNativeApplicationValidator {
-    param([string] $DotnetPath,[string] $Dll,[string] $ConfigurationPath,[string] $DataProtectionRoot,[string] $RuntimeEnvironment)
-    return [Clc.Lifecycle.Native]::Validator($DotnetPath,$Dll,$ConfigurationPath,$DataProtectionRoot,$RuntimeEnvironment)
-}
 function Start-ClcApplicationValidator {
-    param($Lock,[string] $Dll,[Diagnostics.Stopwatch] $DeadlineClock=$null,[int] $DeadlineSeconds=30)
-    Assert-ClcHelperProtection $Lock.context
-    if ($null -ne $DeadlineClock -and $DeadlineClock.Elapsed.TotalSeconds -ge $DeadlineSeconds) { Stop-ClcError Clc.ConfigurationInvalid }
-    $target=$Lock.targetFile.record
-    return Invoke-ClcNativeApplicationValidator $Lock.context.policyFile.record.dotnetPath $Dll $target.operationalConfigPath $target.dataProtectionRoot $target.runtimeEnvironment
+    param($Context,[string] $Dll)
+    return [Clc.Lifecycle.Native]::Validator($Context.dotnet,$Dll,$Context.layout.config,$Context.layout.keys,$Context.environment)
 }
-function Complete-ClcHelperOutput {
-    param($Running,[ValidateRange(1,30000)][int] $TimeoutMilliseconds=30000)
-    return [Clc.Lifecycle.Native]::Finish($Running,$TimeoutMilliseconds)
+function Complete-ClcApplicationValidator {
+    param($Running)
+    return [Clc.Lifecycle.Native]::Finish($Running,30000)
 }
-function Stop-ClcOwnedHelper {
-    param($Running,$Lock)
-    if ($null -eq $Running) { return }
-    try {
-        $identity=Get-ClcProcessIdentity $Running.Process
-        $null=Wait-ClcTrackedProcess $Running.Process $identity.creationUtc 0 30000
-        $file=Read-ClcStateFile $Lock journal
-        if ($file.record.nativeCall.launchState -ceq 'Started' -and $file.record.nativeCall.processId -eq $identity.processId -and
-            $file.record.nativeCall.creationUtc -ceq $identity.creationUtc) {
-            $null=Write-ClcNativeCallExited $Lock $Running.Process 0 0
-        }
-    } finally { $Running.Process.Dispose() }
+function Assert-ClcHelperExited {
+    param($Helper)
+    if ($null -eq $Helper -or $Helper.status -ceq 'Exited') { return }
+    if ($Helper.status -ceq 'Started' -and (Get-ClcNativeProcessObservation $Helper.processId $Helper.creationUtc) -ceq 'Exited') { return }
+    Stop-ClcError Clc.HelperQuiescenceUnknown 'The application validator may still be running. Preserve the attempt and reconcile the process identity before recovery.'
 }
-function Invoke-ClcTrackedHelper {
-    param($Session,[ValidateSet('Validate','Stop','Start')][string] $Operation,[string] $Dll)
-    $lock=$Session.lock; $running=$null; $clock=[Diagnostics.Stopwatch]::StartNew()
-    try {
-        $null=Write-ClcNativeCallIntent $lock $Operation
-        if ($Operation -ceq 'Validate') { $running=Start-ClcApplicationValidator $lock $Dll $clock 30 }
-        else { $running=Start-ClcIisHelper $lock $Operation $clock }
-        $null=Write-ClcNativeCallStarted $lock $running.Process
-        $remaining=[Math]::Min(30000,[Math]::Max(1,[int]((30-$clock.Elapsed.TotalSeconds)*1000)))
-        $output=Complete-ClcHelperOutput $running $remaining
-        $remaining=[Math]::Min(30000,[Math]::Max(0,[int]((30-$clock.Elapsed.TotalSeconds)*1000)))
-        $exited=Write-ClcNativeCallExited $lock $running.Process 0 $remaining
-        if ($output.Failed -or $exited.record.nativeCall.exitCode -ne 0 -or $clock.Elapsed.TotalSeconds -ge 30) {
-            if ($Operation -ceq 'Validate') { Stop-ClcError Clc.ConfigurationInvalid }
-            if ($Operation -ceq 'Start') { Stop-ClcError Clc.StartupFailed }
-            Stop-ClcError Clc.ShutdownTimeout
-        }
-        return $output
-    } finally { Stop-ClcOwnedHelper $running $lock }
-}
-function Invoke-ClcApplicationValidation {
-    param($Session,$Release,[string] $ApplicationRoot,[switch] $BindConfiguration)
-    $lock=$Session.lock
-    $null=Assert-ClcEffectAuthority $Session
-    $null=Get-ClcTreeInventory $ApplicationRoot $Release.manifest.files
-    $output=Invoke-ClcTrackedHelper $Session Validate (Join-Path $ApplicationRoot $Release.manifest.validation.entryPoint)
-    try { $validation=Read-ClcJson $output.Bytes application-validation }
-    catch { Stop-ClcError Clc.ConfigurationInvalid }
-    $m=$Release.manifest
-    if (-not $validation.valid -or $validation.errorCodes.Count -ne 0 -or $validation.applicationId -cne $m.applicationId -or
-        $validation.releaseId -cne $m.releaseId -or $validation.sourceCommit -cne $m.source.commit -or
-        $validation.runtimeEnvironment -cne $lock.targetFile.record.runtimeEnvironment) { Stop-ClcError Clc.ConfigurationInvalid }
-    $configuration=@{privateSha256=$Session.configuration.file.sha256;revision=$validation.configurationRevision;
-        keyStoreCompatibilityId=$validation.keyStoreCompatibilityId;runtimeEnvironment=$validation.runtimeEnvironment}
-    $null=Assert-ClcEffectAuthority $Session
-    if ($BindConfiguration) {
-        $file=Read-ClcStateFile $lock journal; $j=$file.record; $j.configuration=$configuration
-        $null=Write-ClcStateRecord $lock journal $j $file.sha256
-        $Session.configuration.record=$configuration
-    } elseif (-not (Test-ClcValueEqual $configuration $Session.configuration.record)) { Stop-ClcError Clc.PreviousConfigurationIncompatible }
-    return $configuration
-}
-function Get-ClcValidationElapsed { param([Diagnostics.Stopwatch] $Clock) return $Clock.Elapsed.TotalSeconds }
 
+function Invoke-ClcApplicationValidation {
+    param($Context,$Attempt,$Paths,$Manifest,[string] $Root)
+    $null=Get-ClcTreeInventory $Root $Manifest.files -RuntimeSid $Context.runtimeSid -Protected:($Root -ine $Context.layout.application)
+    Assert-ClcEffectContext $Context
+    $running=$null; $identity=$null
+    $Attempt.helper=@{status='Intent';processId=$null;creationUtc=$null}
+    Write-ClcLocalRecord $Paths.journal $Attempt -Replace
+    try {
+        $running=Start-ClcApplicationValidator $Context (Join-Path $Root $Manifest.validation.entryPoint)
+        $identity=Get-ClcProcessIdentity $running.Process
+        $Attempt.helper=@{status='Started';processId=$identity.processId;creationUtc=$identity.creationUtc}
+        Write-ClcLocalRecord $Paths.journal $Attempt -Replace
+        $output=Complete-ClcApplicationValidator $running
+    } finally {
+        if ($null -ne $running) {
+            try {
+                if ($null -ne $identity) {
+                    $exitCode=Wait-ClcTrackedProcess $running.Process $identity.creationUtc 0 30000
+                    $Attempt.helper=@{status='Exited';processId=$identity.processId;creationUtc=$identity.creationUtc}
+                    Write-ClcLocalRecord $Paths.journal $Attempt -Replace
+                }
+            } finally { $running.Process.Dispose() }
+        }
+    }
+    if ($output.Failed -or $exitCode -ne 0) { Stop-ClcError Clc.ConfigurationInvalid 'The application validator failed. Review application prerequisites and local configuration.' }
+    try { $validation=Read-ClcJson $output.Bytes 'application-validation' }
+    catch { Stop-ClcError Clc.ConfigurationInvalid 'The application validator did not return a valid deployment result.' }
+    if (-not $validation.valid -or $validation.errorCodes.Count -ne 0 -or $validation.applicationId -cne $Manifest.applicationId -or
+        $validation.releaseId -cne $Manifest.releaseId -or $validation.sourceCommit -cne $Manifest.source.commit -or
+        $validation.runtimeEnvironment -cne $Context.environment) {
+        Stop-ClcError Clc.ConfigurationInvalid 'The application validator rejected configuration or reported a different release, source or environment.'
+    }
+    Assert-ClcEffectContext $Context
+    $null=Get-ClcTreeInventory $Root $Manifest.files -RuntimeSid $Context.runtimeSid -Protected:($Root -ine $Context.layout.application)
+    return @{revision=$validation.configurationRevision;keyStoreCompatibilityId=$validation.keyStoreCompatibilityId;runtimeEnvironment=$validation.runtimeEnvironment}
+}
 function Invoke-ClcReadinessRequest {
     param([string] $Uri)
     try { return [Clc.Lifecycle.Native]::Health($Uri) }
@@ -212,28 +161,20 @@ function Test-ClcReadinessIdentity {
     } catch { return $false }
 }
 
+
 function Wait-ClcApplicationReady {
-    param($Session,$Release,[switch] $NoOpProbe)
-    $lock=$Session.lock; $clock=[Diagnostics.Stopwatch]::StartNew()
-    if (-not $NoOpProbe) { $null=Write-ClcJournalIntent $lock CheckReady }
-    $null=Assert-ClcEffectAuthority $Session
+    param($Context,$Manifest,$Configuration)
+    $clock=[Diagnostics.Stopwatch]::StartNew()
     do {
-        if ((Get-ClcReadinessElapsed $clock) -ge 115) { break }
-        $response=Invoke-ClcReadinessRequest $lock.targetFile.record.readinessUri
-        if ($response.Accepted -and (Test-ClcReadinessIdentity $response.Bytes $Release.manifest $Session.configuration.record)) {
-            $pool=Get-ClcLivePool $lock
-            if ($pool.poolState -ceq 'Started' -and $pool.workerCount -eq 1) {
-                $null=Get-ClcTreeInventory $lock.targetFile.record.applicationRoot $Release.manifest.files -DeadlineClock $clock -DeadlineSeconds 120
-                $null=Assert-ClcEffectAuthority $Session
-                if ((Get-ClcReadinessElapsed $clock) -ge 120) { break }
-                return @{releaseId=$Release.manifest.releaseId;sourceCommit=$Release.manifest.source.commit;runtimeEnvironment=$Session.configuration.record.runtimeEnvironment;
-                    configurationRevision=$Session.configuration.record.revision;checkedUtc=(Get-ClcUtcTimestamp)}
+        $response=Invoke-ClcReadinessRequest $Context.target.readinessUri
+        if ($response.Accepted -and (Test-ClcReadinessIdentity $response.Bytes $Manifest $Configuration)) {
+            $iis=Get-ClcLiveIisState $Context
+            if ($iis.siteState -ceq 'Started' -and $iis.poolState -ceq 'Started' -and $iis.workerCount -eq 1 -and $clock.Elapsed.TotalSeconds -lt 120) {
+                return $iis
             }
         }
-        if ($NoOpProbe) { return $null }
+        if ($clock.Elapsed.TotalSeconds -ge 113) { break }
         Start-Sleep -Milliseconds 2000
-    } while ((Get-ClcReadinessElapsed $clock) -lt 115)
-    if ($NoOpProbe) { return $null }
-    Stop-ClcError Clc.ReadinessFailed
+    } while ($clock.Elapsed.TotalSeconds -lt 115)
+    Stop-ClcError Clc.ReadinessFailed 'Readiness did not report the expected release, source, environment and configuration with one IIS worker.'
 }
-function Get-ClcReadinessElapsed { param([Diagnostics.Stopwatch] $Clock) return $Clock.Elapsed.TotalSeconds }

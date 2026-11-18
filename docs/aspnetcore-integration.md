@@ -2,7 +2,7 @@
 
 `Clc.Deployment.AspNetCore` contains the application-side version-1 validator and readiness protocol used by the PowerShell deployment module. It reads release identity from the assembly supplied by the consuming app, parses `--validate-deployment --configuration-path <file> --data-protection-root <keys> --environment Production|Staging`, writes the bounded version-1 JSON response, and provides an anonymous readiness middleware for `GET /health/ready`. Current repository source, toolkit and companion package metadata use `MIT`, stated in the root `LICENSE` and package metadata. Previously published `0.1.0-beta.2` artifacts remain under AGPL-3.0-only.
 
-The consuming application still owns external configuration loading and semantics, configuration revisions, key-store compatibility and validation, database compatibility, required startup checks, and all business services. The package does not load application configuration, create or protect keys, probe remote services, or alter the PowerShell module's approval, IIS, backup, or recovery behavior.
+The consuming application still owns external configuration loading and semantics, configuration revisions, key-store compatibility and validation, database compatibility, required startup checks, and all business services. The package does not load application configuration, create or protect keys, probe remote services, or alter the PowerShell module's IIS, backup, or recovery behavior.
 
 ## Application integration
 
@@ -31,4 +31,6 @@ For readiness, create a `DeploymentReadinessGate`, register `UseClcDeploymentRea
 
 ## Package availability
 
-The package and toolkit share each release version published from this repository. Release tags determine their version; root [`VERSION`](../VERSION) is only the untagged development fallback. Package verification restores the actual nupkg from an isolated local feed and package cache, checks its exact ID/version/license/source identity and bytes, creates a throwaway lock for its content hash, then repeats the restore in locked mode. The consuming application's committed lock remains the immutable package verification boundary. Adoption requires an exact approved package version, accessible matching source revision and application-owned acceptance. See [shared releases](releasing.md) for publication policy and required external setup.
+The package and toolkit share each release version published from this repository. Release tags determine their version; root [`VERSION`](../VERSION) is only the untagged development fallback. Package verification restores the actual nupkg from an isolated local feed and package cache, checks its exact ID/version/license/source identity and bytes, creates a throwaway lock for its content hash, then repeats the restore in locked mode. The consuming application's committed lock remains the immutable package verification boundary. Pin an exact package version and verify its matching source revision as part of application-owned acceptance. [Shared releases](releasing.md)
+
+The deployment runner executes the fixed validator DLL under its elevated identity with a bounded result and execution time. A validator must be read-only and must complete its work before exiting. Retain configuration revision and key-store compatibility identities across compatible releases.

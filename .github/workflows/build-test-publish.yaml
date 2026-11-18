@@ -60,8 +60,8 @@ jobs:
           $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
           $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
           $env:DOTNET_NOLOGO = '1'
-          $sdk = & tools/Initialize-ProbeSdk.ps1 -DestinationRoot (Join-Path $dependencyRoot 'probe-sdk')
-          "CLC_T4_DOTNET=$($sdk.dotnetPath)" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          $sdk = & tools/Initialize-PinnedSdk.ps1 -DestinationRoot (Join-Path $dependencyRoot 'sdk')
+          "CLC_PINNED_DOTNET=$($sdk.dotnetPath)" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
           'DOTNET_GENERATE_ASPNET_CERTIFICATE=false' | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
           'DOTNET_CLI_TELEMETRY_OPTOUT=1' | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
           'DOTNET_NOLOGO=1' | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
@@ -69,24 +69,24 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         shell: pwsh
         run: |
-          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-ClcDeploymentAspNetCore.ps1 -DotnetPath $env:CLC_T4_DOTNET -OutputRoot (Join-Path $env:RUNNER_TEMP 'clc-deployment-aspnetcore')
+          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-ClcDeploymentAspNetCore.ps1 -DotnetPath $env:CLC_PINNED_DOTNET -OutputRoot (Join-Path $env:RUNNER_TEMP 'clc-deployment-aspnetcore')
           if ($LASTEXITCODE -ne 0) { throw 'Packed Clc.Deployment.AspNetCore verification failed' }
           foreach ($version in @('1.2.3','2.0.0-beta.1')) {
-            & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-ClcDeploymentAspNetCore.ps1 -DotnetPath $env:CLC_T4_DOTNET -OutputRoot (Join-Path $env:RUNNER_TEMP ('clc-companion-' + $version)) -ReleaseVersion $version
+            & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-ClcDeploymentAspNetCore.ps1 -DotnetPath $env:CLC_PINNED_DOTNET -OutputRoot (Join-Path $env:RUNNER_TEMP ('clc-companion-' + $version)) -ReleaseVersion $version
             if ($LASTEXITCODE -ne 0) { throw 'Tag-version package verification failed' }
           }
-      - name: Complete offline and Windows-native toolkit and enrollment suite
+      - name: Run offline and Windows-native toolkit tests
         shell: pwsh
         run: |
           $env:TEMP = $env:RUNNER_TEMP
           $env:TMP = $env:RUNNER_TEMP
           & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-Foundation.ps1 -PesterManifestPath $env:CLC_FOUNDATION_PESTER
           if ($LASTEXITCODE -ne 0) { throw 'Foundation verification failed' }
-      - name: Exact committed candidate distribution and probe releases
+      - name: Verify reproducible candidate distribution and public API
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         shell: pwsh
         run: |
-          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-Candidate.ps1 -DotnetPath $env:CLC_T4_DOTNET -OutputRoot (Join-Path $env:RUNNER_TEMP 'clc-t4-candidate') -ProducerRunId $env:GITHUB_RUN_ID -ProducerRunAttempt $env:GITHUB_RUN_ATTEMPT -ProducerJob foundation
+          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/Test-Candidate.ps1 -OutputRoot (Join-Path $env:RUNNER_TEMP 'clc-candidate')
           if ($LASTEXITCODE -ne 0) { throw 'Candidate verification failed' }
       - name: Build and test shared release artifacts
         id: release_bundle
@@ -99,14 +99,14 @@ jobs:
           $artifactName = 'clc-release-' + $env:GITHUB_SHA + '-' + $env:GITHUB_RUN_ATTEMPT
           "artifact_name=$artifactName" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "run_attempt=$env:GITHUB_RUN_ATTEMPT" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/New-SharedReleaseArtifacts.ps1 -RepositoryRoot $PWD.Path -Tag $env:CLC_RELEASE_TAG -SourceCommit $env:CLC_SOURCE_COMMIT -DotnetPath $env:CLC_T4_DOTNET -BundleRoot (Join-Path $env:RUNNER_TEMP 'clc-shared-release') -ProducerRunId $env:GITHUB_RUN_ID -ProducerRunAttempt ([int]$env:GITHUB_RUN_ATTEMPT) -ProducerJob foundation -ArtifactName $artifactName
+          & $env:CLC_FOUNDATION_PWSH -NoLogo -NoProfile -NonInteractive -File tools/New-SharedReleaseArtifacts.ps1 -RepositoryRoot $PWD.Path -Tag $env:CLC_RELEASE_TAG -SourceCommit $env:CLC_SOURCE_COMMIT -DotnetPath $env:CLC_PINNED_DOTNET -BundleRoot (Join-Path $env:RUNNER_TEMP 'clc-shared-release') -ProducerRunId $env:GITHUB_RUN_ID -ProducerRunAttempt ([int]$env:GITHUB_RUN_ATTEMPT) -ProducerJob foundation -ArtifactName $artifactName
           if ($LASTEXITCODE -ne 0) { throw 'Shared release artifact build and verification failed' }
-      - name: Retain candidate identity and exact unapproved bytes
+      - name: Retain tested candidate distribution
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0, Node.js 24
         with:
-          name: t4-candidate-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/clc-t4-candidate/
+          name: clc-candidate-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/clc-candidate/
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
@@ -152,7 +152,7 @@ jobs:
       - name: Provision pinned .NET SDK for package push
         shell: pwsh
         run: |
-          $sdk = & tools/Initialize-ProbeSdk.ps1 -DestinationRoot (Join-Path $env:RUNNER_TEMP 'release-sdk')
+          $sdk = & tools/Initialize-PinnedSdk.ps1 -DestinationRoot (Join-Path $env:RUNNER_TEMP 'release-sdk')
           if ($LASTEXITCODE -ne 0) { throw 'Pinned .NET SDK setup failed' }
           "CLC_RELEASE_DOTNET=$($sdk.dotnetPath)" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Check immutable publication state

@@ -5,42 +5,19 @@ function Get-ClcManagedPath {
     Assert-ClcPathSpelling $path
     return $path
 }
-function Assert-ClcLockedTarget {
-    param($Lock, [switch] $SafetyStop)
-    Assert-ClcLockOwned $Lock
-    $actual=Get-ClcTargetIdentity $Lock.context $Lock.targetFile -SafetyStop:$SafetyStop
-    if ($actual.targetKey -cne $Lock.identity.targetKey -or -not (Test-ClcValueEqual $actual.snapshot $Lock.identity.snapshot)) { Stop-ClcError Clc.HostPreflightFailed }
-    return $actual
-}
-function Assert-ClcFilePath {
-    param([string] $Path,[switch] $Directory)
-    $handles=[Collections.Generic.List[IDisposable]]::new()
-    try { $null=Get-ClcPathObservation $Path $handles -Directory:$Directory }
-    finally { foreach ($handle in $handles) { $handle.Dispose() } }
-}
-function New-ClcOwnedDirectory {
-    param($Lock,[string] $Path,[switch] $CreateNew)
-    Assert-ClcLockOwned $Lock
-    Assert-ClcPathSpelling $Path
-    $root=$Lock.identity.controlRoot
-    if (-not (Test-ClcPathAncestry $root $Path) -or $root -ceq $Path) { Stop-ClcError Clc.UnsafePath }
-    $current=$root
-    foreach ($part in $Path.Substring($root.Length+1).Split('\')) {
-        Assert-ClcFilePath $current -Directory
-        $current=Join-Path $current $part
-        if ($CreateNew -and $current -ceq $Path -and ([IO.File]::Exists($current) -or [IO.Directory]::Exists($current))) { Stop-ClcError Clc.ContentDrift }
-        if (-not [IO.Directory]::Exists($current)) { $null=[IO.Directory]::CreateDirectory($current) }
-        Assert-ClcFilePath $current -Directory
-    }
-}
 function Get-ClcTreeInventory {
-    param([string] $Root,[object[]] $ExpectedFiles,[switch] $Partial,[object[]] $OtherFiles=@(),[switch] $AllowChanged,
-        [Diagnostics.Stopwatch] $DeadlineClock=$null,[int] $DeadlineSeconds=300)
+    param([string] $Root,[object[]] $ExpectedFiles,[switch] $Partial,[object[]] $OtherFiles=@(),
+        [Diagnostics.Stopwatch] $DeadlineClock=$null,[int] $DeadlineSeconds=300, [string] $RuntimeSid, [switch] $Protected)
     if ($null -eq $ExpectedFiles) { $ExpectedFiles=@() }
     if ($null -eq $DeadlineClock) { $DeadlineClock=[Diagnostics.Stopwatch]::StartNew() }
     $handles=[Collections.Generic.List[IDisposable]]::new()
     try {
         $rootFacts=Get-ClcPathObservation $Root $handles -Directory
+
+        $aclCache=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $readers=@()
+        if ($RuntimeSid -and -not $Protected) { $readers=@($RuntimeSid) }
+        if ($RuntimeSid) { $null=Assert-ClcAccess $Root $script:ClcAdministrators $script:ClcAdministrators $readers @($RuntimeSid) -ReadMask 0x1200A9 -Cache $aclCache }
         $allowed=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
         $directories=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($file in @($ExpectedFiles)+@($OtherFiles)) {
@@ -50,6 +27,7 @@ function Get-ClcTreeInventory {
             foreach ($prefix in Get-ClcNamePrefixes $file.path) { $null=$directories.Add($prefix) }
         }
         $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $actualDirectories=[Collections.Generic.List[string]]::new()
         $queue=[Collections.Generic.Queue[object]]::new(); $queue.Enqueue(@{path=$Root;facts=$rootFacts})
         $files=[Collections.Generic.List[object]]::new(); $total=0L; $count=0
         while ($queue.Count) {
@@ -62,14 +40,16 @@ function Get-ClcTreeInventory {
                 if (-not $seen.Add($relative)) { Stop-ClcError Clc.ContentDrift }
                 $directory=([IO.File]::GetAttributes($entry) -band [IO.FileAttributes]::Directory) -ne 0
                 $facts=Get-ClcChildPathObservation $entry $parent.facts $handles -Directory:$directory
+                if ($RuntimeSid) { $null=Assert-ClcAccess $entry $script:ClcAdministrators $script:ClcAdministrators $readers @($RuntimeSid) -ReadMask 0x1200A9 -Cache $aclCache }
                 if ($directory) {
                     if (-not $directories.Contains($relative)) { Stop-ClcError Clc.ContentDrift }
+                    $actualDirectories.Add($relative)
                     $queue.Enqueue(@{path=$entry;facts=$facts}); continue
                 }
                 if (-not $allowed.ContainsKey($relative)) { Stop-ClcError Clc.ContentDrift }
                 $stream=Open-ClcReadFile $entry $facts $handles
                 $digest=Read-ClcStream $stream $script:ClcLimits.File $DeadlineClock -Seconds $DeadlineSeconds
-                if (-not $AllowChanged -and @($allowed[$relative] | Where-Object { $_.length -eq $digest.length -and $_.sha256 -ceq $digest.sha256 }).Count -eq 0) { Stop-ClcError Clc.ContentDrift }
+                if (@($allowed[$relative] | Where-Object { $_.length -eq $digest.length -and $_.sha256 -ceq $digest.sha256 }).Count -eq 0) { Stop-ClcError Clc.ContentDrift }
                 $total+=$digest.length; if ($total -gt $script:ClcLimits.Expanded) { Stop-ClcError Clc.ContentDrift }
                 $files.Add(@{path=$relative;length=$digest.length;sha256=$digest.sha256})
             }
@@ -77,116 +57,168 @@ function Get-ClcTreeInventory {
         $digest=Get-ClcInventoryHash $files.ToArray()
         if (-not $Partial -and ($files.Count -ne $ExpectedFiles.Count -or $digest -cne (Get-ClcInventoryHash $ExpectedFiles))) { Stop-ClcError Clc.ContentDrift }
         Assert-ClcDeadline $DeadlineClock $DeadlineSeconds
-        return @{files=$files.ToArray();inventorySha256=$digest;rootFacts=$rootFacts}
+        return @{files=$files.ToArray();inventorySha256=$digest;directories=$actualDirectories.ToArray()}
     } finally { foreach ($handle in $handles) { $handle.Dispose() } }
 }
-function Save-ClcRetainedRelease {
-    param($Lock,$Release)
-    $root=Join-Path $Lock.identity.controlRoot 'releases'
-    New-ClcOwnedDirectory $Lock $root
-    $path=Join-Path $root ($Release.approvalFile.record.approvalId+'.json')
-    if ([IO.File]::Exists($path)) {
-        $handles=[Collections.Generic.List[IDisposable]]::new()
-        try { if ((Read-ClcHeldRecord $path release-manifest $handles).sha256 -cne $Release.approvalFile.record.manifestSha256) { Stop-ClcError Clc.ContentDrift } }
-        finally { foreach ($handle in $handles) { $handle.Dispose() } }
-    } else {
-        $stream=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-        try { $stream.Write($Release.manifestBytes); $stream.Flush($true) } finally { $stream.Dispose() }
-    }
-    # The exact approval-pinned manifest and verified backup suffice for recovery.
-    # Historical ZIPs are neither copied nor rehashed on each deployment.
-}
-function Expand-ClcApprovedRelease {
-    param($Lock,$Release,[string] $StageRoot)
-    Assert-ClcApprovedReleaseUnchanged $Lock.context $Release
-    $clock=[Diagnostics.Stopwatch]::StartNew()
-    New-ClcOwnedDirectory $Lock $StageRoot -CreateNew
-    $root=Join-Path $StageRoot 'application'; New-ClcOwnedDirectory $Lock $root
-    $files=@($Release.manifest.files)
-    if ($Release.manifest.Contains('hooks')) { $files+=@($Release.manifest.hooks.files) }
-    foreach ($file in $files) {
-        if ($file.path.StartsWith('hooks/',[StringComparison]::Ordinal)) { Assert-ClcHookAssetName $file.path }
-        else { Assert-ClcArchiveName $file.path -PayloadOnly }
-        Assert-ClcPathSpelling (Join-Path $StageRoot $file.path.Replace('/','\'))
-    }
-    $Release.archive.stream.Position=0
-    $zip=[IO.Compression.ZipArchive]::new($Release.archive.stream,[IO.Compression.ZipArchiveMode]::Read,$true)
-    try {
-        foreach ($file in $files) {
-            Assert-ClcDeadline $clock
-            $path=Join-Path $StageRoot $file.path.Replace('/','\')
-            New-ClcOwnedDirectory $Lock ([IO.Path]::GetDirectoryName($path))
-            $source=$zip.GetEntry($file.path).Open(); $output=$null
-            try {
-                $output=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-                $digest=Read-ClcStream $source $file.length $clock -Destination $output
-                $output.Flush($true)
-                if ($digest.length -ne $file.length -or $digest.sha256 -cne $file.sha256) { Stop-ClcError Clc.HashMismatch }
-            } finally { $source.Dispose(); if ($null -ne $output) { $output.Dispose() } }
+
+function New-ClcPayloadParent {
+    param([string] $Root,[string] $FilePath)
+    $parent=[IO.Path]::GetDirectoryName($FilePath)
+    if ($parent -ieq $Root) { return }
+    $current=$Root
+    foreach ($part in $parent.Substring($Root.Length+1).Split('\')) {
+        Assert-ClcStoragePath $current -Directory
+        $current=Join-Path $current $part
+        if (-not (Test-ClcStorageEntry $current)) {
+            $null=[IO.Directory]::CreateDirectory($current)
+            Set-ClcManagedOwner $current
         }
-    } finally { $zip.Dispose(); $Release.archive.stream.Position=0 }
-    $null=Get-ClcTreeInventory $root $Release.manifest.files -DeadlineClock $clock
-    Assert-ClcSafeDescendants $root $Lock.context $Lock.targetFile.record.runtimeIdentitySid Mutable
-    if ($Release.manifest.Contains('hooks')) {
-        $handles=[Collections.Generic.List[IDisposable]]::new()
-        try {
-            $hookRoot=Get-ClcPathObservation (Join-Path $StageRoot 'hooks') $handles -Directory
-            $hookFiles=Get-ClcPublishInventory $hookRoot $handles $clock -ExpectedFiles $Release.manifest.hooks.files -HookAssets `
-                -Context $Lock.context -RuntimeSid $Lock.targetFile.record.runtimeIdentitySid -ControlRoot $Lock.identity.controlRoot
-            if ((Get-ClcInventoryHash $hookFiles) -cne $Release.manifest.hooks.inventorySha256) { Stop-ClcError Clc.ContentDrift }
-        } finally { foreach ($handle in $handles) { $handle.Dispose() } }
+        Assert-ClcStoragePath $current -Directory
     }
-    return $root
 }
-function Copy-ClcPayloadFile {
-    param([string] $Source,[string] $Destination,[bool] $Overwrite)
-    Assert-ClcFilePath $Source
-    Assert-ClcFilePath ([IO.Path]::GetDirectoryName($Destination)) -Directory
-    if ([IO.File]::Exists($Destination)) { Assert-ClcFilePath $Destination }
-    [IO.File]::Copy($Source,$Destination,$Overwrite)
+
+function Write-ClcPayload {
+    param([IO.Stream] $Source,[string] $Destination,$File,[Diagnostics.Stopwatch] $Clock)
+    $output=[IO.File]::Open($Destination,'CreateNew','Write','None')
+    try {
+        $digest=Read-ClcStream $Source $File.length $Clock -Destination $output
+        if ($digest.length -ne $File.length -or $digest.sha256 -cne $File.sha256) {
+            Stop-ClcError Clc.ContentDrift 'Application content changed during copy. Preserve the attempt and inspect the retained files.'
+        }
+        $output.Flush($true)
+    } finally { $output.Dispose() }
+    Set-ClcManagedOwner $Destination
 }
-function New-ClcVerifiedBackup {
-    param($Session,[switch] $Online)
-    $lock=$Session.lock; $j=(Read-ClcStateFile $lock journal).record
+
+function Expand-ClcApplication {
+    param([IO.Stream] $Archive,$Manifest,[string] $Stage)
+    New-ClcHostDirectory $Stage
     $clock=[Diagnostics.Stopwatch]::StartNew()
-    $null=Write-ClcJournalIntent $lock Backup
-    if ($Online) { $null=Assert-ClcEffectAuthority $Session } else { Assert-ClcIisQuiescent $lock }
-    $files=@(if ($null -ne $Session.previousRelease) {$Session.previousRelease.manifest.files})
-    $null=Get-ClcTreeInventory $lock.targetFile.record.applicationRoot $(if ($null -eq $Session.previousRelease) {$Session.baselineFiles} else {$files}) -DeadlineClock $clock
-    $backup=Join-Path $lock.identity.controlRoot ('backups\'+$Session.attemptId)
-    New-ClcOwnedDirectory $lock $backup -CreateNew
-    $payload=Join-Path $backup 'application'; New-ClcOwnedDirectory $lock $payload
-    foreach ($file in $files) {
-        Assert-ClcDeadline $clock
-        $destination=Get-ClcManagedPath $payload $file.path
-        New-ClcOwnedDirectory $lock ([IO.Path]::GetDirectoryName($destination))
-        Copy-ClcPayloadFile (Get-ClcManagedPath $lock.targetFile.record.applicationRoot $file.path) $destination $false
-    }
-    $null=Get-ClcTreeInventory $payload $files -DeadlineClock $clock
-    $index=[ordered]@{contractFamily='clc-file-iis-v1';schemaVersion=1L;recordKind='backup-index';attemptId=$j.attemptId;targetKey=$j.targetKey;
-        priorEmpty=($null -eq $j.previous);priorApprovalId=$(if ($null -ne $j.previous) {$j.previous.release.approvalId});
-        priorManifestSha256=$(if ($null -ne $j.previous) {$j.previous.release.manifestSha256});files=$files;inventorySha256=(Get-ClcInventoryHash $files)}
-    $saved=Write-ClcStateRecord $lock backup-index $index $null $j.attemptId
-    $file=Read-ClcStateFile $lock journal; $j=$file.record
-    $j.backup=@{verified=$true;indexSha256=$saved.sha256;inventorySha256=$index.inventorySha256;priorEmpty=$index.priorEmpty}
-    $null=Write-ClcStateRecord $lock journal $j $file.sha256
-    if ($Online) {
-        $null=Get-ClcTreeInventory $lock.targetFile.record.applicationRoot $(if ($null -eq $Session.previousRelease) {$Session.baselineFiles} else {$files}) -DeadlineClock $clock
-        $null=Assert-ClcEffectAuthority $Session
-    }
-    Assert-ClcDeadline $clock
-    return $payload
+    $Archive.Position=0
+    $zip=[IO.Compression.ZipArchive]::new($Archive,'Read',$true)
+    try {
+        foreach ($file in $Manifest.files) {
+            Assert-ClcDeadline $clock
+            $destination=Get-ClcManagedPath $Stage $file.path
+            New-ClcPayloadParent $Stage $destination
+            $source=$zip.GetEntry($file.path).Open()
+            try { Write-ClcPayload $source $destination $file $clock }
+            finally { $source.Dispose() }
+        }
+    } finally { $zip.Dispose() }
+    $null=Get-ClcTreeInventory $Stage $Manifest.files -DeadlineClock $clock
 }
-function Assert-ClcBackup {
-    param($Session,$Journal)
-    if ($null -eq $Journal.backup -or -not $Journal.backup.verified) { Stop-ClcError Clc.BackupInvalid }
-    $file=Read-ClcStateFile $Session.lock backup-index $Journal.attemptId
-    if ($null -eq $file -or $file.sha256 -cne $Journal.backup.indexSha256 -or
-        $file.record.inventorySha256 -cne $Journal.backup.inventorySha256 -or $file.record.priorEmpty -ne $Journal.initialTargetEmpty) { Stop-ClcError Clc.BackupInvalid }
-    if ($null -ne $Journal.previous -and ($file.record.priorApprovalId -cne $Journal.previous.release.approvalId -or
-        $file.record.priorManifestSha256 -cne $Journal.previous.release.manifestSha256 -or $file.record.inventorySha256 -cne $Journal.previous.release.inventorySha256)) { Stop-ClcError Clc.BackupInvalid }
-    $root=Join-Path $Session.lock.identity.controlRoot ('backups\'+$Journal.attemptId+'\application')
-    $null=Get-ClcTreeInventory $root $file.record.files
-    Assert-ClcSafeDescendants $root $Session.lock.context $Session.lock.targetFile.record.runtimeIdentitySid Mutable
-    return $root
+
+function Copy-ClcVerifiedPayload {
+    param([string] $Source,[string] $Destination,$File,[Diagnostics.Stopwatch] $Clock)
+    $handles=[Collections.Generic.List[IDisposable]]::new()
+    try {
+        $facts=Get-ClcPathObservation $Source $handles
+        $stream=Open-ClcReadFile $Source $facts $handles
+        Write-ClcPayload $stream $Destination $File $Clock
+    } finally { foreach ($handle in $handles) { $handle.Dispose() } }
+}
+
+function New-ClcBackup {
+    param($Context,[string] $Backup,[object[]] $Files)
+    Assert-ClcReplacementSafe $Context
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    $root=$Context.layout.application
+    $null=Get-ClcTreeInventory $root $Files -DeadlineClock $clock -RuntimeSid $Context.runtimeSid
+    New-ClcHostDirectory $Backup
+    foreach ($file in $Files) {
+        Assert-ClcDeadline $clock
+        $destination=Get-ClcManagedPath $Backup $file.path
+        New-ClcPayloadParent $Backup $destination
+        Copy-ClcVerifiedPayload (Get-ClcManagedPath $root $file.path) $destination $file $clock
+    }
+    $null=Get-ClcTreeInventory $Backup $Files -DeadlineClock $clock -RuntimeSid $Context.runtimeSid -Protected
+}
+
+function Assert-ClcCompatibleLayout {
+    param([object[]] $OldFiles,[object[]] $NewFiles)
+    $paths=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $files=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in @($OldFiles)+@($NewFiles)) {
+        $null=$files.Add($file.path)
+        foreach ($part in @($file.path)+@(Get-ClcNamePrefixes $file.path)) {
+            if ($paths.ContainsKey($part) -and $paths[$part] -cne $part) {
+                Stop-ClcError Clc.ContentDrift 'A release changes only the case of an existing application path.'
+            }
+            $paths[$part]=$part
+        }
+    }
+    foreach ($name in $files) {
+        foreach ($prefix in Get-ClcNamePrefixes $name) {
+            if ($files.Contains($prefix)) { Stop-ClcError Clc.ContentDrift 'A release changes an existing application file into a directory or vice versa.' }
+        }
+    }
+}
+
+function Set-ClcInstalledFileAcl {
+    param([string] $Path,[string] $RuntimeSid)
+    # A same-volume rename preserves the temporary file's ACL. Grant the
+    # intended rights before the file is published into the application tree.
+    $acl=Get-Acl -LiteralPath $Path
+    $acl.SetAccessRuleProtection($true,$false)
+    foreach ($id in $script:ClcAdministrators+@($RuntimeSid)) {
+        $rights=if ($id -ceq $RuntimeSid) {'ReadAndExecute'} else {'FullControl'}
+        $rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($id),$rights,'Allow')
+        $acl.SetAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
+function Set-ClcApplicationFiles {
+    param($Context,[string] $Source,[object[]] $Selected,[object[]] $Previous,[string] $Temporary,
+        [object[]] $Candidate=@(),[switch] $Partial)
+    $root=$Context.layout.application
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    Assert-ClcReplacementSafe $Context
+    $null=Get-ClcTreeInventory $Source $Selected -DeadlineClock $clock -RuntimeSid $Context.runtimeSid -Protected
+    $live=Get-ClcTreeInventory $root $Previous -OtherFiles $Candidate -Partial:$Partial -DeadlineClock $clock -RuntimeSid $Context.runtimeSid
+    $old=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($file in $live.files) { $old.Add($file.path,$file) }
+    $needed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($file in $Selected) {
+        foreach ($directory in Get-ClcNamePrefixes $file.path) { $null=$needed.Add($directory) }
+    }
+    foreach ($file in @($Selected | Sort-Object @{Expression={if ($_.path -ceq 'application/web.config') {0} else {1}}},path)) {
+        Assert-ClcDeadline $clock
+        $destination=Get-ClcManagedPath $root $file.path
+        New-ClcPayloadParent $root $destination
+        Copy-ClcVerifiedPayload (Get-ClcManagedPath $Source $file.path) $Temporary $file $clock
+        Set-ClcInstalledFileAcl $Temporary $Context.runtimeSid
+        Assert-ClcQuiescent $Context
+        if ($old.ContainsKey($file.path)) {
+            Assert-ClcPayloadUnchanged $destination $old[$file.path] $clock
+            [IO.File]::Move($Temporary,$destination,$true)
+            $null=$old.Remove($file.path)
+        } else { [IO.File]::Move($Temporary,$destination,$false) }
+    }
+    foreach ($file in @($old.Values | Sort-Object @{Expression={if ($_.path -ceq 'application/web.config') {1} else {0}}},path)) {
+        Assert-ClcDeadline $clock
+        $destination=Get-ClcManagedPath $root $file.path
+        Assert-ClcQuiescent $Context
+        Assert-ClcPayloadUnchanged $destination $file $clock
+        [IO.File]::Delete($destination)
+    }
+    foreach ($directory in @($live.directories | Sort-Object Length -Descending)) {
+        if ($needed.Contains($directory)) { continue }
+        Assert-ClcDeadline $clock
+        Assert-ClcQuiescent $Context
+        $destination=Get-ClcManagedPath $root $directory
+        Assert-ClcStoragePath $destination -Directory
+        [IO.Directory]::Delete($destination,$false)
+    }
+    $null=Get-ClcTreeInventory $root $Selected -DeadlineClock $clock
+    Assert-ClcReplacementSafe $Context
+}
+function Assert-ClcPayloadUnchanged {
+    param([string] $Path,$File,[Diagnostics.Stopwatch] $Clock)
+    $handles=[Collections.Generic.List[IDisposable]]::new()
+    try {
+        $observed=Read-ClcHeldFile $Path $handles $File.length -NoCapture -Clock $Clock
+        if ($observed.sha256 -cne $File.sha256 -or $observed.stream.Length -ne $File.length) { Stop-ClcError Clc.ContentDrift }
+    } finally { foreach ($handle in $handles) { $handle.Dispose() } }
 }

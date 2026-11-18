@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "release-metadata",
-  "$comment": "Untrusted contract shape only. Strict UTF-8, <=4 MiB (validation 8 KiB/readiness 4 KiB), depth <=32, integer tokens, duplicate/case-duplicate properties, native SID/date validity and semantic inventory checks are enforced by the PowerShell parser; schemas cannot authenticate records.",
+  "$comment": "Strict UTF-8, duplicate and case-colliding keys, integer tokens, canonical inventories and hashes are also checked at runtime.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,6 +9,7 @@
     "schemaVersion",
     "recordKind",
     "applicationId",
+    "targetId",
     "releaseId",
     "source",
     "build",
@@ -20,14 +21,11 @@
   ],
   "properties": {
     "contractFamily": {
-      "const": "clc-file-iis-v1"
+      "const": "clc-iis-release"
     },
     "schemaVersion": {
       "type": "integer",
-      "enum": [
-        1,
-        2
-      ]
+      "const": 3
     },
     "recordKind": {
       "const": "release-metadata"
@@ -51,10 +49,7 @@
       "$ref": "#/$defs/runtime"
     },
     "changeKind": {
-      "enum": [
-        "files-only",
-        "application-deployment"
-      ]
+      "const": "files-only"
     },
     "validation": {
       "$ref": "#/$defs/validation"
@@ -63,8 +58,15 @@
       "type": "integer",
       "const": 1
     },
-    "hooks": {
-      "$ref": "#/$defs/hooks"
+    "targetId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/id"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "$defs": {
@@ -120,12 +122,12 @@
         "runId": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 9223372036854776000
+          "maximum": 9223372036854775807
         },
         "runAttempt": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 9223372036854776000
+          "maximum": 9223372036854775807
         },
         "job": {
           "$ref": "#/$defs/code"
@@ -181,10 +183,7 @@
       ],
       "properties": {
         "module": {
-          "enum": [
-            "Clc.Deployment",
-            "CLC.Deployment"
-          ]
+          "const": "Clc.Deployment"
         },
         "version": {
           "$ref": "#/$defs/version"
@@ -209,10 +208,7 @@
       ],
       "properties": {
         "framework": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 32,
-          "pattern": "^net[1-9][0-9]*\\.[0-9]+$"
+          "const": "net10.0"
         },
         "rid": {
           "const": "win-x64"
@@ -254,118 +250,6 @@
       "not": {
         "pattern": "(?:^|/)(?:\\.{1,2}|\\.[cC][lL][cC]-[^/]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*)?)(?:/|$)|\\.(?:/|$)"
       }
-    },
-    "hookPath": {
-      "type": "string",
-      "maxLength": 240,
-      "pattern": "^hooks/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$",
-      "not": {
-        "pattern": "(?:^|/)(?:\\.{1,2}|\\.[cC][lL][cC]-[^/]*|(?:[cC][oO][nN]|[pP][rR][nN]|[aA][uU][xX]|[nN][uU][lL]|[cC][oO][mM][1-9]|[lL][pP][tT][1-9])(?:\\.[^/]*)?)(?:/|$)|\\.(?:/|$)"
-      }
-    },
-    "hookEntryPoint": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/hookPath"
-        },
-        {
-          "pattern": "\\.ps1$"
-        }
-      ]
-    },
-    "hookStage": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "stage",
-        "entryPoint"
-      ],
-      "properties": {
-        "stage": {
-          "enum": [
-            "Preflight",
-            "BeforeStop",
-            "AfterStop",
-            "AfterStart"
-          ]
-        },
-        "entryPoint": {
-          "$ref": "#/$defs/hookEntryPoint"
-        }
-      }
-    },
-    "hooks": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "contractVersion",
-        "stages",
-        "planningEntryPoint"
-      ],
-      "properties": {
-        "contractVersion": {
-          "type": "integer",
-          "const": 1
-        },
-        "stages": {
-          "type": "array",
-          "maxItems": 4,
-          "items": {
-            "$ref": "#/$defs/hookStage"
-          }
-        },
-        "planningEntryPoint": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/hookEntryPoint"
-            }
-          ]
-        }
-      },
-      "$comment": "Runtime requires at least one declared entry point, unique lifecycle stages, and a planning entry point distinct from lifecycle entry points. Package verification is not hook execution authorization."
     }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "schemaVersion": {
-            "const": 1
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "changeKind": {
-            "const": "files-only"
-          },
-          "build": {
-            "properties": {
-              "dependencyLockSha256": {
-                "$ref": "#/$defs/hash"
-              }
-            }
-          },
-          "hooks": false
-        }
-      },
-      "else": {
-        "properties": {
-          "changeKind": {
-            "const": "application-deployment"
-          },
-          "builder": {
-            "properties": {
-              "module": {
-                "const": "Clc.Deployment"
-              }
-            }
-          }
-        }
-      }
-    }
-  ]
+  }
 }

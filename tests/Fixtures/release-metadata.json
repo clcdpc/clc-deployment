@@ -1,9 +1,9 @@
 {
-  "contractFamily": "clc-file-iis-v1",
-  "schemaVersion": 1,
+  "contractFamily": "clc-iis-release",
+  "schemaVersion": 3,
   "recordKind": "release-metadata",
   "applicationId": "probe",
-  "releaseId": "probe-example-001",
+  "releaseId": "v1-0-0-dev-1",
   "source": {
     "repository": "synthetic/probe",
     "commit": "0000000000000000000000000000000000000000"
@@ -34,5 +34,6 @@
     "contractVersion": 1,
     "entryPoint": "Probe.dll"
   },
-  "readinessContractVersion": 1
+  "readinessContractVersion": 1,
+  "targetId": "probe-dev"
 }

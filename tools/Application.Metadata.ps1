@@ -1,12 +1,12 @@
 Set-StrictMode -Version Latest; $ErrorActionPreference='Stop'
-if ($null -eq ('Clc.Probe.Metadata' -as [type])) {
+if ($null -eq ('Clc.Release.Metadata' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
-namespace Clc.Probe {
+namespace Clc.Release {
  public static class Metadata {
   public static Dictionary<string,string> Read(string path) {
    using(var file=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read)) {
@@ -36,4 +36,4 @@ namespace Clc.Probe {
 }
 '@
 }
-function Get-ProbeEmbeddedMetadata([string] $Path) { [Clc.Probe.Metadata]::Read($Path) }
+function Get-ClcEmbeddedMetadata([string] $Path) { [Clc.Release.Metadata]::Read($Path) }

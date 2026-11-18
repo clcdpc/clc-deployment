@@ -1,13 +1,13 @@
-BeforeAll { . "$PSScriptRoot/Support.ps1"; . "$PSScriptRoot/T2Support.ps1" }
+BeforeAll { . "$PSScriptRoot/Support.ps1" }
 Describe 'Strict readiness protocol and actual HTTP response processing' {
     BeforeEach {
         $ready=Get-Content -LiteralPath (Join-Path $script:FixtureRoot 'readiness.json') -Raw | ConvertFrom-Json -AsHashtable -DateKind String
         $manifest=@{applicationId=$ready.applicationId;releaseId=$ready.releaseId;source=@{commit=$ready.sourceCommit}}
         $configuration=@{runtimeEnvironment=$ready.runtimeEnvironment;revision=$ready.configurationRevision}
     }
-    It 'accepts only the exact approved release, source, environment and configuration identity' {
+    It 'accepts only the exact expected release, source, environment and configuration identity' {
         $bytes=[Text.Encoding]::UTF8.GetBytes(($ready | ConvertTo-Json -Compress))
-        Invoke-T2Private Test-ClcReadinessIdentity @($bytes,$manifest,$configuration) | Should -BeTrue
+        Invoke-TestPrivate Test-ClcReadinessIdentity @($bytes,$manifest,$configuration) | Should -BeTrue
     }
     It 'rejects incorrect <Field> in a generic HTTP 200 body' -ForEach @(
         @{Field='applicationId';Value='wrong'},@{Field='releaseId';Value='wrong'},@{Field='sourceCommit';Value=('f'*40)},
@@ -15,7 +15,7 @@ Describe 'Strict readiness protocol and actual HTTP response processing' {
         @{Field='readinessContractVersion';Value=2L}
     ) {
         $ready[$Field]=$Value
-        Invoke-T2Private Test-ClcReadinessIdentity @([Text.Encoding]::UTF8.GetBytes(($ready | ConvertTo-Json -Compress)),$manifest,$configuration) | Should -BeFalse
+        Invoke-TestPrivate Test-ClcReadinessIdentity @([Text.Encoding]::UTF8.GetBytes(($ready | ConvertTo-Json -Compress)),$manifest,$configuration) | Should -BeFalse
     }
     It 'rejects <Case> JSON' -ForEach @(@{Case='missing'},@{Case='extra'},@{Case='duplicate'},@{Case='malformed'},@{Case='oversized'},@{Case='html'}) {
         $json=$ready | ConvertTo-Json -Compress
@@ -27,7 +27,7 @@ Describe 'Strict readiness protocol and actual HTTP response processing' {
             oversized { $json=' '*4097 }
             html { $json='<html>OK</html>' }
         }
-        Invoke-T2Private Test-ClcReadinessIdentity @([Text.Encoding]::UTF8.GetBytes($json),$manifest,$configuration) | Should -BeFalse
+        Invoke-TestPrivate Test-ClcReadinessIdentity @([Text.Encoding]::UTF8.GetBytes($json),$manifest,$configuration) | Should -BeFalse
     }
     It 'uses a transport with certificate verification, no redirect, cookie, credentials or proxy forwarding' {
         $handler=[Clc.Lifecycle.Native]::ReadinessHandler()
@@ -68,7 +68,7 @@ Describe 'Strict readiness protocol and actual HTTP response processing' {
             $response.Headers.CacheControl=[Net.Http.Headers.CacheControlHeaderValue]::new(); $response.Headers.CacheControl.NoStore=$true
             $actual=[Clc.Lifecycle.Native]::HealthResponse($response,[Threading.CancellationToken]::None)
             $actual.Accepted | Should -BeTrue
-            Invoke-T2Private Test-ClcReadinessIdentity @($actual.Bytes,$manifest,$configuration) | Should -BeTrue
+            Invoke-TestPrivate Test-ClcReadinessIdentity @($actual.Bytes,$manifest,$configuration) | Should -BeTrue
         } finally { $response.Dispose() }
     }
 }

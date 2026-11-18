@@ -69,10 +69,10 @@ Describe 'Tag-authoritative consumer release chain' {
         foreach ($name in @('build','release','deploy')) {
             $text=Get-Content -LiteralPath (Join-Path $script:RepositoryRoot ('.github/workflows/application-'+$name+'.yml')) -Raw
             $text | Should -Match "'run_id','run_attempt'"
-            $text | Should -Not -Match 'runner-group|runnerGroup|inputs.automatic|vars\.'
+            $text | Should -Not -Match 'runner-group|runnerGroup|inputs.automatic'
         }
         $deployment=Get-Content -LiteralPath (Join-Path $script:RepositoryRoot '.github/workflows/application-deploy.yml') -Raw
-        $deployment | Should -Match 'runs-on: \$\{\{ fromJSON\(needs.admit.outputs.runner-labels\) \}\}'
+        $deployment | Should -Match 'runs-on: \$\{\{ fromJSON\(needs.route.outputs.runner-labels\) \}\}'
         $deployment | Should -Not -Match '(?m)^    runs-on:\r?\n      group:'
     }
 }

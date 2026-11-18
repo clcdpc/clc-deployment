@@ -8,7 +8,6 @@ Describe 'New-ClcRelease safe packaging' {
         $result = New-ClcRelease @publishArgs
         $inspection = Test-ClcRelease $result.archivePath
         $inspection.integrityVerified | Should -BeTrue
-        $inspection.authorizedForDeployment | Should -BeFalse
         $inspection.fileCount | Should -Be 4
         $inspection.archiveSha256 | Should -Be ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($publishArgs.OutputPath))).ToLowerInvariant())
         $inspection.inventorySha256 | Should -Be $result.inventorySha256
@@ -17,23 +16,12 @@ Describe 'New-ClcRelease safe packaging' {
         @(Get-ChildItem -LiteralPath (Split-Path $publishArgs.OutputPath) -Force).Count | Should -Be 1
         @(Get-ChildItem -LiteralPath $workspace -Recurse -Filter 'executed.marker').Count | Should -Be 0
     }
-    It 'retains the historical V1 builder identity without admitting it into V2 or new production' {
-        $package=New-ClcRelease @publishArgs
-        $entries=@(Get-TestZipEntries $package.archivePath)
-        $entry=$entries | Where-Object name -CEQ manifest.json
-        $manifest=[Text.Encoding]::UTF8.GetString($entry.bytes) | ConvertFrom-Json -AsHashtable
-        $manifest.builder.module='CLC.Deployment'
-        $entry.bytes=[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Depth 32 -Compress))
-        $archive=Join-Path $workspace 'historical-v1.zip';New-TestZip $archive $entries
-        (Test-ClcRelease $archive).integrityVerified | Should -BeTrue
-        Test-Json -Json ([Text.Encoding]::UTF8.GetString($entry.bytes)) -SchemaFile (Join-Path $script:RepositoryRoot 'schemas/release-manifest.schema.json') | Should -BeTrue
-        $manifest.schemaVersion=2L;$manifest.changeKind='application-deployment'
-        $entry.bytes=[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Depth 32 -Compress))
-        $archive=Join-Path $workspace 'incorrect-v2.zip';New-TestZip $archive $entries
-        {Test-ClcRelease $archive} | Should -Throw -ErrorId 'Clc.InvalidContract*'
-        $metadata=Get-TestMetadata;$metadata.builder.module='CLC.Deployment';Write-TestJson $publishArgs.MetadataPath $metadata
-        $publishArgs.OutputPath=Join-Path ([IO.Path]::GetDirectoryName($publishArgs.OutputPath)) 'new-v1.zip'
-        {New-ClcRelease @publishArgs} | Should -Throw -ErrorId 'Clc.InvalidContract*'
+    It 'rejects retired application package versions before creating output' -ForEach @(1,2) {
+        $metadata=Get-TestMetadata
+        $metadata.schemaVersion=$_
+        Write-TestJson $publishArgs.MetadataPath $metadata
+        { New-ClcRelease @publishArgs } | Should -Throw -ErrorId 'Clc.UnsupportedContract*'
+        [IO.File]::Exists($publishArgs.OutputPath) | Should -BeFalse
     }
     It 'generates identical bytes with different metadata order and source timestamps' {
         $first = New-ClcRelease @publishArgs

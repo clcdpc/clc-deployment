@@ -26,7 +26,6 @@ Describe 'Complete raw ZIP validation without extraction' {
         New-TestZip $archivePath $entries $Compression
         $inspection = Test-ClcRelease $archivePath
         $inspection.integrityVerified | Should -BeTrue
-        $inspection.authorizedForDeployment | Should -BeFalse
         $inspection.fileCount | Should -Be 4
     }
     It 'rejects malicious names <Name>' -ForEach @(
