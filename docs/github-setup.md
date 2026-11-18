@@ -1,17 +1,30 @@
-# GitHub release setup and trust boundaries
+# GitHub setup reference
 
-Follow the ten sections in the authoritative [Deployment Setup Guide](setup-guide.md). GitHub's Active repository-wide Restrict actors policy covers all workflows with authorized release developers and no event restrictions. Tag rulesets separately control creation and prevent update/deletion. Protect the integration branch; Production tags must be contained in its history. DEV tags may authorize an unmerged commit, including its executable workflows, release scripts, configuration and immutable shared-workflow pin. This intentionally trusts the authorized tag creator to release those bytes. CLC does not maintain an actor list or inspect PR approvals.
+Use [setup sections 2–7](setup-guide.md#2-restrict-github-actions) for the configuration checklist. This reference covers policy interactions and privileged runner boundaries.
 
-The [consumer workflow](examples/shared-conventional-build.yml) runs from the tag. Its package, publication and deployment jobs run sequentially through `needs`. A successful completed producer job qualifies during the same in-progress run. No default-branch `workflow_run` or manual release dispatch is needed. The application chooses one reviewed immutable upstream revision; the shared verifier binds platform caller identity and exact source/run/attempt/artifact/package facts to that tag.
+## Effective policies
 
-Tag-creation authorization and tag immutability need separate Active `v*` rulesets. Enable **Restrict creations** with deliberately scoped native bypass for designated release creators; an empty creation bypass list blocks matching releases. Separately enforce **Restrict updates** and **Restrict deletions** without routine creator bypass. A single combined ruleset's creator bypass also bypasses its update/deletion rules. Review all inherited organization rulesets, exclusions and effective permissions together: creators must satisfy every applicable creation restriction. Native **Restrict actors** remains responsible for workflow execution and does not replace tag-creation authorization. Follow [setup step 3](setup-guide.md#3-protect-release-tags); the checker leaves exact creator identity and effective-policy verification manual.
+Review repository, organization and enterprise [workflow execution policies](https://docs.github.com/en/actions/how-tos/administer/control-workflow-execution). **Restrict actors** controls workflow triggers; tag creation needs separate authority. Inspect insights/inherited scope in GitHub when APIs lack visibility; the [checker](github-setup-check.md) marks unverified facts CHECK MANUALLY.
 
-Require GitHub Release immutability separately from both tag rulesets. The application publisher verifies API Boolean `immutable=true` on existing, new and racing published Releases before reporting success. Mutable or malformed evidence fails without deleting/replacing assets, and dependent deployment is skipped. See [publication behavior](shared-release-orchestration.md#publication-and-deployment).
+For [tag rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets):
 
-Use `applicationId` to derive `<applicationId>-dev` and `<applicationId>-production` for the distinct target, environment, dedicated runner label, host enrollment authority and standing authority resources. Create environments with **Deployment branches and tags > No restriction**, without required reviewers, wait timers or additional deployment approval rules. Repository-scoped Windows x64 runners are preferred and need no organization group. Organization runners can use the same labels when granted repository access. Deployment uses labels only: `self-hosted`, `Windows`, `X64` and the derived identifier. No routing variables, activation flags or exact workflow allowlist is required.
+- **Restrict creations** admits only bypass actors. Empty bypass blocks matching tags; PR-only bypass cannot create them. Select release creators with **Always allow**.
+- Separate update/deletion rules: bypass applies to every rule in its ruleset.
+- Verify every applicable restriction, inherited rule, exclusion, repository permission and native team/role membership. CLC maintains no actor list.
 
-Keep ordinary PR/build/test jobs on isolated GitHub-hosted runners without privileged host credentials. Do not run arbitrary contributor code, `pull_request_target` checkouts or ordinary PR CI on deployment hosts. Native release actors can authorize executable tagged code; external GitHub controls and independently installed/protected host policy remain trust assumptions. Elevated deployment code and approved application validation/hooks are not sandboxed, and the deployment administrator cannot be contained by NTFS. Organization policies may further constrain runner access, but must permit the chosen tagged shared pin.
+[Release immutability](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) separately protects published assets; enabling it leaves existing mutable Releases unchanged. New/existing/racing publication requires actual API Boolean `immutable=true`. Missing/malformed/false evidence preserves the Release and blocks deployment, without automatic deletion/repair. See [publication](shared-release-orchestration.md#publication-and-deployment).
 
-Infrastructure independently installs/verifies the toolkit, enrolls the dedicated IIS target, completes the exact initial baseline and establishes standing authority once. Missing/revoked policy, channel/target mismatch, downgrade/order conflicts, unresolved attempts and readiness/integrity failures still refuse. Routine application tags cannot enroll a host, replace the toolkit, change protected configuration or authorize exceptional recovery. Generated-release recovery requires its independent exact approval. See [host enrollment](host-enrollment.md), [standing authorization](automated-deployments.md) and [recovery](deployment.md).
+## Privileged runners
 
-The optional [setup checker](github-setup-check.md) issues only bounded read-only requests and reports CONFIGURED, NEEDS CONFIGURATION or CHECK MANUALLY, with settings links for API visibility gaps. It is independent of release authorization and never gates deployment. Actual GitHub runner-policy enforcement, consumer acceptance and Windows Server 2022/IIS qualification remain **NOT RUN** by this task.
+| Runner setting | Requirement |
+| --- | --- |
+| Labels | `self-hosted`, `Windows`, `X64`, `<applicationId>-dev` or `<applicationId>-production` |
+| Repository runner | No group required |
+| Organization runner | Repository access; inherited exact-workflow allowlists admit chosen tagged shared pin |
+| Routine routing | No per-PR allowlist update or routing variable |
+
+Keep contributor PR CI/`pull_request_target` checkouts away from privileged hosts/credentials. Tag creators trust executable workflows/scripts/configuration/shared pins: DEV may be unmerged without PR approval; Production requires protected integration ancestry. Validators/hooks run elevated without sandboxing; independent approval against that administrator remains procedural.
+
+The single workflow qualifies its completed producer job (overall run may remain in progress), publishes, then deploys through success-dependent jobs. No default-branch `workflow_run` handoff, checker activation flag or manual dispatch is needed; see [workflow integration](verified-workflow-integration.md).
+
+Host [enrollment](host-enrollment.md), [baseline](deployment.md#first-application-deployment), [standing policy](automated-deployments.md) and exceptional recovery retain independent authority. GitHub configuration observations do not qualify an IIS host or consumer. Actual runner-policy and Windows/IIS acceptance remain **NOT RUN** by repository tests.

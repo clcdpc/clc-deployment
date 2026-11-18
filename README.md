@@ -1,46 +1,19 @@
 # CLC release and IIS deployment
 
-Clc.Deployment provides shared release verification, GitHub Actions orchestration and an independently installed ASP.NET Core/IIS deployment toolkit. Windows Server 2022, PowerShell 7, net10.0/win-x64/in-process hosting, one dedicated site/root application/pool and one worker remain the supported host model. It exports four commands: `New-ClcRelease`, `Test-ClcRelease`, `Invoke-ClcIisDeployment`, and `Restore-ClcIisDeployment`.
+Clc.Deployment provides shared GitHub release orchestration and an independently installed ASP.NET Core/IIS deployment toolkit. It supports Windows Server 2022, PowerShell 7, net10.0/win-x64/in-process hosting, one dedicated site/root application/pool and one worker. Its four exports are `New-ClcRelease`, `Test-ClcRelease`, `Invoke-ClcIisDeployment` and `Restore-ClcIisDeployment`.
 
-Each target owns `%ProgramData%\clc-<target-id>\`, with `Application`, `Config`, `Keys`, `Inbox`, optional `Logs`, and infrastructure-protected `Deployment` siblings. Bootstrap, immutable `Clc.Deployment` versions, the target's active policy, approvals, enrollment evidence, locks and recovery state all stay inside that target's `Deployment`. DEV and Production can pin different toolkit versions on the same server. There is no shared deployment installation, registry or enrollment lock. Native Windows known-folder resolution and authenticated target identity determine the only allowed namespace.
+**Generic setup starts here → [Deployment Setup Guide](docs/setup-guide.md#setup-roadmap).** Follow its ordered roadmap; it links each supporting procedure when needed.
 
-Deployment verifies the approved ZIP, validates the package and host, extracts to protected staging, stops and observes zero workers, verifies a backup, replaces managed files, starts, checks exact release readiness, and records success. New schema-2 packages perform the full cycle on repeats and can declare four separately authorized [application hooks](docs/application-hooks.md). Legacy schema-1 packages retain their tested healthy NoOp behavior. One exclusive OS file handle serializes the actual machine/pool; supported phase journals block unresolved attempts and never resume a partial copy.
+**Configuring SSRS Web? Start with [clcdpc/ssrs-web/docs/clc-deployment.md](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md).** That application runbook controls its setup and release workflow, referring to toolkit procedures as needed. Generic shared-workflow examples do not replace it.
 
-Infrastructure independently installs/pins the toolkit and Windows/.NET/IIS components and owns identities, IIS/TLS/ACL provisioning, protected exact-byte approvals, external configuration, persistent Data Protection keys, capacity and retention. Inspection and self-declared hashes never authorize execution. Deployment requires an enabled elevated administrator token; independent approval against that administrator is procedural and approved application validation is not sandboxed. Runtime remains a separate nonadministrator without effective application/control/toolkit write access.
+Every target owns `%ProgramData%\clc-<target-id>\`, including its protected `Deployment` bootstrap/toolkit/policy/approvals/state. DEV and Production can pin different toolkit versions on one host. Infrastructure owns accounts, components, IIS/TLS/ACLs, protected configuration/keys, toolkit installation and approvals. Applications own builds, configuration/readiness semantics and database/hook compatibility. Deployment replaces managed application files only.
 
-Applications own build/test qualification, configuration semantics and revisions, key compatibility, readiness, database compatibility and business services. The toolkit replaces only managed application files. Applications can implement SQL/DACPAC/Hangfire operations in verified, explicitly authorized hooks; the shared toolkit supplies lifecycle and evidence, with no database deployment or rollback engine.
+Exact-byte authority, physical-path/access checks, the machine/pool lock, durable journals, verified backups and expected-release readiness are mandatory. Validation/hooks run elevated without sandboxing; approval against the deployment administrator remains procedural.
 
-Applications validate their own `web.config` IIS semantics in CI. Shared packaging checks its exact inventoried bytes and bounded well-formed XML, with DTD/entity resolution disabled; authorized releases can change application-level IIS settings under independent infrastructure authorization. Existing qualified CI can package without a NuGet lock file, recording explicit absent lock evidence in V2; conventional shared builds retain locked restore.
+After replacement begins, failure retains recovery material without automatic restore/restart. Reboot may require manual recovery; no startup fence exists. File recovery never proves database safety. See [contracts](docs/contracts.md) and [recovery rules](docs/deployment.md#failure-behavior).
 
-An optional infrastructure-owned [standing deployment policy](docs/automated-deployments.md) admits independently verified tagged releases into exact approvals for the same engine. DEV and Production remain explicitly scoped; enrollment, initial baseline, toolkit changes and exceptional recovery retain independent authorization. The [shared workflows and consumer examples](docs/shared-release-orchestration.md) support conventional .NET applications and applications retaining their own CI.
+Maintainers: [testing](docs/testing.md), [releasing](docs/releasing.md), [orchestration](docs/shared-release-orchestration.md), [workflow trust](docs/verified-workflow-integration.md), [ASP.NET Core integration](docs/aspnetcore-integration.md), [application hooks](docs/application-hooks.md). The optional [GitHub diagnostic](docs/github-setup-check.md) reads settings only and grants no host authority.
 
-An unexpected OS reboot during physical replacement may leave mixed files and require manual recovery. Pending state does not prevent IIS activation after reboot or an external start; there is no startup interception or unattended activation fence. After replacement begins, failures attempt a bounded stop and retain recovery material. Recovery requires an explicit operator choice, compatible approved material and proven helper exit; file restoration never establishes database rollback safety.
+[Published releases](https://github.com/clcdpc/clc-deployment/releases) include format-3 [beta.4](https://github.com/clcdpc/clc-deployment/releases/tag/v0.1.0-beta.4). Publication does not approve installation/deployment. This repository and its toolkit/companion source use [MIT](LICENSE); predecessor `0.1.0-beta.2` artifacts remain AGPL-3.0-only.
 
-The repository, PowerShell toolkit and ASP.NET Core companion source are licensed under [MIT](LICENSE). See [Releases](https://github.com/clcdpc/clc-deployment/releases) for releases published from this clean-history repository. The previously published `0.1.0-beta.2` artifacts came from its predecessor repository and remain AGPL-3.0-only; they are not MIT-licensed builds. Publication does not approve installation or deployment.
-
-**Actual Windows Server 2022/IIS qualification remains NOT RUN.** Offline/synthetic tests and published artifacts do not establish independent service-identity, runtime/profile/access, TLS/key, storage/power-loss or consumer deployment acceptance. Each consumer must approve an exact package/toolkit version and retain its source/artifact pins and application-owned acceptance evidence.
-
-## Consumers and operators
-
-Start with the authoritative ten-section [CLC Deployment Setup Guide](docs/setup-guide.md) for a new application/target: configure native GitHub actor/tag controls and Release immutability, adopt the tag-driven configuration-v2 workflow, then prepare/install/enroll the host, complete an independently approved baseline, establish standing authority and verify acceptance. Routine operation is selecting a commit and creating/pushing its version tag. Canonical application publication requires API Boolean `immutable=true`; publication failure blocks dependent deployment.
-
-| Guide | Purpose |
-| --- | --- |
-| [Installation](docs/installation.md) | Authenticate, verify and install an exact toolkit distribution |
-| [Host enrollment](docs/host-enrollment.md) | Separately authorized infrastructure setup |
-| [GitHub setup](docs/github-setup.md) | Consumer workflow controls and privileged runner admission |
-| [Automated deployments](docs/automated-deployments.md) | Standing policy, verified workflow identity and consumer integration |
-| [ASP.NET Core integration](docs/aspnetcore-integration.md) | Application-side validator and readiness plumbing |
-| [Deployment and recovery](docs/deployment.md) | Commands, safeguards, failure boundaries and explicit recovery |
-| [IIS verification](docs/iis-verification.md) | Rollout prerequisites, seven practical checks and remaining unrun gates |
-
-## Maintainers
-
-| Guide | Purpose |
-| --- | --- |
-| [Contracts](docs/contracts.md) | Four commands, package/approval/configuration/state formats |
-| [Application hooks](docs/application-hooks.md) | Fixed stages, separate policy, planning and persistent-state recovery |
-| [Testing](docs/testing.md) | Pinned verification tools and coverage limits |
-| [Releasing](docs/releasing.md) | Shared versions, verified artifacts and protected tag publication |
-
-The optional [GitHub setup checker](docs/github-setup-check.md) reports GitHub configuration areas as CONFIGURED, NEEDS CONFIGURATION or CHECK MANUALLY. Its [small manual workflow example](docs/examples/check-github-setup.yml) runs on GitHub-hosted infrastructure. API visibility limits are explicit; it does not inspect hosts, analyze deployment workflows, require activation or authorize deployment.
+**Actual Windows Server 2022/IIS and independent-identity qualification remain NOT RUN.** Offline/synthetic tests and published artifacts do not establish real-host or consumer acceptance.

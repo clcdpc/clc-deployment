@@ -1,8 +1,14 @@
 # Public and persistent contracts
 
-The [schemas](../schemas) and `Private/Contracts.ps1` define exact fields/types/bounds. The current phase journal replaces the former per-file ownership/retirement protocol. No operational state is automatically migrated.
+[Schemas](../schemas) and [Contracts.ps1](../src/Clc.Deployment/Private/Contracts.ps1) define exact fields, types and bounds. This reference explains behavior and trust requirements. Unsupported legacy per-file/retirement journals refuse; operational state is never automatically migrated.
 
-Compatibility evidence is version-specific. Published MIT `v0.1.0-beta.3` points to [a3a94cd](https://github.com/clcdpc/clc-deployment/tree/a3a94cd26daa583d392f73e99e56872876a88467), with four exact-approval/file-only commands and journal2. The base for this change is [master at 7f814ef](https://github.com/clcdpc/clc-deployment/tree/7f814ef838abcfd12ade494c429918657598c35d), which additionally implements tag/standing admission. The formats below distinguish retained V1 behavior from newly introduced contracts. Offline regression fixtures test these supported shapes and paths; no published artifact, real host or consumer adoption is operationally qualified by those tests. The optional [GitHub setup check](github-setup-check.md) reads GitHub settings only and changes no deployment authority.
+| Fixed source | Compatibility evidence |
+| --- | --- |
+| [a3a94cd](https://github.com/clcdpc/clc-deployment/tree/a3a94cd26daa583d392f73e99e56872876a88467), MIT beta.3 | Four exact-approval/file-only commands, journal 2 |
+| [7f814ef](https://github.com/clcdpc/clc-deployment/tree/7f814ef838abcfd12ade494c429918657598c35d) | Retained tag/standing admission |
+| [557192e](https://github.com/clcdpc/clc-deployment/tree/557192eff5eea651d6f1a393eb3b196053a985e5), beta.4 | Target-local format-3 distribution and current contracts below |
+
+Offline fixtures prove supported shapes/paths, not published-artifact, real-host or consumer qualification. The optional [GitHub check](github-setup-check.md) reads settings without granting authority.
 
 ## Four commands
 
@@ -15,72 +21,146 @@ Invoke-ClcIisDeployment -TargetId <safe-id> -StandingAuthorizationId <safe-id> -
 Restore-ClcIisDeployment -TargetId <safe-id> -AttemptId <latest-guid> -Mode RestorePrevious|AcceptCandidate|RestoreEmpty -Reason <change-id> [-RecoveryApprovalId <safe-id>] [-PersistentStateApprovalId <safe-id>]
 ```
 
-These are the only exports. Paths use literal semantics; IDs match lowercase `[a-z0-9][a-z0-9-]{0,63}`. Reason is a nonsecret lowercase safe ID of at most 128 characters, required with AllowDowngrade and rejected otherwise. Restore requires a nonempty GUID. No credentials, inline commands, arbitrary hook-entry-point inputs, policy overrides, caller journal paths, approval objects or trust-bypass flags are accepted. Automated selection also accepts `-Operation`; `-ReleaseReference` aliases `-ReleaseTag` for protected branch references. Deploy is the default operation. ValidateOnly invokes only separately declared planning code, returns Planned, and does not publish current/readiness or mutate IIS.
+These are the only exports. Parameter rules:
 
-Test's tag-only set returns tag/releaseId/channel/releaseSequence/authorizedForDeployment=false without file or host access. Invoke's Automated set cannot combine with exact selection/downgrade flags. Restore's optional RecoveryApprovalId selects an independently authored schema-1 exact approval when the selected recovery release was automatically admitted. See the [automation contract](automated-deployments.md).
+- Paths are literal; IDs match lowercase `[a-z0-9][a-z0-9-]{0,63}`. Reasons are nonsecret lowercase safe IDs, maximum 128 characters. Invoke requires Reason with AllowDowngrade and rejects it otherwise; Restore requires Reason and a nonempty GUID.
+- Automated selection excludes exact-selection/downgrade flags. It accepts `-Operation`; `-ReleaseReference` aliases `-ReleaseTag` for protected branches. Deploy is default.
+- No credentials, inline commands, arbitrary hook entry points, policy overrides, caller journal paths, approval objects or trust-bypass flags.
 
 | Command | Result/effects |
 | --- | --- |
-| New | Published files/metadata -> deterministic inventoried ZIP. Returns contractFamily/packageContractVersion/releaseId/archivePath/archiveSha256/manifestSha256/inventorySha256/fileCount/totalBytes/builderVersion. No build/approval/payload execution |
-| Test | Full ZIP/manifest/file verification without extraction. Returns integrityVerified=true, authorizedForDeployment=false and application/release/source/hash/count/builder identity. Invalid input throws; inspection never authorizes Invoke |
-| Invoke | Protected authority, canonical lock, preflight and the versioned deployment lifecycle; V1 may return NoOp, V2 reruns the full cycle. ValidateOnly uses separate planning and returns Planned without publishing current/readiness. Same safe identity/toolkit/generation/pool/worker result fields |
-| Restore | Same trust/lock and latest attempt. Returns RestoredPrevious/AcceptedCandidate/RestoredEmpty, attemptId/recoverySequence/releaseId/executingToolkit/currentGeneration/observedPoolState/workerCount. Empty remains stopped with no ready current |
+| New | Deterministic inventoried ZIP and package/hash/count/builder identity; no build, approval or payload execution |
+| Test archive | Full ZIP/manifest/file verification without extraction; `integrityVerified=true`, `authorizedForDeployment=false`, release/source/hash/count/builder identity. Invalid input throws |
+| Test tag | Tag/releaseId/channel/releaseSequence, `authorizedForDeployment=false`; no file/host access |
+| Invoke | Protected authority, lock, preflight and lifecycle. V1 may return NoOp; V2 repeats the full cycle. Safe identity/toolkit/generation/pool/worker results |
+| ValidateOnly | Separate authorized planning code, Planned result; IIS unchanged; no current/readiness publication |
+| Restore | Latest attempt under the same trust/lock; RestoredPrevious/AcceptedCandidate/RestoredEmpty with attempt/recovery/release/toolkit/generation/pool/worker identity. Empty stays stopped without ready current |
 
-Errors terminate with stable `Clc.*` IDs and safe attempt/pool/worker/retained-path/operator-action information. No secret/private configuration hash/raw native output is returned. Partial work or failed persistence cannot return success.
+Errors terminate with stable `Clc.*` IDs and safe attempt/pool/worker/retained-path/operator-action facts. Secrets, private configuration hashes and raw native output are excluded. Partial work/persistence failure cannot return success.
 
 ## Format and bounds
 
-UTF-8 JSON rejects duplicate/case-ambiguous keys, unknown/missing fields, coercion, comments, nonintegral numbers, unsupported versions and trailing data. Required fields are nonnull except explicit nullable fields. IDs/hashes/GUIDs/source commits/timestamps are canonical. Shapes do not confer authority.
+Strict UTF-8 JSON rejects duplicate/case-ambiguous keys, unknown/missing fields, coercion, comments, nonintegral numbers, unsupported versions and trailing data. Required fields are nonnull unless explicitly nullable. IDs, hashes, GUIDs, commits and timestamps are canonical. Valid shape grants no authority.
 
-All host/package records retain `contractFamily=clc-file-iis-v1` and exact recordKind. Supported versions: metadata/manifest **1,2**; manual release approval **1**; generated approval **2,3**; standing-authorization and verified-release **1,2**; simplified journal **2,3**. Policy/target/current/backup/tag-binding remain **1**. V2 packages use `changeKind=application-deployment` and full-cycle repeats; optional hooks use hook contract 1 and a separate integrity inventory. V3 journals add hook intent/results and exact persistent-state recovery authority. Hook-policy and persistent-state-approval use schema 1; hook-result and source identity use contractVersion 1. V1 journals/per-file ownership records remain unsupported. Application validation/readiness and separate `clc-host-enrollment-v1`/1 are unchanged. No state is automatically migrated.
+| Record | Supported version |
+| --- | --- |
+| [Metadata](../schemas/release-metadata.schema.json) / [manifest](../schemas/release-manifest.schema.json) | 1, 2 |
+| [Release approval](../schemas/release-approval.schema.json) | Manual 1; generated 2, 3 |
+| [Standing authorization](../schemas/standing-authorization.schema.json) / [verified release](../schemas/verified-release.schema.json) | 1, 2; matching versions |
+| [Journal](../schemas/journal.schema.json) | 2 (V1), 3 (V2 hook/planning/recovery evidence); version 1 unsupported |
+| Policy, target, current, backup, tag binding | Schema 1 |
+| [Hook policy](../schemas/hook-policy.schema.json) / [persistent-state approval](../schemas/persistent-state-approval.schema.json) | Schema 1 |
+| [Hook result](../schemas/hook-result.schema.json) / [source identity](../schemas/source-identity.schema.json) | Contract 1 |
+| Application validation/readiness | Contract 1 |
+| Host enrollment | Separate `clc-host-enrollment-v1`, schema 1 |
 
-Records/manifest/metadata: 4 MiB; ZIP compressed/expanded: 1 GiB; entries: 20,000; individual file: 256 MiB; expansion: 100:1; relative/full paths: 240 characters. Enforce actual streamed lengths. Lock fails fast. Helpers: 30 seconds; stop/start: 60 each; readiness: 120 overall/5 per request/2-second poll; archive/stage/backup/replace: 300 each. Synchronous OS calls can return late, after which further effects/success refuse.
+Host/package records retain `contractFamily=clc-file-iis-v1` and exact `recordKind`; package V2 does not rename that family.
 
-Hook/context results are bounded to 8 KiB; hook execution has an independently protected 1–300 second bound and bounded helper termination. Raw hook diagnostics remain local and are not published by shared workflows.
+| Limit | Bound |
+| --- | --- |
+| Record/manifest/metadata | 4 MiB |
+| ZIP compressed/expanded; entries; file; expansion | 1 GiB; 20,000; 256 MiB; 100:1; actual streamed lengths enforced |
+| Relative/full path | 240 characters |
+| Lock / helpers / stop / start | Fail-fast / 30 s / 60 s / 60 s |
+| Readiness | 120 s overall, 5 s/request, 2 s polling |
+| Archive / stage / backup / replace | 300 s each |
+| Hook/context result; hook execution | 8 KiB; independently protected 1–300 s plus bounded helper termination |
+
+Late synchronous OS returns prevent further effects/success. Raw hook diagnostics stay local, outside shared workflow publication.
 
 ## Package and trusted CI digest
 
-V1 ZIPs contain only `manifest.json` and the complete `application/` tree, including safe web.config. Metadata identifies applicationId/releaseId, source repository/full commit, build workflow/run/attempt/job/sdk/dependency lock, builder module/version/source/distribution, runtime framework/rid/architecture/hostingModel/workerLimit, changeKind=files-only, fixed validation entryPoint/contractVersion and readinessContractVersion=1. Manifest adds ordinal-sorted `{path,length,sha256}` files and inventorySha256. V2 changes schema/changeKind and optionally adds verified `hooks/` assets; `manifest.files` and inventorySha256 remain application-only. `manifest.hooks.files`/inventorySha256 cover all hook/support files; archive, entry and aggregate bounds cover both trees. See [hook contracts](application-hooks.md).
+| Package | Contents and behavior |
+| --- | --- |
+| V1 | Only `manifest.json` and complete `application/`, including web.config; `changeKind=files-only`; healthy NoOp supported |
+| V2 | `changeKind=application-deployment`; full-cycle repeats; optional separately inventoried `hooks/` assets, hook contract 1 |
 
-V1 retains its mandatory `build.dependencyLockSha256` digest. In the new V2 metadata/manifest contract, that field remains required but may be explicit JSON `null` for independently qualified builds without a NuGet lock. Otherwise it is the lowercase SHA-256 of the actual project-adjacent (or source-root when no project is configured) `packages.lock.json` bytes. No placeholder, omitted field or alternative evidence is a lock digest. The conventional shared builder still requires the lock and uses `--locked-mode`. Prequalified CI owns build qualification: recording a lock's bytes does not claim that its restore used locked mode. Successful exact producer/source/artifact verification, package hashes and builder identity remain required in either case. This refines unpublished package V2; no V1 format, approval, readiness or journal version changes.
+`manifest.files`/`inventorySha256` cover application files only. V2 `manifest.hooks.files`/inventory cover all hook/support files. Archive/entry/aggregate bounds cover both trees. Metadata/manifest schemas define source, producer, builder, runtime, validation and readiness identities; see [hooks](application-hooks.md).
 
-Shared orchestration requires package `builder.sourceCommit` to equal the tagged consumer configuration's `orchestration.sharedRevision`. Both conventional and prequalified shared package creation reject a different `SharedSourceCommit` before build/package work; publication and admission independently verify the package builder pin after byte/inventory and source/producer checks. This adds no package field/version or signing requirement, and preserves existing builder-distribution verification and independently installed host-toolkit pins.
+### Dependency and builder identity
 
-Inventory SHA-256 covers UTF-8 `path + NUL + invariant-length + NUL + lowercase-hash + LF`, sorted ordinally, without BOM. Manifest digest covers exact UTF-8 bytes; final ZIP digest covers the entire archive. New returns the final SHA-256 for CI to publish with build provenance. The protected approval supplies deployment's trusted expected digest. Calculate/compare the downloaded ZIP once per invocation, never in file-copy loops.
+- V1 requires `build.dependencyLockSha256`. V2 keeps the field required but allows explicit JSON null for independently qualified builds without a NuGet lock.
+- Otherwise hash actual project-adjacent `packages.lock.json` bytes (source-root when no project is configured). Omitted/placeholder/alternative evidence is invalid.
+- The conventional builder requires the lock and `--locked-mode`. Prequalified CI owns build qualification; recording lock bytes does not prove locked restore.
+- Both paths require exact producer/source/artifact verification, package hashes and builder identity.
 
-Reject traversal/absolute/UNC/device/drive/ADS paths, backslashes, reserved DOS names, trailing dots/spaces, ambiguous Unicode/case, collisions, symlinks/reparse/special attributes, encryption, unsupported compression and bound violations. Inspect raw ZIP structure and full inventory before create-new safe extraction. Reject unexpected files/unrelated empty directories and verify staged hashes. Runtime cannot write staging.
+Shared packaging requires `builder.sourceCommit` equal to tagged `orchestration.sharedRevision`. Conventional/prequalified producers reject mismatched SharedSourceCommit before work; publication/admission recheck after byte/source/producer verification. Builder-distribution verification and independent host-toolkit pins remain separate; no new signing contract is implied.
 
-The exact `application/web.config` must exist, match the verified inventory and contain well-formed XML within the 4 MiB bound; DTD processing and external entity resolution are disabled. Applications own its IIS semantics, including handlers/modules, ANCM arguments, environment variables and logging, and should validate their expected configuration in CI. The toolkit never rewrites it. An authorized application release can introduce application-level IIS configuration changes. Source eligibility, release review, infrastructure host configuration and independent exact release authorization manage that trust; shared XML allowlists do not. Dedicated site/pool, host identity/configuration, canonical paths, runtime access restrictions, package/validator identity and exact-release readiness remain independently enforced. Exclude scripts/toolkit, operational configuration, development/test settings and keys/certificates. Application builds additionally own secret/content semantics.
+### Digest rules
+
+Inventory SHA-256 covers ordinal-sorted UTF-8 `path + NUL + invariant-length + NUL + lowercase-hash + LF`, without BOM. Manifest digest covers exact UTF-8 bytes; ZIP digest covers the entire archive. CI publishes New's digest/provenance; protected approval supplies the trusted deployment expectation. Compare ZIP once per invocation, outside copy loops.
+
+### Archive and application boundaries
+
+Reject:
+
+- Traversal, absolute/UNC/device/drive/ADS paths, backslashes, reserved DOS names, trailing dots/spaces, ambiguous Unicode/case and collisions.
+- Symlinks/reparse/special attributes, encryption, unsupported compression and bound violations.
+- Unexpected files/unrelated empty directories. Inspect raw ZIP/full inventory before create-new extraction; verify staged hashes and deny runtime staging writes.
+
+`application/web.config` must match inventory and parse as XML within 4 MiB, with DTD/external entities disabled. The toolkit never rewrites it. Application CI owns IIS semantics, including handlers/modules, ANCM arguments, environment and logging.
+
+Application-level IIS changes require source/release review, independent infrastructure host configuration and exact authorization. Dedicated-host/path/access/validator/readiness checks remain enforced. Exclude scripts/toolkit, operational configuration, development/test settings, keys and certificates; application builds own secret/content semantics.
 
 ## Existing protected authority and preflight
 
-Each target's `%ProgramData%\clc-<target-id>\Deployment\toolkit\policy\host-policy.json` keeps generation/machineIdentity/activeToolkit/targetCatalogRoot/approvalCatalogRoot/controlStateRoot/lockRoot/dotnetPath/appcmdPath/infrastructureOwnerSids/deploymentSids. Active toolkit pins exact version/source/distribution/module inventory/installed manifest. Infrastructure authenticates first import and installed Windows/.NET/IIS; no runtime-loader authentication framework is introduced.
+All policy/state is target-local beneath native `%ProgramData%\clc-<target-id>\Deployment`; no global catalog/lock exists.
 
-Target keeps targetId/applicationId/environmentName/runtimeEnvironment/siteName/applicationPoolName/applicationRoot/operationalConfigPath/dataProtectionRoot/artifactInboxRoot/runtimeIdentitySid/readinessUri. Application/configuration/key/inbox roots must equal the canonical Application, Config/application.json, Keys and Inbox siblings beneath the native ProgramData target root. Deployment remains protected beneath that same infrastructure-owned root. Roots are disjoint existing canonical local NTFS objects; mutable OS directories, aliases/reparse/hard links/named streams refuse. Configuration is an external protected regular file. Runtime is a distinct nonadministrator with effective protected-resource write isolation. Deployment requires its authorized SID and enabled elevated administrator token. Independent approval against that administrator is procedural.
+| Record/boundary | Requirement |
+| --- | --- |
+| [Host policy](../schemas/host-policy.schema.json) | Generation, machine, trusted directories/helpers/identities and exact active toolkit version/source/distribution/module inventory/manifest |
+| [Target](../schemas/target.schema.json) | Dedicated application/site/pool, identities/environment/readiness and canonical sibling Application, Config/application.json, Keys and Inbox roots |
+| Manual exact approval | Enabled protected authority; select only `<approvalId>.zip` from inbox; match ZIP/manifest/source/build/provenance |
+| Ordering | Downgrade/incomparable lineage needs AllowDowngrade/reason. Equal sequence with changed identity refuses except later admitted same-tag/source builds |
+| Identities | Admitted deployment SID plus enabled elevated Administrators token; distinct runtime nonadministrator with effective protected-write isolation. Independent approval against administrator remains procedural |
 
-Release approval keeps approvalId/targetId/enabled/applicationId/releaseId/sourceRepository/sourceCommit/lineageId/releaseSequence/releaseZipSha256/manifestSha256/provenance/authorization. Provenance binds workflowPath/runId/runAttempt/buildJob/artifactId/transportSha256; authorization binds authoritySid/reference/approvedUtc. Select only exact `<approvalId>.zip` from the target inbox and match approved ZIP/manifest/source/build facts. Downgrade/incomparable lineage requires AllowDowngrade/reason; same sequence with different artifact identity rejects except a later automatically admitted build of the same tag/source.
+Infrastructure authenticates first import and installed Windows/.NET/IIS. Roots must be existing, disjoint canonical local NTFS objects; mutable OS directories, aliases/reparse/hard links/named streams refuse. Configuration is an external protected regular file.
 
-Schema-2 approval adds admission.standingAuthorizationId/standingAuthorizationSha256/tag/verifiedReleaseSha256. Schema 3 adds sourceIdentity, binding the independently verified source class/integration branch/order. Routine execution requires the original exact enabled standing policy and cannot use AllowDowngrade. Only trusted installed admission code creates these records after checking policy scope, trusted workflow-supplied identity, exact package bytes, immutable tag/source binding and explicit ordering. Source/order kinds cannot be silently mixed. Snapshots do not bind a mutable branch name permanently to one commit. The [verified workflow contract](verified-workflow-integration.md) defines the separate GitHub trust boundary. Existing approvals, snapshots and backups remain readable. Standing authority alone cannot authorize exceptional recovery or executable hooks.
+### Generated approvals and source classes
 
-Source identity contract 1 classifies tags contained in master as `IntegrationTag`, explicitly enabled DEV tags outside master as `UnmergedDevTag`, and authorized master snapshots as `ProtectedBranch`. `sourcePolicy.allowUnmergedDevTags` remains a required boolean in schema-2 host standing policy. Consumer configuration version 2 admits unmerged DEV tags without a duplicate flag or master file-equality requirement. Creating and pushing a valid exact DEV tag authorizes the release without PR approval or PR-branch protection; master must remain protected. Hook policy must independently include `UnmergedDevTag` to execute its hooks. Production and other tag channels cannot use that class. Exact producer/artifact/package/builder and infrastructure checks remain required. Host package/approval/journal formats remain unchanged; only the consumer configuration contract advances to version 2.
+Only trusted installed admission code creates generated approvals after policy scope, workflow-authenticated identity, package bytes, immutable source binding and ordering checks. Schema 2 binds exact standing bytes/tag/evidence; schema 3 adds source identity. Direct retries still require the original enabled standing bytes. No AllowDowngrade, exceptional recovery or hooks are authorized by standing authority alone.
 
-Comprehensive preflight checks dedicated sole IIS root application/site/pool, physical root/runtime SID, max one worker, disabled overlap, x64 .NET/ANCM, environment, actual HTTPS binding and required path/access observations. Bounded actual-IIS physical-root checks include every application and non-root virtual directory, regardless of site/pool: any exact, ancestor, descendant or physical-identity overlap with the selected Application tree refuses. Native local observations reject unsafe aliases/network paths; supported IIS path tokens use trusted Windows/known-folder facts rather than caller environment. Other roots receive temporary read-only observations, no retained deployment handles or cross-application coordination. These checks repeat at lifecycle/effect and replacement-phase gates. Started with zero/one workers permits idle preflight. Backup/replacement requires Stopped/zero workers; ready success requires Started/exactly one worker. Inner copy operations check affected paths and current stopped state, without full host scans.
+| Source class (contract 1) | Scope |
+| --- | --- |
+| IntegrationTag | Tag contained in protected master history |
+| UnmergedDevTag | Explicitly enabled DEV outside master; never Production/other channels |
+| ProtectedBranch | Authorized integration-branch snapshot; branch name is not permanently bound to one commit |
 
-After live effects, the private bounded safety Stop may omit the foreign different-pool root scan to stop its still-bound selected pool. Held target/native machine/root identity, selected site/root/pool association, runtime SID and the sole selected-pool application remain mandatory. This exception cannot Start, affect another pool or admit deployment/recovery; all ordinary paths retain full isolation and unresolved-conflict refusal.
+Schema-2 standing policy requires `sourcePolicy.allowUnmergedDevTags`. Consumer configuration 2 admits unmerged DEV without another flag or master-file equality. An authorized exact tag needs no PR approval/branch protection; master stays protected. Hook policy must separately admit UnmergedDevTag. Producer/artifact/package/builder checks remain mandatory.
+
+Source/order kinds cannot silently mix. Existing approvals/snapshots/backups remain readable; [workflow trust](verified-workflow-integration.md) and [automation](automated-deployments.md) define admission details.
+
+### IIS and path gates
+
+- Verify sole site/root application/pool, physical root/runtime SID, one-worker maximum, no overlap rotation, x64 .NET/ANCM, environment, HTTPS binding and effective access.
+- Bounded IIS observations inspect **all** applications/non-root virtual directories, across sites/pools. Exact/ancestor/descendant/physical-identity overlaps with Application refuse, even when selected pool is stopped.
+- Reject uncertain aliases/network paths/unknown expansion. IIS `%SystemDrive%`, `%SystemRoot%`, `%windir%` use native facts; `%ProgramData%` uses the trusted known-folder resolver. Other-root handles are temporary; there is no cross-application coordination.
+- Repeat full checks at lifecycle/effect gates, after replacement inventory and between deletion/copy/directory retirement. Per-file effects check affected paths and Stopped/zero workers.
+
+| Pool observation | Permitted boundary |
+| --- | --- |
+| Started, zero/one workers | Idle preflight |
+| Stopped, zero workers | Backup/replacement |
+| Started, exactly one worker | Ready success |
+
+After live effects, private bounded safety Stop may omit only a foreign different-pool root scan. Held target/native machine/root identity, selected site/root/pool, runtime SID and sole selected-pool application remain mandatory. It cannot Start, affect another pool or admit replacement/recovery; ordinary paths refuse unresolved conflicts.
 
 ## Application-owned validation/configuration/readiness
 
-The fixed approved DLL receives `--validate-deployment --configuration-path <file> --data-protection-root <keys> --environment Production|Staging` through installed dotnet, with cleared environment and bounded output/time. Approved validation executes elevated without sandboxing. Strict response fields: validationContractVersion=1, valid, applicationId, releaseId, sourceCommit, runtimeEnvironment, configurationRevision, keyStoreCompatibilityId, errorCodes. `configurationRevision` uses the version-1 safe-code grammar with a 64-character maximum; `keyStoreCompatibilityId` uses that same grammar with the existing 128-character maximum.
+The fixed approved DLL receives `--validate-deployment --configuration-path <file> --data-protection-root <keys> --environment Production|Staging` through installed dotnet with cleared environment and bounded output/time. It executes **elevated without sandboxing**. [Validation schema](../schemas/application-validation.schema.json) defines exact response fields; configurationRevision/keyStoreCompatibilityId use safe-code grammar, maximum 64/128 characters respectively.
 
-Hold/hash configuration privately for the attempt; never copy/log it. Changed bytes under the same successful revision reject. A new revision requires restart even for identical release bytes. Candidate/previous validators must agree on current configuration/key compatibility. Mid-attempt drift aborts; key contents may evolve outside replacement.
+Configuration rules:
 
-For V1 only, an exact current release with unchanged configuration and host observations validates the approved installed inventory and application, then performs fresh readiness before recording NoOp. NoOp creates no staging directory, backup or application-file changes and preserves current.json bytes/generation while saving its completed journal/attempt snapshot. V2 always uses the full deployment cycle and reruns declared hooks. ValidateOnly preserves current bytes/generation and performs no readiness check; a successful trusted plan is recorded separately as Planned.
+- Hold/hash privately; never copy/log. Changed bytes under a successful unchanged revision reject; new revision requires restart even for identical release bytes.
+- Candidate/prior validators must agree on current configuration/key compatibility. Mid-attempt drift aborts; keys may evolve outside replacement.
+- V1 NoOp verifies live inventory, unchanged configuration/host, validation and fresh readiness. It saves journal/attempt without stage/backup/application/current changes; current generation stays unchanged.
+- V2 reruns full cycle/hooks. ValidateOnly preserves current/generation, performs no readiness and records successful trusted planning as Planned.
 
-Readiness is anonymous HTTPS GET `/health/ready`, normal TLS, no redirect/cookie/auth forwarding, JSON <=4 KiB, Cache-Control:no-store. Exact fields: readinessContractVersion=1, status=ready, applicationId, releaseId, sourceCommit, runtimeEnvironment, configurationRevision. Match every expected field; generic 200, stale/wrong identity, TLS failures and malformed/extra/private fields fail.
+Readiness uses anonymous HTTPS GET `/health/ready`, normal TLS, no redirects/cookies/auth forwarding, JSON ≤4 KiB and `Cache-Control:no-store`. Match every [readiness field](../schemas/readiness.schema.json), including expected release/source/environment/configuration. Generic 200, stale identity, TLS failure or malformed/extra/private fields fail.
 
 ## Canonical lock and phase state
 
-Canonical machine identity is the local nonzero/non-all-ones SMBIOS UUID matching enrollment. Match one actual ASCII IIS pool and uppercase its name. targetKey is SHA-256 of UTF-8 `machineIdentity + NUL + uppercase-pool`. Lock/state use that key inside the selected target's own Deployment/locks and Deployment/control directories. A different target has a separate installation and namespace; there is no global enrollment lock or catalog. One noninheritable FileShare.None handle stays with the mutator. Released handles after crashes never imply completion.
+Machine identity is the enrolled local nonzero/non-all-ones SMBIOS UUID. Uppercase the actual ASCII IIS pool name; targetKey is SHA-256 of UTF-8 `machineIdentity + NUL + uppercase-pool`. One noninheritable FileShare.None handle remains with the mutator in target-local locks. Crash release never proves completion.
 
 ```text
 controlStateRoot/<targetKey>/
@@ -93,18 +173,48 @@ controlStateRoot/<targetKey>/
   releases/<approvalId>.json       # exact approval-pinned manifest
 ```
 
-Journal records attempt/target/root snapshots, executing toolkit/policy, candidate/previous release/configuration, initial pool/empty baseline, phase/outcome, sticky live intent, coarse intent/observation, nativeCall, verified backup, optional recovery choice/sequence/reason, prospective published generation, timestamps and safe failure. Intent operations: Stage/Validate/Stop/Backup/Replace/Start/CheckReady/PublishCurrent/Complete; V3 also supports Hook. Phases: Prepared/Mutating/RecoveryRequired/Completed. V3 records possible external mutation before hook launch, per-stage intent/safe result, separate planning and persistent-state recovery approval ID/hash. A hook's false mutation result never clears uncertainty after failure. Any unresolved phase blocks ordinary Invoke. No per-file path/ownership log.
+| State | Invariant |
+| --- | --- |
+| [Journal](../schemas/journal.schema.json) | Prepared/Mutating/RecoveryRequired/Completed; durable intent before effects; unresolved phases block Invoke. No per-file ownership log |
+| V3 hook evidence | Intent/possible external mutation before launch, safe results, separate planning and exact persistent-state recovery approval. False mutation result never clears failure uncertainty |
+| Native launch | Intent/Started/Exited, exact process ID/creation time/exit. Recovery must prove that helper exited; unknown identity refuses, without reboot inference/override |
+| [Current](../schemas/current.schema.json) | Generation/release/toolkit/configuration/host and completed readiness identity; historical readiness, never present health |
+| [Backup index](../schemas/backup-index.schema.json) | Exact prior identity/inventory; verify bytes before recording and recovery. Empty means no files |
 
-Native launch records retain callId/operation/Intent|Started|Exited/processId/exact creationUtc/exitCode. Prove the exact helper exited before recovery. Unknown launch identity refuses, with no reboot inference/quiescence override.
+Journal intents are Stage/Validate/Stop/Backup/Replace/Start/CheckReady/PublishCurrent/Complete; V3 also Hook. Every attempt records executing toolkit/policy identity. Upgrades/recovery use approval-pinned retained manifests and selected backup, without historical ZIP verification/unrelated history scans.
 
-Current retains generation/target/root/attempt/recoverySequence, approval/release, executingToolkit, private validated configuration, stable host digest, readiness and completedUtc. It records last readiness, never present health. NoOp freshly verifies full live inventory, unchanged config/host and expected-release readiness without rewriting application/current.
+State writes use same-directory temporary → flush → rename → reopen/verify. Unknown leftover temporaries block admission. Success order:
 
-Backup index retains attemptId/targetKey/priorEmpty/priorApprovalId/priorManifestSha256/files/inventorySha256. Verify backup bytes before recording verified and before recovery. Empty means no files. Ordinary upgrades/recovery consume the approval-pinned retained manifest and selected backup, without historical ZIP verification or unrelated history scans.
+1. Readiness/final hashes.
+2. Prospective generation intent, then current.
+3. Matching Completed journal and create-new terminal snapshot.
+4. Final authority observation.
 
-State writes create a same-directory temporary, flush, rename and reopen/verify. Leftover unknown temporary files block admission. Success order: readiness/final hashes -> prospective generation intent -> current -> matching Completed journal/create-new terminal snapshot -> final authority observation. Failures retain evidence. Recovery retains a before-recovery snapshot. RestoreEmpty preserves matching uncommitted current before removal; interrupted retirement can require manual maintenance.
+Failures retain evidence. Recovery saves before-recovery state; RestoreEmpty preserves matching uncommitted current before removal. Interrupted retirement may require maintenance. **Reboot during replacement may require manual recovery:** pending state does not prevent WAS activation; no startup interception/transaction engine exists. See [recovery](deployment.md#operator-procedure).
 
-**An unexpected OS reboot during physical replacement may require manual recovery.** Pending state does not prevent WAS activation. No startup interception or filesystem transaction engine is implemented. [Deployment and recovery](deployment.md) defines failure behavior.
+Enrollment remains outside the module: Get/Plan read only; Apply needs exact machine/config/bootstrap/toolkit/operation authority. It provisions dedicated directories/ACLs/stopped IIS settings only. Accounts/secrets/certificates/trust/components stay external. Cutover needs Stopped/zero workers and verified approved original backup; missing records with prior evidence require reconciliation. Follow [enrollment](host-enrollment.md).
 
-Infrastructure Get/Plan stay read-only; Apply retains the canonical target-local enrollment and exact independent machine/config/bootstrap/toolkit/operation authority. Only dedicated directories/ACLs/stopped IIS settings may be provisioned. Accounts/secrets/certificates/trust/components stay external. Cutover requires Stopped/zero workers and verified independently approved original backup. Missing records with prior resources/locks/state require reconciliation. See [enrollment](host-enrollment.md).
+## Toolkit distribution reference
 
-New toolkit distributions use format 3 and exact Clc.Deployment names. Historical format-1/2 archive names/inventories remain unchanged and inspectable; they do not initialize this target-local runtime. Published V1 application packages retain builder.module=CLC.Deployment acceptance while new producers emit Clc.Deployment; V2 requires Clc.Deployment. No operational state or policy is automatically migrated. The independent source behavior baseline for this refactor is [b0ce6f3](https://github.com/clcdpc/clc-deployment/tree/b0ce6f377cfef371fa60d570e87f229bd809a528).
+Format 3 contains exactly `Clc.Deployment/`, `source.commit` (40 lowercase ASCII bytes, no newline), `distribution.json` and eight allowlisted infrastructure files from `Get-DistInfrastructureNames` under `tools/`. Tools remain outside module exports/application ZIPs. Policy, approvals, targets, configuration, keys, credentials and state are excluded.
+
+| Distribution identity | Meaning |
+| --- | --- |
+| Format/source/version | `clc-toolkit-distribution`/3, exact committed HEAD/full shared version |
+| Module inventory | Complete module-relative path/length/hash entries and digest; activeToolkit.inventorySha256 |
+| Infrastructure inventory | Formats 2/3: exact allowlist checked against committed source |
+| Source inventory | Complete committed repository; source is not bundled executable dependencies |
+| Toolchain/reproducibility | Actual PowerShell/.NET/Git; fixed stored entries/timestamps/ordinal sorting |
+
+Use the [inventory algorithm](#digest-rules). Bootstrap authorization includes `Clc.Deployment/`-prefixed module entries plus infrastructure files. Archive digest cannot appear inside itself; separate builder identity remains an unauthenticated integrity claim.
+
+Build/verification rules:
+
+- `New-ToolkitDistribution.ps1` requires full lowercase HEAD, clean tracked/untracked tree and complete Git archive. Check committed blob bytes, not CRLF-converted worktree; ReleaseVersion stamps only output manifest. Output must be new.
+- Same source/version/toolchain must reproduce identical bytes; toolchain changes may change ZIPs. Rebuilt application artifacts are not retained originals.
+- Independently reviewed verifier checks bounds, exact entries/inventories/source/version/metadata without importing distribution code. Installed checks reject extra files/directories, changed bytes, reparse/alias/hard links, streams and unknown/case-sensitive directory mode. Deployment repeats policy/effective-access checks.
+- Extractor holds original archive against write/delete through bounded verification/create-new extraction/retention; imports nothing, returns `activated=false`. Failed extraction remains evidence; no in-place repair. Acquisition/import/activation require independent trust; follow [installation](installation.md).
+
+Historical format-1/2 `CLC.Deployment` archives remain inspectable but cannot initialize target-local runtime. V1 packages retain historical builder.module acceptance; new producers/V2 use Clc.Deployment. Fixed refactor baseline: [b0ce6f3](https://github.com/clcdpc/clc-deployment/tree/b0ce6f377cfef371fa60d570e87f229bd809a528).
+
+[Testing](testing.md), [releasing](releasing.md), [dependency pins](../tools/dependencies.lock.json) and [SDK pin](../tools/probe-sdk.lock.json) define evidence. Hosted artifacts retain identical builds, installed checks, probe releases, negatives and candidate-evidence.json. Producer/adjacent metadata never authorizes installation or qualifies IIS.

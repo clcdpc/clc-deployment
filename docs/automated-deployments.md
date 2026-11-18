@@ -1,57 +1,128 @@
-# Standing authorization for shared releases
+# Standing authorization and routine deployment
 
-The authenticated release channel derives the exact target ID before privileged toolkit lookup. Native Windows known-folder resolution selects `%ProgramData%\clc-<target-id>\Deployment\toolkit\policy\host-policy.json`. That protected target-local policy supplies the sole active runtime pin; its exact distribution, source, installed inventory and manifest path are verified before import. DEV and Production have separate approvals, standing policy, locks and state and can run different runtime toolkit versions. Build-time shared tooling remains independently pinned. Artifact-only beta/RC tags return before any host lookup; no workflow input, artifact path or environment variable can select a deployment root.
+Prerequisite: [verified installed toolkit](installation.md#verification-and-activation) and [successful independently approved baseline](deployment.md#deploy-and-verify-the-baseline). Standing authority excludes enrollment, baseline/cutover, toolkit changes, downgrades and exceptional recovery. Build-time shared pins remain separate from the active host-toolkit pin. **Next:** return to [setup section 9](setup-guide.md#9-verify-the-setup) for separately authorized IIS acceptance, then routine operation.
 
-Infrastructure may enable routine releases for one established target under a protected standing policy. The shared [GitHub workflows](shared-release-orchestration.md) independently verify source eligibility, producer run/job/attempt, artifact ownership and downloaded bytes. The installed toolkit then creates an exact approval under the canonical machine/pool lock and uses the existing IIS engine. The tag is the release decision; host standing authority independently authorizes target execution. Publication must succeed before the dependent deployment job starts.
+**The schema-2 example below is for compatible shared-workflow consumers** using `.clc/release.json` and `clc-package-*`. SSRS Web retains `.github/workflows/release.yml`, `ssrs-web-release-<run>-<attempt>` and application-owned verification: schema-1 verified release requires matching schema-1 standing authorization ([fixed adapter](https://github.com/clcdpc/ssrs-web/blob/dddb72c1bafc58db1c8f1ade301a600a269a46bd/scripts/release/AutomaticDeployment.Adapter.ps1)). Follow its [authorization/deployment guide](https://github.com/clcdpc/ssrs-web/blob/master/docs/clc-deployment.md); no schema-2 migration is required.
 
-The four exports remain unchanged. Existing exact manual approvals need no standing policy. GitHub API access stays outside the installed module; no signing service or application-bundled engine is introduced. See the [host integration contract](verified-workflow-integration.md), [GitHub prerequisites](github-setup.md) and [deployment/recovery rules](deployment.md).
+## Configure standing authorization
 
-## Independent infrastructure setup
+1. **Infrastructure workstation:** collect inputs from protected target/host policy, successful baseline approval and authenticated application `.clc/release.json`/workflow:
 
-Install and pin an independently authenticated compatible toolkit, enroll the dedicated target, and complete a successful independently approved baseline. Infrastructure separately writes `approvalCatalogRoot/standing/<standingAuthorizationId>.json`, preserving protected ownership, structural ACLs and effective runtime isolation. Deployment never creates or enables that policy. The elevated deployment administrator remains procedurally trusted; NTFS and hashes do not contain that account.
+   | Input | Value |
+   | --- | --- |
+   | Scope | Exact application/target/environment/repository; baseline `lineageId` |
+   | Producer | Exact workflow path and logical `buildJob`, not optional REST display name |
+   | Source policy | `integrationBranch=master`; DEV `allowUnmergedDevTags=true`; shared routine targets `allowSnapshots=false` |
 
-Use distinct DEV and Production targets, environments and policies. Standing authority cannot enroll a host, establish the first baseline/cutover, change the toolkit, authorize downgrades or authorize exceptional recovery. See the [standing schema](../schemas/standing-authorization.schema.json). Schema 1 retains its existing tagged DEV/production scope. New schema 2 adds the exact `sourcePolicy` object:
+2. Prepare a [schema-2 candidate](../schemas/standing-authorization.schema.json), matching current shared evidence. Replace synthetic repository/SID/reference/time and any differing target/producer/lineage values below. Keep disabled pending independent approval:
 
 ```json
-"sourcePolicy": {
-  "integrationBranch": "main",
-  "allowUnmergedDevTags": true,
-  "allowSnapshots": false
+{
+  "contractFamily": "clc-file-iis-v1",
+  "schemaVersion": 2,
+  "recordKind": "standing-authorization",
+  "standingAuthorizationId": "example-app-dev",
+  "enabled": false,
+  "targetId": "example-app-dev",
+  "applicationId": "example-app",
+  "environmentName": "DEV",
+  "channel": "DEV",
+  "sourceRepository": "EXAMPLE-OWNER/example-app",
+  "buildWorkflowPath": ".github/workflows/build.yml",
+  "buildJob": "package",
+  "lineageId": "example-app-dev",
+  "authorization": {
+    "authoritySid": "S-1-5-21-1-2-3-1002",
+    "reference": "replace-with-approved-change",
+    "approvedUtc": "2026-11-18T15:00:00Z"
+  },
+  "sourcePolicy": {
+    "integrationBranch": "master",
+    "allowUnmergedDevTags": true,
+    "allowSnapshots": false
+  }
 }
 ```
 
-Only DEV and Production are deployment channels; there is no separate Test release channel. Environment and host names, including names containing "test", do not imply a release channel. Unknown source-policy fields are rejected.
+3. **Independent reviewer:** compare candidate with baseline/target/producer/host-policy evidence. Use an admitted infrastructure SID distinct from deployment and the actual approval reference/time. Approve final bytes and enable. Hooks separately require [hook policy](application-hooks.md), including UnmergedDevTag scope for unmerged DEV.
+4. **On the intended host, infrastructure process:** create/protect the `standing` subdirectory if absent and install the exact approved record at:
 
-The policy still binds application, target, environment, channel, repository, producer workflow/job, lineage and independent infrastructure authority. A schema-2 policy requires schema-2 verified evidence; legacy evidence cannot omit the new source checks. Executable hooks require their own separately protected authorization described in [contracts](contracts.md); neither these source flags nor a valid ZIP hash enables hooks.
+```text
+%ProgramData%\clc-<target-id>\Deployment\toolkit\policy\approvals\standing\<standingAuthorizationId>.json
+```
 
-## Supported source and ordering rules
+Apply [ownership/ancestor protection](host-enrollment.md#protect-the-handoff-and-configuration), effective runtime isolation and no direct deployment-SID write ACE. The toolkit never creates/enables standing policy; approval against the elevated administrator remains procedural.
 
-| Source | Classification and admission |
+5. **Verify locally:** validate final JSON with `Test-Json -Json (Get-Content -LiteralPath $standingPath -Raw) -SchemaFile $standingSchema`, where `$standingSchema` is the reviewed schema above. Then, in a fresh elevated admitted deployment process importing the exact active manifest, use this infrastructure-only read of the installed protected record:
+
+```powershell
+# setup-example: standing-verification
+& (Get-Module Clc.Deployment) {
+    param($TargetId, $StandingId)
+    $context = $null
+    try {
+        $context = Open-ClcTrustedContext -TargetId $TargetId
+        $target = (Read-ClcProtectedTarget $context $TargetId).record
+        $record = (Read-ClcStandingAuthorization $context $target $StandingId).record
+        $record | Select-Object standingAuthorizationId,targetId,enabled,channel,
+            sourceRepository,buildWorkflowPath,buildJob,lineageId,sourcePolicy
+    } finally { Close-ClcTrustedContext $context }
+} $targetId $standingAuthorizationId
+```
+
+Compare returned enabled scope with baseline/tagged producer configuration. This read does not verify GitHub or authorize a deployment; exercise the next eligible tag only under separately authorized consumer scope.
+
+Repeat independently for Production: its target/standing ID, exact `environmentName`, `channel=Production`, baseline lineage and `allowUnmergedDevTags=false`. **Next:** [setup verification](setup-guide.md#9-verify-the-setup).
+
+## Routine operation and revocation
+
+An authorized developer [pushes an eligible tag](setup-guide.md#10-routine-operation). The workflow qualifies its producer, publishes immutable bytes, then invokes installed admission. Authenticated channel selects target/environment/runner labels; native ProgramData/protected policy select the active toolkit. Beta/RC return before host lookup.
+
+The current explicit engine invocation is:
+
+```powershell
+Invoke-ClcIisDeployment -TargetId $targetId -StandingAuthorizationId $standingAuthorizationId `
+    -ReleaseTag $tag -ArchivePath $inboxZip -VerifiedReleasePath $verifiedIdentity
+```
+
+The trusted workflow supplies exact ZIP and authenticated release identity; hand-written JSON grants no authority. Routine tags need no further human approval. Verify [result/readiness/inventory/completed state](deployment.md#deploy-and-verify-the-baseline). V2 repeats rerun full cycle/hooks; V1 retains healthy NoOp.
+
+To revoke, infrastructure:
+
+1. Fences deployment/policy writers and preserves exact old policy/evidence.
+2. Independently authorizes and disables, removes or byte-changes the protected record. Generated approvals, including direct `-ReleaseApprovalId` retries, are revoked.
+3. Rechecks disabled/missing/changed bytes; separately authorizes a negative exercise proving refusal before mutation.
+
+Preserve attempts/intents/release evidence. Generated-release recovery needs independent matching schema-1 RecoveryApprovalId, compatible files/configuration and exited helpers. Possible hook mutation also needs persistent-state approval; follow [recovery](deployment.md#explicit-recovery).
+
+## Source, ordering and interruption reference
+
+| Reference | Eligibility |
 | --- | --- |
-| `vMAJOR.MINOR.PATCH-dev.N` | DEV; `IntegrationTag` in protected master history, or explicitly enabled `UnmergedDevTag` outside it |
-| `vMAJOR.MINOR.PATCH-beta.N`, `-rc.N` | ArtifactOnly; package/publication without automatic IIS admission |
-| `vMAJOR.MINOR.PATCH` | Production; protected integration ancestry and separate production standing authority |
-| `vMAJOR.MINOR.PATCH-test.N` | Unsupported; rejected by release-tag validation |
-| `refs/heads/<integrationBranch>` | DEV snapshot; explicit snapshot policy, verified protected-branch source and authenticated producer-run ordering |
+| `vMAJOR.MINOR.PATCH-dev.N` | DEV: `IntegrationTag` in protected master history or explicitly enabled `UnmergedDevTag` outside it |
+| `vMAJOR.MINOR.PATCH` | Production: protected integration ancestry and separate Production standing authority |
+| `-beta.N`, `-rc.N` | ArtifactOnly: package/publication, no privileged host handoff |
+| `-test.N` | Unsupported |
+| `refs/heads/<integrationBranch>` | Retained installed DEV snapshot support only when explicitly enabled; shared routine entry point accepts tags only |
 
-Creating and pushing a valid DEV version tag authorizes that exact release through GitHub native repository-wide Restrict actors policy and tag creation controls. With `allowUnmergedDevTags=true` in host standing policy, an exact same-repository commit outside master needs no associated PR or formal GitHub review. A PR may be draft, closed or advanced beyond the tagged commit, and its branch may be unprotected or deleted. Master (the actual configured `integrationBranch`, such as `main`) must remain protected. The tagged source may change workflows, scripts, configuration and immutable shared pins before merging. The shared verifier checks the current tag object and full source commit, exact successful producer and artifact/package identity, then repeats eligibility after privileged queueing and download. A qualifying tag push can proceed unattended; no additional manual release approval gate is needed. Independent host and hook authorization still apply.
+Unmerged DEV needs no PR metadata/approval, PR-head or master-file equality; branch status/protection is irrelevant. Authorized tag creators select executable workflow/script/configuration/shared pins. Native actor/tag controls and protected master remain required; exact source/producer/artifact checks repeat after queueing/download. See [workflow trust](verified-workflow-integration.md).
 
-SemVer ordering uses the existing bounded numeric tag sequence; `Test-ClcRelease -ReleaseTag` exposes classification without authority. Snapshots use authenticated producer `runId`, with release ID `dev-<runId>-<first12SourceCommit>`. Their sequence is separate from SemVer: switching ordering kind within an automated lineage refuses. A separately approved manual baseline is required to establish another ordering scheme. Protect integration history against force pushes/deletion; run ordering is not a Git history rollback detector.
+| Ordering | Rule |
+| --- | --- |
+| Tags | Bounded numeric sequence from `Test-ClcRelease -ReleaseTag` |
+| Snapshots | Authenticated runId; `dev-<runId>-<first12SourceCommit>` |
+| Switching kinds | Separate manual baseline; never mix within automated lineage |
+| History/channels | Protect integration history; run order cannot detect rollback. Only DEV/Production deploy; “test” names add no channel |
 
-The shared routine entry point accepts version tags only; it does not trigger branch snapshots or manual dispatch. Installed snapshot evidence and recovery remain supported for existing integrations. Beta/RC use workflow-only `ArtifactOnlyTag` evidence and package verification; they never produce a host verified-release handoff or request a privileged runner. Consumer application publication requires Boolean `immutable=true` on the canonical GitHub Release before dependent deployment can proceed.
+Later runs/attempts may admit rebuilt same-tag/source bytes; same-attempt changed bytes, moved tags and older builds refuse. Same-run UnmergedDevTag → integrated admission requires identical reference/source/release/provenance/ZIP/manifest. Immutable canonical assets cannot be replaced: conflicting publication requires a new tag.
 
-A later run, or later attempt of the same run, can rebuild the same immutable tag/source with new package bytes. Changed bytes for the same run/attempt, moved tags and older builds refuse. A fresh observation that an `UnmergedDevTag` source is now integrated into master can be admitted for the same run only when the exact source/reference/release ID, full provenance, ZIP and manifest bytes match. The workflow/configuration and shared pin are authenticated at the tagged revision; there is no equality requirement with current master files. No historical policy registry is maintained.
+| Matching policy/evidence | Generated approval |
+| --- | --- |
+| Schema 2 | Schema 3, including source identity |
+| Schema 1 (including SSRS Web) | Schema 2 |
 
-Those are installed-host ordering rules, not permission to replace a canonical GitHub archive. Shared publication preserves only byte-identical immutable Releases; rebuilt bytes conflicting with an existing published asset fail publication and block its dependent deployment. Select a new valid version tag for a new canonical release.
+Both bind exact standing bytes and target/source/build/artifact/package. Equivalent evidence formatting preserves first-admitted evidence. Tag/source bindings are immutable per target/lineage; snapshots do not permanently bind branch names. No historical policy registry exists.
 
-## Admission, interruption and revocation
+Admission requires clean baseline under the machine/pool lock. Durable `standing/<targetId>.pending` intent precedes catalog/inbox/approval effects; interruption requires independent reconciliation. The lifecycle journal then blocks unresolved attempts. Retain generated approvals/journals for independent recovery; file recovery proves no database rollback safety.
 
-Schema-2 evidence produces a schema-3 exact approval containing the verified source identity. Existing schema-1 evidence/policy still produces the legacy schema-2 approval. All generated approvals bind exact standing-policy bytes, target/source/build/artifact/package identity and retained evidence. Equivalent JSON formatting preserves the first admitted evidence. Tag/source bindings are immutable per target/lineage; snapshots do not bind a mutable branch name to one commit.
-
-A durable `standing/<targetId>.pending` intent precedes approval/catalog/inbox effects. Interrupted admission retains that intent and blocks ordinary deployment until independent reconciliation. After admission, the existing lifecycle journal blocks unresolved attempts. Never delete an intent, lock or journal to retry.
-
-Package contract 2 uses the full deployment cycle on every routine deployment, including identical releases: applicable hooks rerun and IIS stops/starts. Legacy package contract 1 retains its tested healthy NoOp behavior in the same engine. Shared reusable workflows require package contract 2. Hooks own their idempotency; external mutation uncertainty remains sticky and requires explicit reconciliation or recovery.
-
-Disabling, removing or byte-changing standing policy revokes its generated approvals, including direct `-ReleaseApprovalId` retries. Fence policy changes against active processes holding protected handles. Retain prior approvals, packages, manifests and attempts; policy replacement does not rewrite history.
-
-Generated approvals never authorize exceptional recovery. Recovery of a selected generated release requires a matching independent schema-1 `RecoveryApprovalId`, even after standing revocation. It also requires compatible configuration, approved retained bytes and proven helper quiescence. File recovery never establishes database rollback safety. Actual Windows Server 2022/IIS, independent-identity enforcement, runner admission and consumer adoption remain **NOT RUN**.
+**Actual Windows Server 2022/IIS, runner admission and independent-identity qualification remain NOT RUN.** Follow [IIS verification](iis-verification.md).

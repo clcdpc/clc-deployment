@@ -1,23 +1,31 @@
 # IIS verification
 
-The optional [GitHub setup check](github-setup-check.md) reads GitHub settings only. Host observations remain separately scoped under enrollment, deployment preflight and this deployment/recovery procedure.
+Enter from [setup section 9](setup-guide.md#9-verify-the-setup), after toolkit verification and baseline (plus standing authorization for automated acceptance). Host/application exercises need separate authorization. **Next:** return to [routine operation](setup-guide.md#10-routine-operation) after applicable acceptance; record outstanding gates honestly.
+
+The optional [GitHub setup check](github-setup-check.md) reads settings only; routine deployments do not require it. Host/consumer acceptance and independent-identity qualification need separately scoped enrollment, preflight and deployment/recovery observations.
 
 **Actual Windows Server 2022/IIS qualification remains NOT RUN.** This procedure covers ordinary deployment and recovery. Offline NTFS/process/loopback/DPAPI tests and synthetic IIS/identity observations do not establish live-host acceptance. Reboot, power/storage loss and other disruptive checks need separate scope and evidence.
 
-The retained harness and original NoOp check use V1 packages. For a separately authorized V2 consumer pilot, replace that expectation with a complete repeat deployment: all selected hooks rerun, stop/start occurs, readiness succeeds and current generation advances. Separately authorize application database/hook work and persistent-state reconciliation exercises using [the hook contract](application-hooks.md). No V2 live-host, database or independent-identity acceptance has been run by this implementation task.
+The harness/NoOp check use V1 packages. For an authorized V2 pilot, expect full repeat deployment: hooks rerun, stop/start, successful readiness and next generation. Separately authorize database/hooks/persistent-state reconciliation under [hook contracts](application-hooks.md).
 
-GitHub configuration results do not complete deployment/recovery acceptance or independent-identity qualification. Routine deployments do not require the optional checker.
+V2 live-host, database and independent-identity acceptance remain NOT RUN.
 
 ## Rollout order
 
 1. Complete application-owned compatibility and release integration, including immutable source and distribution pins required by the consumer.
-2. Have infrastructure inspect the actual target with read-only `Get-ClcHostEnrollment` and `Initialize-ClcHostEnrollment -Operation Plan`. Apply missing setup only under exact protected authorization; reconcile incomplete or drifted state before proceeding.
+2. Have infrastructure complete [preauthorization observation collection and the independent protected handoff](host-enrollment.md#3-collect-observations-and-prepare-the-candidate) before the first read-only `Get-ClcHostEnrollment` and `Initialize-ClcHostEnrollment -Operation Plan`. Apply only exact authorized missing setup; reconcile incomplete/drifted state first.
 3. Conduct a separately authorized consumer deployment/recovery pilot using the seven checks below and the application's prerequisites. A consumer may use its dedicated approved target; a disposable probe application is not a prerequisite.
 4. Scope disruptive/destructive checks, including reboot and storage faults, separately from ordinary deployment/recovery verification.
 
 ## Prerequisites
 
-For the optional [standing-policy path](automated-deployments.md), first complete the independent exact baseline and infrastructure standing-policy setup. Under separately scoped host authorization, repeat upgrade/NoOp/failure/recovery checks with independently workflow-verified exact releases; verify revocation before effects and require an independent exact RecoveryApprovalId for a generated selected release. Offline admission tests do not qualify privileged-runner or actual IIS integration. Those real-host gates remain NOT RUN.
+For the optional [standing-policy path](automated-deployments.md):
+
+1. Establish independently approved baseline and standing policy.
+2. Separately authorize upgrade/repeat/failure/recovery checks using workflow-verified exact releases.
+3. Verify revocation before effects; require independent exact RecoveryApprovalId for a generated selected recovery release.
+
+Offline admission tests do not qualify privileged runners or IIS. These real-host gates remain NOT RUN.
 
 Infrastructure must explicitly authorize the host, consumer application scope, maintenance window and failure/recovery exercise. The optional harness below accepts only its explicitly designated isolated Server 2022 target and must not be repointed at a consumer or existing application.
 
@@ -29,23 +37,68 @@ Before starting, infrastructure supplies:
 - Working trusted HTTPS `/health/ready`, compatible protected external configuration and persistent Data Protection keys, retention capacity and a way to observe actual pool state/worker count. Accounts, secrets, certificates, machine trust and components are provisioned externally.
 - Two separately approved healthy releases A and B with distinct release/source identities and increasing sequence, plus an independently approved test-only release C that validates successfully but fails readiness (for example immutable `FailureApp` `NotReady503`). Configuration revisions 1 and 2 must be application-approved and compatible with the releases selected for recovery. Keep ZIPs in the approved inbox; manifests and hashes alone never authorize execution.
 
-Before invoking deployment or recovery, use the independently authenticated bootstrap's `Get-ClcHostEnrollment.ps1` and `Initialize-ClcHostEnrollment.ps1 -Operation Plan` to inspect the fixed enrollment. Both are read-only and establish generic enrollment state only; they do not attest application-specific IIS inheritance, runtime access, operational configuration, key usability, logging ACLs, release approval or application readiness. Continue only on fresh `Ready` and an understood no-change plan. `ToolkitNotInitialized` or `TargetNotEnrolled` needs a separate exact infrastructure Apply authorization. `Incomplete`, `DriftDetected` or `RecoveryRequired` stops the sequence for reconciliation; never use Apply to repair drift or clear unresolved deployment state. Complete any consumer-owned prerequisites before direct toolkit commands; a consumer workflow may run additional checks but must not silently provision infrastructure.
+Before deployment/recovery:
 
-Freeze competing deployment, configuration and IIS changes. Use a fresh trusted PowerShell process for each invocation and import the exact installed manifest. Record the source/distribution, actual host/runtime identities, initial/final pool and worker observations, safe result/error, attempt ID, expected readiness identity, file inventories and retained paths. Keep original state locally protected; share only safe projections, never operational configuration, private configuration digests, credentials or raw native output.
+1. Run authenticated bootstrap `Get-ClcHostEnrollment.ps1` and `Initialize-ClcHostEnrollment.ps1 -Operation Plan`. Continue only with fresh Ready and an understood no-change plan.
+2. For ToolkitNotInitialized/TargetNotEnrolled, obtain separate exact infrastructure Apply authority. Stop for reconciliation on Incomplete/DriftDetected/RecoveryRequired; Apply cannot repair drift or clear pending deployment.
+3. Complete consumer prerequisites: application-specific IIS inheritance/runtime access, configuration, key usability, logging ACLs, release approval and readiness. Read-only enrollment inspection attests none of these; consumer checks must not silently provision infrastructure.
+
+Freeze competing deployment/configuration/IIS writers. Use fresh trusted PowerShell with the exact installed manifest for each invocation. Record:
+
+- Source/distribution and actual host/runtime identities.
+- Initial/final pool/workers, safe result/error and attempt ID.
+- Expected readiness, file inventories and retained paths.
+
+Protect original local state; share safe projections only. Exclude configuration, private configuration digests, credentials and raw native output.
 
 ## Seven checks
 
 Use operator-selected IDs below; the snippets are placeholders, not host authorization. Inspect existing state and material before each transition. Stop the sequence on an unexpected result and retain evidence.
 
-| Check | Action | Required observation |
-| --- | --- | --- |
-| Initial deployment | On an authorized empty target, invoke approved A. Record whether the pool starts Started or Stopped. | `Deployed`; exact A inventory and readiness; Started/one worker; verified empty backup; current generation 1 and matching Completed journal/terminal snapshot. |
-| Upgrade | Invoke approved B. | `Deployed`; exact B readiness and final inventory; next current generation; complete verified A backup/index retained; external configuration and keys preserved. |
-| Healthy NoOp | Invoke B again without changing configuration. | `NoOp`; fresh B readiness; unchanged application/current bytes, write times and generation; no new stage/backup or stop/copy/start; a new Completed attempt snapshot. |
-| Configuration restart | Infrastructure changes only approved external configuration to revision 2, then invoke B. | `Deployed`; restart despite identical release bytes; B readiness reports revision 2; next generation and verified backup. Same-revision changed bytes must refuse in a separately scoped negative check. |
-| Failed readiness | Invoke approved test-only C as an upgrade. | Bounded `Clc.ReadinessFailed` after actual replacement/start; a preflight/validation/startup failure does not complete this check. No success/current publication for C; retained stage, manifest, backup and RecoveryRequired journal. After replacement, bounded stop should prove Stopped/zero workers; report uncertainty if it cannot. No automatic restore or prior-version restart. Ordinary retry must refuse unresolved state. |
-| Backup preservation | Before recovery, compare every previously recorded backup/index inventory and inspect the failed attempt's verified B backup. | Previous backups remain byte-identical; failed attempt backup/index matches approved B, including manifest/inventory digest. Configuration/keys remain outside these backups. Do not delete or edit failure material. |
-| Explicit recovery | Select the latest failed attempt and explicitly restore B with `RestorePrevious` and a nonsecret reason. | Enabled approvals, exact retained manifest/verified backup, compatible revision-2 configuration and exited helpers before effects; `RestoredPrevious`, exact B readiness/inventory, Started/one worker, next generation, before-recovery snapshot and matching numbered terminal record. Original backup/stage/failure evidence remains retained. |
+### 1. Initial deployment
+
+For an established baseline, verify its retained [first-deployment evidence](deployment.md#deploy-and-verify-the-baseline) as approved A below; do not clear or redeploy the target as empty. If capturing this check during baseline, invoke approved A on the authorized empty target and record initial Started/Stopped pool state. Require:
+
+- Deployed, exact A inventory/readiness, Started/one worker.
+- Verified empty backup, current generation 1 and matching Completed journal/terminal snapshot.
+
+### 2. Upgrade
+
+Invoke approved B. Require Deployed, exact B readiness/final inventory and next generation. Retain complete verified A backup/index; preserve external configuration/keys.
+
+### 3. Healthy NoOp
+
+Invoke B unchanged. Require:
+
+- NoOp with fresh B readiness and new Completed attempt snapshot.
+- Unchanged application/current bytes, write times and generation; no stage/backup or stop/copy/start.
+
+### 4. Configuration restart
+
+Infrastructure approves/applies only external configuration revision 2; invoke B. Require Deployed with restart despite identical release bytes, revision-2 readiness, next generation and verified backup. Separately scope a negative check proving same-revision changed bytes refuse.
+
+### 5. Failed readiness
+
+Invoke test-only approved C as an upgrade. Require:
+
+- Bounded `Clc.ReadinessFailed` **after replacement/start**. Preflight/validation/startup failure does not satisfy this check.
+- No C success/current publication; retained stage/manifest/backup and RecoveryRequired journal.
+- Bounded stop proving Stopped/zero workers, or explicit uncertainty. No automatic restore/prior-version restart.
+- Ordinary retry refuses unresolved state.
+
+### 6. Backup preservation
+
+Before recovery, compare every recorded backup/index inventory and the failed attempt's B backup. Require byte-identical prior backups and exact approved B manifest/inventory digests. Configuration/keys stay outside backups. Preserve all failure material unchanged.
+
+### 7. Explicit recovery
+
+Select latest failed attempt, RestorePrevious and nonsecret reason. Require:
+
+- Before effects: enabled approvals, exact retained manifest/verified backup, compatible revision-2 configuration and exited helpers.
+- RestoredPrevious, exact B readiness/inventory, Started/one worker, next generation, before-recovery snapshot and matching numbered terminal record.
+- Original backup/stage/failure evidence retained.
+
+### Command examples
 
 ```powershell
 Import-Module $independentlyInstalledManifest
@@ -60,7 +113,16 @@ Invoke-ClcIisDeployment -TargetId $targetId -ReleaseApprovalId $approvedC
 Restore-ClcIisDeployment -TargetId $targetId -AttemptId $latestFailedAttemptId -Mode RestorePrevious -Reason $incidentReference
 ```
 
-Run commands individually; the expected failure must be inspected before continuing. Never reset a journal or delete a lock to bypass refusal. `RestorePrevious` uses the protected approval-pinned retained manifest and verified backup; it does not require a cached historical ZIP. A failed first install may separately exercise `RestoreEmpty` (verified empty backup/stage, approved web.config guard, Stopped/zero workers, no ready current). `AcceptCandidate` separately requires complete exact installed candidate bytes, compatible configuration and successful explicit restart/readiness; it cannot accept mixed files. Neither file recovery nor readiness establishes database rollback safety. See [failure/recovery rules](deployment.md).
+Run commands individually; inspect expected failure before continuing. Never reset journals/delete locks to bypass refusal. RestorePrevious uses the retained approval-pinned manifest/verified backup, without cached historical ZIP.
+
+Separately scoped alternatives:
+
+| Mode | Required observation |
+| --- | --- |
+| RestoreEmpty | Failed first install; verified empty backup/stage, approved web.config guard, Stopped/zero workers, no ready current |
+| AcceptCandidate | Complete exact candidate, compatible configuration, explicit restart/readiness; mixed files refuse |
+
+File recovery/readiness proves no database rollback safety. See [recovery rules](deployment.md).
 
 Complete the seven checks only when actual observations support every result. Record missing checks as NOT RUN or BLOCKED. This evidence establishes the exercised host/application path, not reboot, power-loss, storage-fault, independent-identity or production acceptance. Further disruptive checks require separate scope. Unexpected OS reboot during replacement may require manual recovery; there is no activation fence or startup hook.
 
@@ -68,11 +130,24 @@ Complete the seven checks only when actual observations support every result. Re
 
 `tests/Qualification/Scripts/Invoke-IisQualification.ps1` defaults to read-only preflight. `-Operation Plan` writes the retained scenario catalog as NOT RUN without a host. It is a catalog for separately selected investigations, not a required replacement qualification campaign. The `mandatory*` aggregate fields describe catalog report completeness; they do not define the DEV pilot or release acceptance checklist. Reports always leave `realHostQualified=false` and independent acceptance Required.
 
-The healthy/negative probe builders, independently verified distribution/installation, protected authorization and ownership checks, actual token/access observations, lifecycle/drift/recovery/idle/DPAPI scenarios, privacy scanner and protected evidence collection/aggregation remain available. Worker observations use fixed command names and external phase-journal polling, with no exact source lines or crash injection. Timings include instrumentation; short journal intervals can be missed and remain unobserved, never zero. Performance profiles retain provenance/count checks and production deadlines; synthetic padding does not establish consumer representativeness.
+Available tools include probe builders, verified distributions/installation, protected authorization/ownership and token/access checks, lifecycle/drift/recovery/idle/DPAPI scenarios, privacy scanning and protected evidence collection/aggregation.
+
+Observation limits:
+
+- Workers use fixed command names and external phase-journal polling, without source-line/crash injection.
+- Timings include instrumentation. Missed short intervals remain unobserved, never zero.
+- Performance profiles retain provenance/count checks and production deadlines; synthetic padding cannot establish consumer representativeness.
 
 For a separately authorized disposable campaign, use the existing [configuration schema/template](../tests/Qualification/Configuration), protected exact-config/machine/time/action authorization, independently installed toolkit and ownership marker. `New-IisQualificationEnvironment.ps1` defaults to Plan and retirement defaults to Inspect. Provisioning, approval, activation and cleanup retain their separate infrastructure procedures; no repository template grants authority. Keep credentials/configuration/evidence outside source and evidence outside the removable owned root. [Distribution installation](installation.md) remains authoritative for exact-byte installation.
 
-The existing infrastructure-owned authorization record uses `formatVersion=1`, exact `configurationSha256`, `reference`, `machineIdentity`, `computerName`, `campaignId`, distinct `grantedBySid`, `expiresUtc` within seven days, explicit `permissions`, `isolationConfirmed=true` and `cleanupRetainsEvidence=true`. Execution needs `execute`, `change-owned-iis`, `change-owned-fixtures` and `terminate-owned-process` (bounded worker cleanup); enrollment, approval, activation, observation and cleanup retain their separate permissions. Each fresh worker rechecks authorization. Self-authored adjacent JSON never supplies independent authority.
+| Infrastructure-owned authorization | Required value |
+| --- | --- |
+| Identity | `formatVersion=1`, exact configurationSha256/reference/machineIdentity/computerName/campaignId, distinct grantedBySid |
+| Window/isolation | expiresUtc within seven days; isolationConfirmed=true; cleanupRetainsEvidence=true |
+| Execution permissions | execute, change-owned-iis, change-owned-fixtures, terminate-owned-process (bounded cleanup) |
+| Other permissions | Enrollment/approval/activation/observation/cleanup separately authorized |
+
+Each fresh worker rechecks authority; self-authored adjacent JSON grants none.
 
 ```powershell
 & .\tests\Qualification\Scripts\Invoke-IisQualification.ps1 -Operation Plan -OutputRoot $newPlanDirectory
@@ -80,4 +155,10 @@ The existing infrastructure-owned authorization record uses `formatVersion=1`, e
 & .\tests\Qualification\Scripts\Invoke-IisQualification.ps1 -ConfigurationPath $localConfiguration -Operation Execute -AuthorizationPath $protectedAuthorization -ScenarioId deploy-initial-stopped -OutputRoot $newEvidenceDirectory
 ```
 
-Select one established scenario at a time. NoOp/configuration/idle checks select the exact current campaign release; controlled drift requires the initial release. Failed readiness and infrastructure-controlled identity/TLS/storage cases remain operator-observed: the runner reports BLOCKED rather than manufacturing a pass. Retained recovery cases require an actually established failed attempt; destructive fixture reset is never automatic. Capture safe before/after/worker/terminal evidence, run `Test-QualificationEvidencePrivacy.ps1`, and preserve material for the infrastructure owner. Protected evidence receipts and report merging preserve provenance; they do not execute missing checks or automatically qualify a host.
+Select one established scenario at a time:
+
+- NoOp/configuration/idle: exact current campaign release. Controlled drift: initial release.
+- Failed readiness/identity/TLS/storage: operator-observed; runner reports BLOCKED rather than manufacturing passes.
+- Recovery: actual established failed attempt; no automatic destructive fixture reset.
+
+Capture safe before/after/worker/terminal evidence, run `Test-QualificationEvidencePrivacy.ps1` and preserve material for infrastructure. Receipts/report merging preserve provenance; they execute no missing checks and cannot automatically qualify a host.
