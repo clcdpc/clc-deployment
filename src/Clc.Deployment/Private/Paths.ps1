@@ -46,6 +46,8 @@ namespace Clc.Foundation {
         }
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
         private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint mode, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true), DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        private static extern bool CreateDirectoryW(string path, IntPtr security);
         [DllImport("kernel32.dll", SetLastError=true)]
         private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out Info info);
         [DllImport("kernel32.dll", SetLastError=true)]
@@ -69,6 +71,11 @@ namespace Clc.Foundation {
         [DllImport("advapi32.dll", SetLastError=true)]
         private static extern bool GetKernelObjectSecurity(SafeFileHandle handle, uint requested, byte[] descriptor, uint length, out uint needed);
         private static IOException Failure() { return new IOException("Windows path observation failed.", new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error())); }
+        public static void CreateNewDirectory(string path) {
+            if (!CreateDirectoryW(path, IntPtr.Zero)) {
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
         public static SafeFileHandle Open(string path) {
             // Metadata observation only. Read sharing with metadata-only access
             // does NOT constitute a byte or directory-rename lease.

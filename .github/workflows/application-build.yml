@@ -71,7 +71,9 @@ jobs:
           CLC_SOURCE: ${{ inputs.source-commit }}
           CLC_SHARED_SOURCE: ${{ steps.bootstrap.outputs.sha }}
         run: |
-          & machinery/tools/release/New-ClcApplicationPackage.ps1 -ConfigurationPath (Join-Path $PWD 'application/.clc/release.json') -SourceRoot (Join-Path $PWD application) -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -SharedSourceCommit $env:CLC_SHARED_SOURCE -RunId ([long]$env:GITHUB_RUN_ID) -RunAttempt ([long]$env:GITHUB_RUN_ATTEMPT) -OutputDirectory (Join-Path $env:RUNNER_TEMP 'clc-application-build')
+          . machinery/tools/HostedScratch.ps1
+          $scratch = New-ClcHostedScratchDirectory
+          & machinery/tools/release/New-ClcApplicationPackage.ps1 -ConfigurationPath (Join-Path $PWD 'application/.clc/release.json') -SourceRoot (Join-Path $PWD application) -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -SharedSourceCommit $env:CLC_SHARED_SOURCE -RunId ([long]$env:GITHUB_RUN_ID) -RunAttempt ([long]$env:GITHUB_RUN_ATTEMPT) -OutputDirectory (Join-Path $scratch 'build')
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ steps.package.outputs.artifact_name }}

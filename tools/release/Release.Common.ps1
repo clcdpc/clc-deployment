@@ -139,9 +139,9 @@ function Invoke-ClcReleaseApi {
             if ([int]$response.StatusCode -eq 404) { return $null }
             if (-not $response.IsSuccessStatusCode) { throw ('GitHub request refused; status '+[int]$response.StatusCode+'.') }
             $limit=if ($Bytes) {1073741824L} else {4194304L}
-            $bytes=Read-SharedReleaseBoundedResponseBytes $response.Content $limit
-            if ($Bytes) { return ,$bytes }
-            return [Text.UTF8Encoding]::new($false,$true).GetString($bytes) | ConvertFrom-Json -AsHashtable -DateKind String
+            $responseBytes=Read-SharedReleaseBoundedResponseBytes $response.Content $limit
+            if ($Bytes) { return ,$responseBytes }
+            return [Text.UTF8Encoding]::new($false,$true).GetString($responseBytes) | ConvertFrom-Json -AsHashtable -DateKind String
         } finally { $response.Dispose() }
     } finally { $request.Dispose(); $client.Dispose() }
 }

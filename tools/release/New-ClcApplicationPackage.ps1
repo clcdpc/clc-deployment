@@ -23,6 +23,7 @@ $null=[IO.Directory]::CreateDirectory($OutputDirectory)
 $api={param($method,$path,$body,[switch]$Bytes) Invoke-ClcReleaseApi -Repository $c.repository -Method $method -Path $path -Body $body -Bytes:$Bytes}
 $source=Get-ClcVerifiedSource $c $Reference $SourceCommit $RunId $api
 if ($PSCmdlet.ParameterSetName -ceq 'Prequalified') {
+    . (Join-Path $PSScriptRoot '../../src/Clc.Deployment/Private/Paths.ps1')
     $qualified=Get-ClcQualifiedPublishInputs $c $SourceRoot $QualifiedPublishRoot $SdkVersion $ValidationEntryPoint
     $publish=$qualified.publishRoot; $sdk=@{sdkVersion=$qualified.sdkVersion}
     $assembly=[IO.Path]::GetFileNameWithoutExtension($qualified.entryPoint)
