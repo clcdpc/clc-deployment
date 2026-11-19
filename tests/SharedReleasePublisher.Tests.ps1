@@ -3,45 +3,7 @@ BeforeAll {
     . "$script:RepositoryRoot/tools/Distribution.Common.ps1"
     . "$script:RepositoryRoot/tools/SharedReleasePublisher.Common.ps1"
 
-    if ($null -eq ('ClcReleaseTests.RecordingHandler' -as [type])) {
-        Add-Type -TypeDefinition @'
-using System;
-using System.Collections.Generic;
-using System.Net;
-using System.Net.Http;
-using System.Threading;
-using System.Threading.Tasks;
-
-namespace ClcReleaseTests {
-    public sealed class ResponseSpec {
-        public int StatusCode;
-        public string Location;
-        public byte[] Body;
-    }
-
-    public sealed class RecordingHandler : HttpMessageHandler {
-        public readonly List<string> RequestUris = new List<string>();
-        public readonly List<string> AuthorizationValues = new List<string>();
-        public readonly Queue<ResponseSpec> Responses = new Queue<ResponseSpec>();
-
-        public void Enqueue(int statusCode, string location, byte[] body) {
-            Responses.Enqueue(new ResponseSpec { StatusCode = statusCode, Location = location, Body = body ?? Array.Empty<byte>() });
-        }
-
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
-            RequestUris.Add(request.RequestUri.AbsoluteUri);
-            AuthorizationValues.Add(request.Headers.Authorization == null ? null : request.Headers.Authorization.ToString());
-            if (Responses.Count == 0) throw new InvalidOperationException("No response was queued for the HTTP request.");
-            ResponseSpec item = Responses.Dequeue();
-            HttpResponseMessage response = new HttpResponseMessage((HttpStatusCode)item.StatusCode);
-            response.Content = new ByteArrayContent(item.Body);
-            if (!String.IsNullOrEmpty(item.Location)) response.Headers.Location = new Uri(item.Location, UriKind.RelativeOrAbsolute);
-            return Task.FromResult(response);
-        }
-    }
-}
-'@ -ErrorAction Stop
-    }
+    . "$PSScriptRoot/Fixtures/ReleaseHttp.ps1"
 }
 
 Describe 'Shared release publisher behavior' {

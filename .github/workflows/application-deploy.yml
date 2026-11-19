@@ -69,7 +69,9 @@ jobs:
           CLC_ARTIFACT: ${{ inputs.artifact-id }}
           CLC_RUNTIME_ACCOUNT: ${{ vars.CLC_RUNTIME_ACCOUNT }}
         run: |
-          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Route -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_ARTIFACT) -OutputDirectory (Join-Path $env:RUNNER_TEMP 'clc-application-routing')
+          . tools/HostedScratch.ps1
+          $scratch = New-ClcHostedScratchDirectory
+          & tools/release/Invoke-ClcApplicationWorkflow.ps1 -Action Route -ClaimsJson $env:CLC_CLAIMS -Repository $env:CLC_REPOSITORY -Reference $env:CLC_REFERENCE -SourceCommit $env:CLC_SOURCE -RunId ([long]$env:CLC_RUN) -RunAttempt ([long]$env:CLC_ATTEMPT) -ArtifactId ([long]$env:CLC_ARTIFACT) -OutputDirectory (Join-Path $scratch 'routing')
   deploy:
     needs: route
     env:

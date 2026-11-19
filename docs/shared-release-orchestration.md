@@ -4,6 +4,8 @@ Pin all reusable workflows to the same immutable Clc.Deployment commit. Use the 
 
 GitHub-hosted runners build or package the prequalified output, verify compiled identity, and publish an immutable tagged release. DEV `vX.Y.Z-dev.N` tags can point to authorized commits outside master. Stable `vX.Y.Z` tags require protected master ancestry.
 
+Hosted package creation, artifact extraction for package inspection, and toolkit distribution verification use a new writable NTFS directory. The selector checks the opened directory and its ancestors, tries `RUNNER_TEMP` first, and falls back to the runner account's Windows LocalApplicationData known folder. For prequalified builds, publish the qualified web tree directly to selected NTFS storage before calling the packaging script. The hosted VM owns the scratch directory's lifetime. [GitHub runner storage announcement](https://github.com/actions/runner-images/issues/15315)
+
 | Release tag | Deployment channel | Deployment target ID | GitHub environment | ASP.NET Core runtime environment |
 | --- | --- | --- | --- | --- |
 | `vX.Y.Z-dev.N` | DEV | `<application-id>-dev` | `<application-id>-dev` | `devRuntimeEnvironment` |
