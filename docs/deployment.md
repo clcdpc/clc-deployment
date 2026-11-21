@@ -13,6 +13,10 @@ Invoke-ClcIisDeployment @hostInputs -ArchivePath $verifiedArchive -ExpectedSha25
 
 The engine checks target and package identity and obtains the exclusive target lock. It confirms local state, verifies the live managed inventory, records intent, stages the candidate, and runs the application validator. It disables IIS automatic startup for the replacement interval and stops the site and pool. With zero workers, it verifies a complete backup and installs only managed application files. It starts the configured pool and site, checks exact release readiness and final hashes, enables automatic startup, and publishes current state.
 
+Preflight validates every configured binding and its certificate. The attempt records its approved binding configuration in memory and rechecks it through startup and final verification. Configuration drift blocks completion. Between attempts administrators can add or remove aliases without reinitializing the host.
+
+Both startup checks probe every discovered HTTPS hostname and port at `/health/ready`. Up to 16 endpoints share a five-second concurrent request budget per round and the existing two-minute readiness deadline per check. One exact application, release, source, runtime and configuration response with one worker is sufficient. A valid unreachable alias is counted in the successful result. An invalid binding blocks preflight, and zero verified endpoints fails activation. Inspect the protected attempt directory's deployment or recovery readiness JSON for individual outcomes. The workflow reports aggregate counts. Verify every intended hostname during live acceptance.
+
 Older tags and changed bytes under an already recorded tag are rejected. An exact same-tag retry can run the full lifecycle when no attempt is pending. Recovery retains the highest selected tag even when files return to an earlier release. An unrelated file, unverified backup, or unsafe sharing or path observation stops the operation.
 
 ## Operator procedure

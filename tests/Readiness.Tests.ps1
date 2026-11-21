@@ -30,7 +30,7 @@ Describe 'Strict readiness protocol and actual HTTP response processing' {
         Invoke-TestPrivate Test-ClcReadinessIdentity @([Text.Encoding]::UTF8.GetBytes($json),$manifest,$configuration) | Should -BeFalse
     }
     It 'uses a transport with certificate verification, no redirect, cookie, credentials or proxy forwarding' {
-        $handler=[Clc.Lifecycle.Native]::ReadinessHandler()
+        $handler=[Clc.Lifecycle.V2.Native]::ReadinessHandler()
         try {
             $handler.AllowAutoRedirect | Should -BeFalse; $handler.UseCookies | Should -BeFalse; $handler.UseProxy | Should -BeFalse
             $handler.UseDefaultCredentials | Should -BeFalse; $handler.PreAuthenticate | Should -BeFalse
@@ -58,7 +58,7 @@ Describe 'Strict readiness protocol and actual HTTP response processing' {
                 age { $response.Headers.Age=[TimeSpan]::FromSeconds(1) }
                 oversized { $response.Content=[Net.Http.ByteArrayContent]::new([byte[]]::new(4097)); $response.Content.Headers.ContentType=[Net.Http.Headers.MediaTypeHeaderValue]::new('application/json') }
             }
-            [Clc.Lifecycle.Native]::HealthResponse($response,[Threading.CancellationToken]::None).Accepted | Should -BeFalse
+            [Clc.Lifecycle.V2.Native]::HealthResponse($response,[Threading.CancellationToken]::None).GetAwaiter().GetResult().Accepted | Should -BeFalse
         } finally { $response.Dispose() }
     }
     It 'reads the bounded actual HTTP body and passes it to strict identity validation' {
@@ -66,7 +66,7 @@ Describe 'Strict readiness protocol and actual HTTP response processing' {
         try {
             $response.Content=[Net.Http.StringContent]::new(($ready | ConvertTo-Json -Compress),[Text.Encoding]::UTF8,'application/json')
             $response.Headers.CacheControl=[Net.Http.Headers.CacheControlHeaderValue]::new(); $response.Headers.CacheControl.NoStore=$true
-            $actual=[Clc.Lifecycle.Native]::HealthResponse($response,[Threading.CancellationToken]::None)
+            $actual=[Clc.Lifecycle.V2.Native]::HealthResponse($response,[Threading.CancellationToken]::None).GetAwaiter().GetResult()
             $actual.Accepted | Should -BeTrue
             Invoke-TestPrivate Test-ClcReadinessIdentity @($actual.Bytes,$manifest,$configuration) | Should -BeTrue
         } finally { $response.Dispose() }

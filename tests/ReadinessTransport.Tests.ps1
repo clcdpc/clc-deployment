@@ -52,15 +52,26 @@ Describe 'Production HTTPS client against bounded test-owned loopback peers with
     It 'rejects a self-signed loopback TLS certificate before sending application HTTP' {
         $peer=[Clc.Test.LocalHealthPeer]::new($true)
         try {
-            $response=Invoke-TestPrivate Invoke-ClcReadinessRequest @('https://127.0.0.1:'+$peer.Port+'/health/ready')
+            $response=[Clc.Lifecycle.V2.Native]::ProbeAll(@('https://127.0.0.1:'+$peer.Port+'/health/ready'),5000)[0]
             $response.Accepted | Should -BeFalse; $response.Bytes.Length | Should -Be 0
         } finally { $peer.Dispose() }
         $peer.ReceivedHttp | Should -BeFalse
     }
+    It 'classifies several concurrent stalled peers within one cancellation window' {
+        $peers=@(1..4 | ForEach-Object { [Clc.Test.LocalHealthPeer]::new($false) })
+        $clock=[Diagnostics.Stopwatch]::StartNew()
+        try {
+            $uris=@($peers | ForEach-Object { 'https://127.0.0.1:'+$_.Port+'/health/ready' })
+            $results=[Clc.Lifecycle.V2.Native]::ProbeAll($uris,1000)
+            $results.Count | Should -Be 4
+            @($results | Where-Object Status -ne Timeout).Count | Should -Be 0
+            $clock.Elapsed.TotalSeconds | Should -BeLessThan 3.5
+        } finally { foreach ($peer in $peers) { $peer.Dispose() } }
+    }
     It 'cancels an unresponsive loopback TLS peer within the fixed per-request budget' {
         $peer=[Clc.Test.LocalHealthPeer]::new($false); $clock=[Diagnostics.Stopwatch]::StartNew()
         try {
-            $response=Invoke-TestPrivate Invoke-ClcReadinessRequest @('https://127.0.0.1:'+$peer.Port+'/health/ready')
+            $response=[Clc.Lifecycle.V2.Native]::ProbeAll(@('https://127.0.0.1:'+$peer.Port+'/health/ready'),5000)[0]
             $response.Accepted | Should -BeFalse; $response.Bytes.Length | Should -Be 0
             $clock.Elapsed.TotalSeconds | Should -BeLessThan 12
         } finally { $peer.Dispose() }

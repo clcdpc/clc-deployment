@@ -5,18 +5,17 @@ function Initialize-ClcDeploymentHost {
         [Parameter(Mandatory)][ValidateSet('Preview','Initialize')][string] $Operation,
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $ApplicationId,
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $TargetId,
-        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $SiteName,
-        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $ApplicationPoolName,
-        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string] $ReadinessUri
+        [ValidateNotNullOrEmpty()][string] $SiteName = $ApplicationId,
+        [ValidateNotNullOrEmpty()][string] $ApplicationPoolName = $ApplicationId
     )
     Assert-ClcId $TargetId
     Assert-ClcSiteName $SiteName
     Assert-ClcCode $ApplicationPoolName 64
-    Assert-ClcDeploymentUri $ReadinessUri
+    Assert-ClcId $ApplicationId
     $manager=$null; $mutex=$null; $held=$false
     $result=[ordered]@{status='Preview';applicationId=$ApplicationId;targetId=$TargetId;root=$null;site=$SiteName;applicationPool=$ApplicationPoolName;
-        readinessUri=$ReadinessUri;planned=@();created=@();present=@();findings=@();administratorActions=@(
-            'Configure the service account, credentials and dedicated HTTPS binding in IIS Manager.',
+        planned=@();created=@();present=@();findings=@();administratorActions=@(
+            'Configure the service account, credentials and dedicated HTTPS bindings in IIS Manager.',
             'Provision the TLS certificate, external application configuration, persistent keys, logs, runtime ACLs and application dependencies.',
             'Keep both IIS automatic-start flags disabled and run Test-ClcDeploymentHost before the first release.'
         )}
@@ -24,8 +23,8 @@ function Initialize-ClcDeploymentHost {
         Assert-ClcPlatform
         $layout=Get-ClcHostLayout $ApplicationId
         $result.root=$layout.root
-        $target=[ordered]@{schemaVersion=1;recordKind='host';applicationId=$ApplicationId;targetId=$TargetId;
-            siteName=$SiteName;applicationPoolName=$ApplicationPoolName;applicationRoot=$layout.application;readinessUri=$ReadinessUri;siteId=0}
+        $target=[ordered]@{schemaVersion=2;recordKind='host';applicationId=$ApplicationId;targetId=$TargetId;
+            siteName=$SiteName;applicationPoolName=$ApplicationPoolName;applicationRoot=$layout.application;siteId=0}
         if ($Operation -eq 'Initialize') {
             $mutex=[Threading.Mutex]::new($false,'Global\Clc.Deployment.Initialize')
             try { $held=$mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $held=$true }
@@ -34,9 +33,6 @@ function Initialize-ClcDeploymentHost {
         Assert-ClcInitializationAccess $layout
         $manager=Open-ClcIis
         $null=Get-ClcHostingRuntime $manager
-        $resources=Get-ClcIisResources $manager $target
-        if ($null -ne $resources.site) { $result.present+=@('IIS site '+$SiteName) }
-        if ($null -ne $resources.pool) { $result.present+=@('IIS pool '+$ApplicationPoolName) }
         $rootExists=Test-ClcStorageEntry $layout.root
         if ($rootExists) {
             $result.present+=@($layout.root)
@@ -46,9 +42,19 @@ function Initialize-ClcDeploymentHost {
                 if (Test-ClcStorageEntry $path) { $result.present+=@($path) }
             }
         }
+        $existing=$null
         if ($rootExists -and (Test-ClcStorageEntry $layout.hostRecord)) {
             $existing=Read-ClcLocalRecord $layout.hostRecord host
-            foreach ($key in @('applicationId','targetId','siteName','applicationPoolName','applicationRoot','readinessUri')) {
+            if (-not $PSBoundParameters.ContainsKey('SiteName')) { $target.siteName=$existing.siteName }
+            if (-not $PSBoundParameters.ContainsKey('ApplicationPoolName')) { $target.applicationPoolName=$existing.applicationPoolName }
+            $result.site=$target.siteName
+            $result.applicationPool=$target.applicationPoolName
+        }
+        $resources=Get-ClcIisResources $manager $target
+        if ($null -ne $resources.site) { $result.present+=@('IIS site '+$target.siteName) }
+        if ($null -ne $resources.pool) { $result.present+=@('IIS pool '+$target.applicationPoolName) }
+        if ($null -ne $existing) {
+            foreach ($key in @('applicationId','targetId','siteName','applicationPoolName','applicationRoot')) {
                 if ($target[$key] -cne $existing[$key]) { Stop-ClcError Clc.TargetMismatch 'Initialization parameters differ from the recorded host. Inspect the existing host configuration.' }
             }
             Assert-ClcIisOwnership $manager $existing $resources

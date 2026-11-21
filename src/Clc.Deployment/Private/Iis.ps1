@@ -174,40 +174,133 @@ function Get-ClcIisState {
         siteAutoStart=[bool]$Resources.site.ServerAutoStart;poolAutoStart=[bool]$Resources.pool.AutoStart}
 }
 
-function Test-ClcIisHttpsBinding {
-    param($Manager,$Site,[uri] $ReadinessUri)
-    if ($Site.Bindings.Count -ne 1) { return $false }
-    $binding=$Site.Bindings[0]
-    if ($binding.Protocol -cne 'https' -or $binding.Host -ine $ReadinessUri.IdnHost -or
-        $binding.EndPoint.Port -ne $ReadinessUri.Port -or ([int]$binding.SslFlags -band 2) -ne 0) { return $false }
-    # A competing binding can answer readiness even when the expected site is stopped.
-    $count=0
-    foreach ($other in $Manager.Sites) {
-        if ($other.Name -ieq $Site.Name) { continue }
-        foreach ($entry in $other.Bindings) {
-            if (++$count -gt 4096) { return $false }
-            if ($entry.Protocol -ceq 'https' -and $entry.EndPoint.Port -eq $binding.EndPoint.Port -and
-                (-not $entry.Host -or $entry.Host -ieq $binding.Host) -and
-                ($entry.EndPoint.Address.Equals($binding.EndPoint.Address) -or
-                    $entry.EndPoint.Address.ToString() -in @('0.0.0.0','::') -or $binding.EndPoint.Address.ToString() -in @('0.0.0.0','::'))) {
-                return $false
-            }
-        }
-    }
-    $hash=$binding.CertificateHash
-    if ($null -eq $hash -or $hash.Length -eq 0 -or $binding.CertificateStoreName -notmatch '^[a-z0-9]+$') { return $false }
-    $store=[Security.Cryptography.X509Certificates.X509Store]::new($binding.CertificateStoreName,'LocalMachine')
+function ConvertTo-ClcBindingHostname {
+    param([string] $Name)
+    # Canonical ASCII DNS labels make comparison independent of casing and IDN spelling.
+    if (-not $Name -or $Name.Length -gt 254) { return }
+    try { $dns=[Globalization.IdnMapping]::new().GetAscii($Name).ToLowerInvariant() } catch { return }
+    if ($dns.EndsWith('.')) { $dns=$dns.Substring(0,$dns.Length-1) }
+    if ($dns.Length -gt 253 -or $dns -cnotmatch '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$' -or
+        [uri]::CheckHostName($dns) -ne 'Dns') { return }
+    return $dns
+}
+
+function Test-ClcCertificateIdentity {
+    param([Security.Cryptography.X509Certificates.X509Certificate2] $Certificate,[string] $Hostname)
+    $now=[DateTime]::Now
+    return $Certificate.HasPrivateKey -and $Certificate.NotBefore -le $now -and $Certificate.NotAfter -gt $now -and
+        $Certificate.MatchesHostname($Hostname,$true,$false)
+}
+
+function Test-ClcBindingTrust {
+    param([Security.Cryptography.X509Certificates.X509Certificate2] $Certificate,
+        [Security.Cryptography.X509Certificates.X509Chain] $Chain)
+    # Read-only preflight uses local trust and cached revocation data. Each HTTPS
+    # request independently performs the platform's online TLS checks.
+    $policy=$Chain.ChainPolicy
+    $policy.DisableCertificateDownloads=$true
+    $policy.RevocationMode='Offline'
+    $policy.VerificationFlags='IgnoreEndRevocationUnknown, IgnoreCertificateAuthorityRevocationUnknown, IgnoreRootRevocationUnknown'
+    $null=$policy.ApplicationPolicy.Add([Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.1'))
+    return $Chain.Build($Certificate)
+}
+
+function Test-ClcBindingCertificate {
+    param($Binding,[string] $Hostname)
+    $inventory=$null; $certificates=$null
+    $store=[Security.Cryptography.X509Certificates.X509Store]::new($Binding.CertificateStoreName,'LocalMachine')
     try {
         $store.Open('ReadOnly, OpenExistingOnly')
-        $certificates=$store.Certificates.Find('FindByThumbprint',[Convert]::ToHexString($hash),$false)
-        try {
-            $now=[DateTime]::Now
-            return $certificates.Count -eq 1 -and $certificates[0].HasPrivateKey -and
-                $certificates[0].NotBefore -le $now -and $certificates[0].NotAfter -gt $now -and
-                $certificates[0].MatchesHostname($ReadinessUri.IdnHost,$true,$false)
-        } finally { foreach ($certificate in $certificates) { $certificate.Dispose() } }
+        $inventory=$store.Certificates
+        $certificates=$inventory.Find('FindByThumbprint',[Convert]::ToHexString($Binding.CertificateHash),$false)
+        if ($certificates.Count -ne 1 -or -not (Test-ClcCertificateIdentity $certificates[0] $Hostname)) { return $false }
+        $chain=[Security.Cryptography.X509Certificates.X509Chain]::new($true)
+        try { return Test-ClcBindingTrust $certificates[0] $chain }
+        finally { $chain.Dispose() }
     } catch { return $false }
-    finally { $store.Dispose() }
+    finally {
+        foreach ($certificate in $certificates) { $certificate.Dispose() }
+        foreach ($certificate in $inventory) { $certificate.Dispose() }
+        $store.Dispose()
+    }
+}
+
+function Get-ClcIisBindingSnapshot {
+    param($Manager,$Site)
+    $count=$Site.Bindings.Count
+    $result=@{configured=$count;valid=0;endpoints=@();signature='';findings=@()}
+    $messages=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+    $entries=[Collections.Generic.List[object]]::new()
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    try {
+        if ($count -lt 1 -or $count -gt 16 -or $Manager.Sites.Count -gt 4096) {
+            throw 'Binding inspection limit.'
+        }
+        foreach ($binding in $Site.Bindings) {
+            Assert-ClcDeadline $clock 30
+            $name=ConvertTo-ClcBindingHostname $binding.Host
+            if ($binding.Protocol -cne 'https' -or -not $name -or $binding.EndPoint -isnot [Net.IPEndPoint] -or
+                $binding.EndPoint.Port -lt 1 -or [int]$binding.SslFlags -notin @(0,1)) {
+                $null=$messages.Add('Use HTTPS with an explicit DNS hostname, port and local certificate, with optional SNI.')
+                continue
+            }
+            $port=$binding.EndPoint.Port
+            $address=$binding.EndPoint.Address
+            if ($address.IsIPv4MappedToIPv6) { $address=$address.MapToIPv4() }
+            $uri=[UriBuilder]::new('https',$name,$port,'/health/ready').Uri.AbsoluteUri
+            $thumbprint=if ($null -ne $binding.CertificateHash) { [Convert]::ToHexString($binding.CertificateHash) }
+            $valid=$binding.CertificateStoreName -match '^[a-z0-9]+$' -and $thumbprint -and
+                (Test-ClcBindingCertificate $binding $name)
+            if (-not $valid) { $null=$messages.Add('Verify every binding has a trusted server certificate and private key in LocalMachine. Check the hostname, dates and installed chain.') }
+            $signature="$uri|$address|$([int]$binding.SslFlags)|$($binding.CertificateStoreName)|$thumbprint"
+            $entries.Add(@{name=$name;port=$port;address=$address;sni=([int]$binding.SslFlags -eq 1);uri=$uri;signature=$signature;valid=$valid})
+        }
+        # Compare host routing even across disjoint addresses because DNS selects the address.
+        # On overlapping listeners require distinct SNI names for TLS isolation.
+        $inspected=0
+        foreach ($other in $Manager.Sites) {
+            Assert-ClcDeadline $clock 30
+            foreach ($binding in $other.Bindings) {
+                if (++$inspected -gt 4096) { throw 'Binding inspection limit.' }
+                if ($binding.Protocol -cnotin @('https','http')) { continue }
+                $sameSite=$other.Name -ieq $Site.Name
+                $name=ConvertTo-ClcBindingHostname $binding.Host
+                $wildcardSuffix=if ($binding.Host -and $binding.Host.StartsWith('*.')) { ConvertTo-ClcBindingHostname $binding.Host.Substring(2) }
+                $address=$binding.EndPoint.Address
+                if ($address.IsIPv4MappedToIPv6) { $address=$address.MapToIPv4() }
+                $port=$binding.EndPoint.Port
+                foreach ($entry in $entries) {
+                    if ($entry.port -ne $port) { continue }
+                    $sameHost=$entry.name -ceq $name
+                    $overlap=$address.Equals($entry.address) -or $address.ToString() -in @('0.0.0.0','::') -or $entry.address.ToString() -in @('0.0.0.0','::')
+                    if ($sameSite -and $sameHost -and $address.Equals($entry.address) -and $binding.Protocol -ceq 'https') { continue }
+                    $matchesRoute=$sameHost -or (-not $name -and -not $wildcardSuffix) -or
+                        ($wildcardSuffix -and $entry.name.EndsWith('.'+$wildcardSuffix,[StringComparison]::Ordinal))
+                    $sharesTlsListener=$overlap -and (-not $name -or -not $entry.sni -or $binding.Protocol -cne 'https' -or [int]$binding.SslFlags -ne 1)
+                    if (($matchesRoute -and $binding.Protocol -ceq 'https') -or $sharesTlsListener) {
+                        $entry.valid=$false
+                        $null=$messages.Add('Remove competing host or port bindings and use distinct SNI names on shared listeners.')
+                    }
+                }
+            }
+        }
+        $uris=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+        $signatures=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($entry in $entries) {
+            if (-not $uris.Add($entry.uri)) { $null=$messages.Add('Remove duplicate hostname and port definitions.') }
+            $null=$signatures.Add($entry.signature)
+        }
+        foreach ($group in ($entries | Group-Object -Property { $_.uri })) {
+            if ($group.Count -eq 1 -and $group.Group[0].valid) { $result.valid++ }
+        }
+        $result.endpoints=@($uris)
+        $result.signature=$signatures -join "`n"
+        Assert-ClcDeadline $clock 30
+    } catch {
+        $null=$messages.Add('Configure 1 to 16 dedicated HTTPS bindings and verify the local IIS binding and certificate inventory can be inspected.')
+    }
+    $result.findings=@(foreach ($message in $messages) { @{code='Clc.HttpsBinding';message=$message} })
+    return $result
 }
 
 function Invoke-ClcIisChange {

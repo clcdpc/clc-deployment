@@ -12,3 +12,5 @@ Import-Module $toolkit.moduleManifestPath
 ```
 
 The extractor verifies the format-4 archive and module inventory and creates a new extraction directory. ProgramData is reserved for the initialized application and its deployment state. Upgrade by selecting another reviewed version in workflow configuration. Prepare Windows, IIS and the Hosting Bundle separately as described in the [setup guide](setup-guide.md).
+
+Use a fresh PowerShell process when switching pinned toolkit revisions. PowerShell retains loaded native helper types for the lifetime of the process. Legacy toolkits can still operate on their original single-binding schema 1 hosts. See the [local record contracts](contracts.md#local-deployment-records) before selecting an older release.

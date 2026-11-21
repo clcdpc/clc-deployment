@@ -76,7 +76,7 @@ function Restore-ClcIisDeployment {
             Set-ClcApplicationFiles $context $paths.backup $priorFiles $priorFiles (Join-Path $paths.root 'restore.tmp') -Candidate $candidateFiles -Partial
         }
         if ($null -ne $context.previous) {
-            $iis=Start-ClcApplication $context $context.previous $configuration
+            $iis=Start-ClcApplication $context $context.previous $configuration (Join-Path $paths.root 'recovery-readiness')
             $context.state.current=New-ClcCurrent $priorReference $configuration
             $status='RestoredPrevious'
             $releaseId=$context.previous.releaseId
@@ -87,6 +87,7 @@ function Restore-ClcIisDeployment {
             $status='RestoredEmpty'
             $releaseId=$null
         }
+        Assert-ClcEffectContext $context
         $attempt.phase='Restored'
         Write-ClcLocalRecord $paths.journal $attempt -Replace
         $context.state.pending=$null

@@ -27,17 +27,19 @@ function Assert-ClcReleaseReference {
 function Assert-ClcHostRecord {
     param($Value,[string] $Kind)
     if ($Value -isnot [Collections.IDictionary] -or -not $Value.Contains('schemaVersion') -or
-        $Value.schemaVersion -isnot [long] -or $Value.schemaVersion -ne 1 -or -not $Value.Contains('recordKind') -or
+        $Value.schemaVersion -isnot [long] -or ($Value.schemaVersion -ne 1 -and ($Kind -cne 'host' -or $Value.schemaVersion -ne 2)) -or -not $Value.Contains('recordKind') -or
         $Value.recordKind -cne $Kind) { Stop-ClcError Clc.InvalidState 'The local deployment record is missing, unsupported or inconsistent.' }
     switch -CaseSensitive ($Kind) {
         host {
-            Assert-ClcObject $Value @('schemaVersion','recordKind','applicationId','targetId','siteName','applicationPoolName','applicationRoot','readinessUri','siteId')
+            $keys=@('schemaVersion','recordKind','applicationId','targetId','siteName','applicationPoolName','applicationRoot','siteId')
+            if ($Value.schemaVersion -eq 1) { $keys+='readinessUri' }
+            Assert-ClcObject $Value $keys
             Assert-ClcId $Value.applicationId
             Assert-ClcId $Value.targetId
             Assert-ClcSiteName $Value.siteName
             Assert-ClcCode $Value.applicationPoolName 64
             Assert-ClcAbsolutePath $Value.applicationRoot
-            Assert-ClcDeploymentUri $Value.readinessUri
+            if ($Value.schemaVersion -eq 1) { Assert-ClcDeploymentUri $Value.readinessUri }
             Assert-ClcInteger $Value.siteId 1 4294967295
         }
         state {
@@ -88,7 +90,9 @@ function Read-ClcLocalRecord {
     try {
         $file=Read-ClcHeldFile $Path $handles
         $null=Assert-ClcAccess $Path $script:ClcAdministrators $script:ClcAdministrators @()
-        return ,(Read-ClcJson $file.bytes $Kind)
+        $record=Read-ClcJson $file.bytes $Kind
+        if ($Kind -ceq 'host') { $record.Remove('readinessUri') }
+        return ,$record
     } finally { foreach ($handle in $handles) { $handle.Dispose() } }
 }
 function Set-ClcManagedOwner {

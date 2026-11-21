@@ -84,7 +84,7 @@ function Invoke-ClcIisDeployment {
         Set-ClcApplicationFiles $context $paths.stage $manifest.files $previousFiles $paths.work
         $attempt.phase='Checking'
         Write-ClcLocalRecord $paths.journal $attempt -Replace
-        $iis=Start-ClcApplication $context $manifest $configuration
+        $iis=Start-ClcApplication $context $manifest $configuration (Join-Path $paths.root 'deployment-readiness')
         $attempt.phase='Ready'
         Write-ClcLocalRecord $paths.journal $attempt -Replace
         $context.state.current=New-ClcCurrent $reference $configuration
