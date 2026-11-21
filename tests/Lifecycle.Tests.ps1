@@ -11,7 +11,7 @@ BeforeAll {
             config=(Join-Path $appRoot 'Config\application.json');keys=(Join-Path $appRoot 'Keys');logs=(Join-Path $appRoot 'Logs');
             inbox=(Join-Path $appRoot 'Inbox');hostRecord=(Join-Path $deployment 'host.json');state=(Join-Path $deployment 'state.json');
             lock=(Join-Path $deployment 'deployment.lock')}
-        $init=@{ApplicationId='probe';TargetId=$TargetId;SiteName='Probe Dev';ApplicationPoolName='Probe.Dev';ReadinessUri='https://probe.invalid/health/ready'}
+        $init=@{ApplicationId='probe';TargetId=$TargetId;SiteName='Probe Dev';ApplicationPoolName='Probe.Dev'}
         $identity=@{ApplicationId='probe';TargetId=$TargetId;ExpectedRuntimeAccount='example\probe-service';RuntimeEnvironment='Staging'}
         $pool=@{Name=$init.ApplicationPoolName;AutoStart=$false;State='Stopped';ManagedRuntimeVersion='';
             ManagedPipelineMode='Integrated';Enable32BitAppOnWin64=$false;
@@ -21,10 +21,10 @@ BeforeAll {
         $app=@{Path='/';ApplicationPoolName=$pool.Name;VirtualDirectories=@{'/'=$directory}}
         $site=@{Name=$init.SiteName;Id=42;Applications=@{'/'=$app};State='Stopped';ServerAutoStart=$false;Bindings=@()}
         $iis=@{siteState='Stopped';poolState='Stopped';workerCount=0;siteAutoStart=$false;poolAutoStart=$false}
-        $manager=[pscustomobject]@{}
+        $manager=[pscustomobject]@{Sites=@($site)}
         $manager | Add-Member ScriptMethod Dispose {}
         $global:ClcTestLifecycle=@{parent=$parent;layout=$layout;init=$init;identity=$identity;iis=$iis;manager=$manager;site=$site;pool=$pool;
-            created=$false;conflict=$false;stoppedScaffold=$true;binding=$false;environment=$false;unusableWebConfig=$false;acl=$true;health=$true;operations=[Collections.Generic.List[string]]::new()}
+            responses=@{};aliasHealthy=$false;created=$false;conflict=$false;stoppedScaffold=$true;environment=$false;unusableWebConfig=$false;acl=$true;health=$true;operations=[Collections.Generic.List[string]]::new()}
         $manager | Add-Member ScriptMethod CommitChanges { $global:ClcTestLifecycle.created=$true }
         return $global:ClcTestLifecycle
     }
@@ -50,7 +50,7 @@ BeforeAll {
             return 'S-1-5-21-1-2-3-43'
         }
         Mock Assert-ClcRuntimeIdentity -ModuleName Clc.Deployment {}
-        Mock Test-ClcIisHttpsBinding -ModuleName Clc.Deployment { $global:ClcTestLifecycle.binding }
+        Mock Test-ClcBindingCertificate -ModuleName Clc.Deployment { $true }
         Mock Test-ClcIisEnvironment -ModuleName Clc.Deployment {
             $fixture=$global:ClcTestLifecycle
             $webConfig=Join-Path $fixture.layout.application 'web.config'
@@ -82,12 +82,30 @@ BeforeAll {
             }
         }
         Mock Invoke-ClcApplicationValidation -ModuleName Clc.Deployment {
+            $global:ClcTestLifecycle.responses[$Manifest.releaseId]=@{readinessContractVersion=1;status='ready';applicationId=$Manifest.applicationId;releaseId=$Manifest.releaseId;
+                sourceCommit=$Manifest.source.commit;runtimeEnvironment=$Context.environment;configurationRevision='revision-one'}
             return @{revision='revision-one';keyStoreCompatibilityId='key-store-one';runtimeEnvironment=$Context.environment}
         }
-        Mock Wait-ClcApplicationReady -ModuleName Clc.Deployment {
-            if (-not $global:ClcTestLifecycle.health) { throw [Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Synthetic readiness identity failed.'),'Clc.ReadinessFailed','InvalidData',$null) }
-            $global:ClcTestLifecycle.iis.Clone()
+        Mock Invoke-ClcReadinessRequests -ModuleName Clc.Deployment {
+            if (-not $global:ClcTestLifecycle.health) { throw [Management.Automation.ErrorRecord]::new([IO.InvalidDataException]::new('Synthetic readiness failure.'),'Clc.ReadinessFailed','InvalidData',$null) }
+            $fixture=$global:ClcTestLifecycle
+            $state=Get-Content $fixture.layout.state -Raw | ConvertFrom-Json
+            $journal=Get-Content (Join-Path $fixture.layout.deployment ('attempt-'+$state.pending.attemptId+'/attempt.json')) -Raw | ConvertFrom-Json
+            $reference=if ($journal.phase -ceq 'Recovering') { $state.current.release } else { $state.pending }
+            $body=$fixture.responses[$reference.tag.Replace('.','-')]
+            foreach ($uri in $Endpoints) {
+                if ($uri -notlike 'https://probe.invalid/*' -and -not $fixture.aliasHealthy) { @{Accepted=$false;Status='Timeout'} }
+                else { @{Accepted=$true;Status='';Bytes=[Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json))} }
+            }
+
         }
+    }
+
+    function Set-TestBindings($Fixture) {
+        $Fixture.site.Bindings=@(foreach ($hostname in @('probe.invalid','alias.invalid')) {
+            @{Protocol='https';Host=$hostname;EndPoint=[Net.IPEndPoint]::new([ipaddress]::Any,443);
+                SslFlags=1;CertificateHash=[byte[]](1,2,3);CertificateStoreName='My'}
+        })
     }
 
     function Initialize-TestTarget {
@@ -96,7 +114,7 @@ BeforeAll {
         $null=Initialize-ClcDeploymentHost -Operation Initialize @initialize
         $Fixture.pool.ProcessModel.IdentityType='SpecificUser'
         $Fixture.pool.ProcessModel.UserName='example\probe-service'
-        $Fixture.binding=$true
+        Set-TestBindings $Fixture
         $Fixture.environment=$true
         [IO.File]::WriteAllText($Fixture.layout.config,'private fixture sentinel')
         [IO.File]::WriteAllText((Join-Path $Fixture.layout.keys 'key.xml'),'persistent-key')
@@ -159,6 +177,16 @@ Describe 'Host initialization and validation with synthetic IIS observations' {
         @(Get-ChildItem -LiteralPath $fixture.parent -Force).Count | Should -Be 0
     }
 
+    It 'resolves independent overrides for a fresh host' -ForEach @(
+        @{Overrides=@{};Site='probe';Pool='probe'},
+        @{Overrides=@{SiteName='Reports Portal'};Site='Reports Portal';Pool='probe'},
+        @{Overrides=@{ApplicationPoolName='Reports.Pool'};Site='probe';Pool='Reports.Pool'}
+    ) {
+        $result=Initialize-ClcDeploymentHost -Operation Preview -ApplicationId probe -TargetId probe-dev @Overrides
+        @($result.site,$result.applicationPool) | Should -Be @($Site,$Pool)
+        { Initialize-ClcDeploymentHost -Operation Preview -ApplicationId probe -TargetId probe-dev -ApplicationPoolName 'bad/pool' } | Should -Throw
+    }
+
     It 'creates only the scaffold and returns already initialized on the same request' {
         $sentinel=Join-Path $fixture.parent 'other-site.txt'
         [IO.File]::WriteAllText($sentinel,'preserve')
@@ -168,7 +196,14 @@ Describe 'Host initialization and validation with synthetic IIS observations' {
         ($fixture.iis.siteState,$fixture.iis.poolState) | Should -Be @('Stopped','Stopped')
         (Get-ChildItem -LiteralPath $fixture.layout.root -Directory).Name | Sort-Object | Should -Be @('Application','Config','Deployment','Inbox','Keys','Logs')
         [IO.File]::Exists($fixture.layout.config) | Should -BeFalse
+        $record=Get-Content $fixture.layout.hostRecord -Raw | ConvertFrom-Json -AsHashtable
+        $record.schemaVersion | Should -Be 2
+        $record.Contains('readinessUri') | Should -BeFalse
         $before=Get-TestTreeHashes $fixture.layout.root
+        $initialize.Remove('SiteName')
+        $initialize.Remove('ApplicationPoolName')
+        (Initialize-ClcDeploymentHost -Operation Preview @initialize).site | Should -BeExactly 'Probe Dev'
+        (Initialize-ClcDeploymentHost -Operation Preview @initialize -SiteName Other).status | Should -Be 'Blocked'
         (Initialize-ClcDeploymentHost -Operation Initialize @initialize).status | Should -Be 'AlreadyInitialized'
         (Get-TestTreeHashes $fixture.layout.root) | Should -BeExactly $before
         [IO.File]::ReadAllText($sentinel) | Should -BeExactly 'preserve'
@@ -195,7 +230,7 @@ Describe 'Host initialization and validation with synthetic IIS observations' {
         $result.findings.code | Should -Contain 'Clc.ConfigurationMissing'
         $fixture.pool.ProcessModel.IdentityType='SpecificUser'
         $fixture.pool.ProcessModel.UserName=$identity.ExpectedRuntimeAccount
-        $fixture.binding=$true
+        Set-TestBindings $fixture
         $fixture.environment=$true
         [IO.File]::WriteAllText($fixture.layout.config,'private fixture sentinel')
         $before=Get-TestTreeHashes $fixture.layout.root
@@ -215,7 +250,7 @@ Describe 'Host initialization and validation with synthetic IIS observations' {
         Initialize-TestTarget $fixture
         switch ($Case) {
             Account { $fixture.pool.ProcessModel.UserName='wrong\synthetic-account' }
-            TLS { $fixture.binding=$false }
+            TLS { $fixture.site.Bindings[1].SslFlags=2 }
             ACL { $fixture.acl=$false }
             Environment { $fixture.environment=$false }
             Path { $fixture.layout.application=Join-Path $fixture.layout.root 'WrongApplication' }
@@ -312,19 +347,63 @@ Describe 'Deployment and recovery with native NTFS and synthetic IIS' {
         $initial.siteState | Should -Be 'Started'
         $initial.poolState | Should -Be 'Started'
         $initial.workerCount | Should -Be 1
+        $initial.readiness.verified | Should -Be 1
+        $initial.readiness.unsuccessful | Should -Be 1
+        ($initial | ConvertTo-Json) | Should -Not -Match 'alias.invalid'
+        (Get-Content (Join-Path $initial.retainedPath 'deployment-readiness-commissioned.json') -Raw) | Should -Match 'Timeout'
         ($fixture.operations -join ',') | Should -BeExactly 'DisableStartup,StopSite,StopPool,StartPool,StartSite,EnableStartup'
         $initial.siteAutoStart | Should -BeTrue
         $initial.poolAutoStart | Should -BeTrue
         (Test-ClcDeploymentHost @identity).status | Should -Be 'ReadyForDeployment'
         $before=Get-TestTreeHashes $fixture.layout.application
         $second=New-LifecycleRelease $fixture 2
+        $fixture.site.Bindings[1].Host='moved-alias.invalid'
+        $fixture.aliasHealthy=$true
         $upgraded=Invoke-ClcIisDeployment @second
+        $upgraded.readiness.verified | Should -Be 2
         (Get-TestTreeHashes (Join-Path $upgraded.retainedPath 'backup')) | Should -BeExactly $before
         (Get-TestTreeHashes $fixture.layout.application) | Should -Not -BeExactly $before
         (Get-LifecycleState $fixture).current.release.attemptId | Should -BeExactly $upgraded.attemptId
         [IO.File]::ReadAllText($fixture.layout.config) | Should -BeExactly 'private fixture sentinel'
         [IO.File]::ReadAllText((Join-Path $fixture.layout.keys 'key.xml')) | Should -BeExactly 'persistent-key'
         [IO.File]::ReadAllText((Join-Path $fixture.layout.logs 'example.log')) | Should -BeExactly 'persistent-log'
+    }
+
+    It 'retains unsuccessful endpoint outcomes and fails when the readiness deadline expires' {
+        Mock Invoke-ClcReadinessRequests -ModuleName Clc.Deployment {
+            @{Accepted=$false;Status='Timeout'}
+            @{Accepted=$true;Status='';Bytes=[Text.Encoding]::UTF8.GetBytes('{}')}
+        }
+        $deploy=New-LifecycleRelease $fixture 1
+        { Invoke-ClcIisDeployment @deploy } | Should -Throw -ErrorId 'Clc.ReadinessFailed*'
+        $failed=Get-UnresolvedAttempt $fixture
+        $report=Get-Content (Join-Path $failed.root 'deployment-readiness-startup.json') -Raw | ConvertFrom-Json
+        $report.counts.verified | Should -Be 0
+        $report.counts.failures.IdentityMismatch | Should -Be 1
+        $report.counts.failures.Timeout | Should -Be 1
+        $report.endpoints.'https://probe.invalid/health/ready' | Should -Be 'IdentityMismatch'
+    }
+
+    It 'blocks an invalid secondary before recording deployment intent' {
+        $fixture.site.Bindings[1].CertificateHash=$null
+        $deploy=New-LifecycleRelease $fixture 1
+        { Invoke-ClcIisDeployment @deploy } | Should -Throw -ErrorId 'Clc.HostNotReady*'
+        (Get-LifecycleState $fixture).pending | Should -BeNullOrEmpty
+        $fixture.operations.Count | Should -Be 0
+    }
+
+    It 'retains a pending attempt when an otherwise valid binding drifts during activation' {
+        Mock Invoke-ClcReadinessRequests -ModuleName Clc.Deployment {
+            $global:ClcTestLifecycle.site.Bindings[1].EndPoint=[Net.IPEndPoint]::new([ipaddress]::Any,8443)
+            foreach ($body in $global:ClcTestLifecycle.responses.Values) {
+                @{Accepted=$true;Status='';Bytes=[Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json))}
+                @{Accepted=$false;Status='Timeout'}
+            }
+        }
+        $deploy=New-LifecycleRelease $fixture 1
+        { Invoke-ClcIisDeployment @deploy } | Should -Throw -ErrorId 'Clc.IisSettings*'
+        (Get-LifecycleState $fixture).pending | Should -Not -BeNullOrEmpty
+        $fixture.iis.siteAutoStart | Should -BeFalse
     }
 
     It 'holds the real exclusive lock and refuses a competing deployment' {
@@ -368,6 +447,11 @@ Describe 'Deployment and recovery with native NTFS and synthetic IIS' {
     }
 
     It 'restores a verified prior release explicitly after failed activation' {
+        $legacy=Get-Content $fixture.layout.hostRecord -Raw | ConvertFrom-Json -AsHashtable
+        $legacy.schemaVersion=1
+        $legacy.readinessUri='https://retired.invalid/health/ready'
+        Write-TestJson $fixture.layout.hostRecord $legacy
+        $originalHost=(Get-FileHash $fixture.layout.hostRecord).Hash
         $first=New-LifecycleRelease $fixture 1
         $former=Invoke-ClcIisDeployment @first
         $previous=Get-TestTreeHashes $fixture.layout.application
@@ -380,6 +464,8 @@ Describe 'Deployment and recovery with native NTFS and synthetic IIS' {
         $fixture.health=$true
         $result=Restore-ClcIisDeployment @identity -AttemptId $failed.id -Reason 'incident-456'
         $result.status | Should -Be 'RestoredPrevious'
+        (Get-FileHash $fixture.layout.hostRecord).Hash | Should -BeExactly $originalHost
+        $result.readiness.verified | Should -Be 1
         $originalJournal=Get-Content -LiteralPath (Join-Path $failed.root 'before-recovery.json') -Raw | ConvertFrom-Json
         $originalJournal.phase | Should -Be 'Checking'
         $originalJournal.errorCode | Should -Be 'Clc.ReadinessFailed'

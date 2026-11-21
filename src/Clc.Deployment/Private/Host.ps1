@@ -253,9 +253,8 @@ function Open-ClcHostContext {
             if ((Resolve-ClcRuntimeSid $resources.pool.ProcessModel.UserName) -cne $sid) { Stop-ClcError Clc.RuntimeIdentity 'The pool identity must resolve to the expected service account.' }
             Assert-ClcRuntimeIdentity $sid
         } catch { $findings.Add(@{code='Clc.RuntimeIdentity';message='Configure the expected distinct nonadministrator service account in IIS Manager and verify account resolution.'}); $sid=$null }
-        if (-not (Test-ClcIisHttpsBinding $manager $resources.site ([uri]$target.readinessUri))) {
-            $findings.Add(@{code='Clc.HttpsBinding';message='Configure one dedicated HTTPS binding for the readiness hostname and port with an unexpired matching LocalMachine TLS certificate and private key.'})
-        }
+        $bindings=Get-ClcIisBindingSnapshot $manager $resources.site
+        foreach ($finding in $bindings.findings) { $findings.Add($finding) }
         if (-not (Test-ClcStorageEntry $layout.config)) {
             $findings.Add(@{code='Clc.ConfigurationMissing';message='Provision Config\application.json and the application dependencies before deployment.'})
         } else {
@@ -275,7 +274,7 @@ function Open-ClcHostContext {
             $findings.Add(@{code='Clc.IisEnvironment';message='Set the expected ASP.NET Core environment on the dedicated pool. Remove conflicting .NET environment overrides.'})
         }
         $iis=Get-ClcIisState $manager $resources
-        $context=@{target=$target;layout=$layout;siteId=$target.siteId;runtimeSid=$sid;dotnet=$runtime;environment=$RuntimeEnvironment;
+        $context=@{bindings=$bindings;readiness=$null;target=$target;layout=$layout;siteId=$target.siteId;runtimeSid=$sid;dotnet=$runtime;environment=$RuntimeEnvironment;
             ignoreLiveWebConfig=[bool]$Recovery;iis=$iis;state=$state;findings=$findings.ToArray()}
         Assert-ClcHostState $context -Recovery:$Recovery
         return $context

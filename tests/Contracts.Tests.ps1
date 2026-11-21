@@ -30,3 +30,20 @@ Describe 'Versioned package and companion contracts' {
         { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json -Depth 8))) 'release-metadata' } | Should -Throw -ErrorId 'Clc.InvalidContract*'
     }
 }
+
+Describe 'Strict versioned host record contracts' {
+    It 'rejects malformed host record <_>' -ForEach @('extra','missing','legacyMissing','legacyUrl','version','type','foreign') {
+        $record=@{schemaVersion=2;recordKind='host';applicationId='probe';targetId='probe-dev';siteName='Custom';
+            applicationPoolName='Pool';applicationRoot='C:\ProgramData\clc-probe\Application';siteId=42}
+        switch ($_) {
+            extra { $record.readinessUri='https://old.invalid/health/ready' }
+            missing { $record.Remove('siteId') }
+            legacyMissing { $record.schemaVersion=1 }
+            legacyUrl { $record.schemaVersion=1;$record.readinessUri='http://old.invalid/health/ready' }
+            version { $record.schemaVersion=3 }
+            type { $record.schemaVersion='2' }
+            foreign { $record.recordKind='attempt' }
+        }
+        { Invoke-TestRecord ([Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json))) host } | Should -Throw
+    }
+}

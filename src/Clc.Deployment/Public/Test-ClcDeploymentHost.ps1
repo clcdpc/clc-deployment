@@ -10,6 +10,8 @@ function Test-ClcDeploymentHost {
     $result=[ordered]@{applicationId=$ApplicationId;targetId=$TargetId;status='InvalidConfiguration';ready=$false;findings=@()}
     try {
         $context=Open-ClcHostContext $ApplicationId $TargetId $ExpectedRuntimeAccount $RuntimeEnvironment
+        $result.configuredBindings=$context.bindings.configured
+        $result.validBindings=$context.bindings.valid
         $result.root=$context.layout.root
         $result.site=$context.target.siteName
         $result.applicationPool=$context.target.applicationPoolName
