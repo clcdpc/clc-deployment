@@ -1,4 +1,4 @@
-if ($null -eq ('Clc.Lifecycle.Native' -as [type])) {
+if ($null -eq ('Clc.Lifecycle.V2.Native' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
-namespace Clc.Lifecycle {
+namespace Clc.Lifecycle.V2 {
     public sealed class Captured { public byte[] Bytes; public bool Overflow; }
     public sealed class Running { public Process Process; public Task<Captured> Output, Errors; }
     public sealed class ValidationOutput { public byte[] Bytes; public bool Failed; public bool Overflow; }
@@ -105,11 +105,11 @@ namespace Clc.Lifecycle {
 
 function Start-ClcApplicationValidator {
     param($Context,[string] $Dll)
-    return [Clc.Lifecycle.Native]::Validator($Context.dotnet,$Dll,$Context.layout.config,$Context.layout.keys,$Context.environment)
+    return [Clc.Lifecycle.V2.Native]::Validator($Context.dotnet,$Dll,$Context.layout.config,$Context.layout.keys,$Context.environment)
 }
 function Complete-ClcApplicationValidator {
     param($Running)
-    return [Clc.Lifecycle.Native]::Finish($Running,30000)
+    return [Clc.Lifecycle.V2.Native]::Finish($Running,30000)
 }
 function Assert-ClcHelperExited {
     param($Helper)
@@ -156,7 +156,7 @@ function Invoke-ClcApplicationValidation {
 }
 function Invoke-ClcReadinessRequests {
     param([string[]] $Endpoints,[int] $Milliseconds)
-    return [Clc.Lifecycle.Native]::ProbeAll($Endpoints,$Milliseconds)
+    return [Clc.Lifecycle.V2.Native]::ProbeAll($Endpoints,$Milliseconds)
 }
 function Test-ClcReadinessIdentity {
     param([byte[]] $Bytes, $Manifest, $Configuration)

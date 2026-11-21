@@ -192,6 +192,19 @@ function Test-ClcCertificateIdentity {
         $Certificate.MatchesHostname($Hostname,$true,$false)
 }
 
+function Test-ClcBindingTrust {
+    param([Security.Cryptography.X509Certificates.X509Certificate2] $Certificate,
+        [Security.Cryptography.X509Certificates.X509Chain] $Chain)
+    # Read-only preflight uses local trust and cached revocation data. Each HTTPS
+    # request independently performs the platform's online TLS checks.
+    $policy=$Chain.ChainPolicy
+    $policy.DisableCertificateDownloads=$true
+    $policy.RevocationMode='Offline'
+    $policy.VerificationFlags='IgnoreEndRevocationUnknown, IgnoreCertificateAuthorityRevocationUnknown, IgnoreRootRevocationUnknown'
+    $null=$policy.ApplicationPolicy.Add([Security.Cryptography.Oid]::new('1.3.6.1.5.5.7.3.1'))
+    return $Chain.Build($Certificate)
+}
+
 function Test-ClcBindingCertificate {
     param($Binding,[string] $Hostname)
     $inventory=$null; $certificates=$null
@@ -200,7 +213,10 @@ function Test-ClcBindingCertificate {
         $store.Open('ReadOnly, OpenExistingOnly')
         $inventory=$store.Certificates
         $certificates=$inventory.Find('FindByThumbprint',[Convert]::ToHexString($Binding.CertificateHash),$false)
-        return $certificates.Count -eq 1 -and (Test-ClcCertificateIdentity $certificates[0] $Hostname)
+        if ($certificates.Count -ne 1 -or -not (Test-ClcCertificateIdentity $certificates[0] $Hostname)) { return $false }
+        $chain=[Security.Cryptography.X509Certificates.X509Chain]::new($true)
+        try { return Test-ClcBindingTrust $certificates[0] $chain }
+        finally { $chain.Dispose() }
     } catch { return $false }
     finally {
         foreach ($certificate in $certificates) { $certificate.Dispose() }
@@ -230,11 +246,12 @@ function Get-ClcIisBindingSnapshot {
             }
             $port=$binding.EndPoint.Port
             $address=$binding.EndPoint.Address
+            if ($address.IsIPv4MappedToIPv6) { $address=$address.MapToIPv4() }
             $uri=[UriBuilder]::new('https',$name,$port,'/health/ready').Uri.AbsoluteUri
             $thumbprint=if ($null -ne $binding.CertificateHash) { [Convert]::ToHexString($binding.CertificateHash) }
             $valid=$binding.CertificateStoreName -match '^[a-z0-9]+$' -and $thumbprint -and
                 (Test-ClcBindingCertificate $binding $name)
-            if (-not $valid) { $null=$messages.Add('Verify every binding has a current hostname-matching LocalMachine certificate with its private key.') }
+            if (-not $valid) { $null=$messages.Add('Verify every binding has a trusted server certificate and private key in LocalMachine. Check the hostname, dates and installed chain.') }
             $signature="$uri|$address|$([int]$binding.SslFlags)|$($binding.CertificateStoreName)|$thumbprint"
             $entries.Add(@{name=$name;port=$port;address=$address;sni=([int]$binding.SslFlags -eq 1);uri=$uri;signature=$signature;valid=$valid})
         }
@@ -250,6 +267,7 @@ function Get-ClcIisBindingSnapshot {
                 $name=ConvertTo-ClcBindingHostname $binding.Host
                 $wildcardSuffix=if ($binding.Host -and $binding.Host.StartsWith('*.')) { ConvertTo-ClcBindingHostname $binding.Host.Substring(2) }
                 $address=$binding.EndPoint.Address
+                if ($address.IsIPv4MappedToIPv6) { $address=$address.MapToIPv4() }
                 $port=$binding.EndPoint.Port
                 foreach ($entry in $entries) {
                     if ($entry.port -ne $port) { continue }
