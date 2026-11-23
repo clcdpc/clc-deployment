@@ -24,10 +24,11 @@ function Assert-ClcEffectContext {
         $resources=Get-ClcIisResources $manager $target
         Assert-ClcIisOwnership $manager $target $resources
         Assert-ClcIisPhysicalIsolation $manager $target
+        $bindings=Get-ClcIisBindingSnapshot $manager $resources.site
         if ($resources.site.Id -ne $Context.siteId -or -not (Test-ClcIisPoolSettings $resources.pool) -or
             $resources.pool.ProcessModel.IdentityType.ToString() -cne 'SpecificUser' -or
             (Resolve-ClcRuntimeSid $resources.pool.ProcessModel.UserName) -cne $Context.runtimeSid -or
-            -not (Test-ClcIisHttpsBinding $manager $resources.site ([uri]$target.readinessUri)) -or
+            $bindings.findings.Count -gt 0 -or $bindings.signature -cne $Context.bindings.signature -or
             -not (Test-ClcIisEnvironment $manager $resources $Context.environment -SkipApplicationConfiguration:$Context.ignoreLiveWebConfig)) {
             Stop-ClcError Clc.IisSettings 'The site, pool, runtime account or HTTPS binding changed during deployment.'
         }
@@ -75,21 +76,22 @@ function Stop-ClcApplication {
 }
 
 function Start-ClcApplication {
-    param($Context,$Manifest,$Configuration)
+    param($Context,$Manifest,$Configuration,[string] $DiagnosticPrefix)
     $Context.ignoreLiveWebConfig=$false
     Assert-ClcReplacementSafe $Context
     Invoke-ClcIisChange $Context StartPool
     Invoke-ClcIisChange $Context StartSite
     $null=Wait-ClcIisState $Context Started
-    $null=Wait-ClcApplicationReady $Context $Manifest $Configuration
+    $null=Wait-ClcApplicationReady $Context $Manifest $Configuration ($DiagnosticPrefix+'-startup.json')
     Assert-ClcEffectContext $Context
     $null=Get-ClcTreeInventory $Context.layout.application $Manifest.files -RuntimeSid $Context.runtimeSid
     Invoke-ClcIisChange $Context EnableStartup
-    $iis=Wait-ClcApplicationReady $Context $Manifest $Configuration
+    $iis=Wait-ClcApplicationReady $Context $Manifest $Configuration ($DiagnosticPrefix+'-commissioned.json')
     if (-not $iis.siteAutoStart -or -not $iis.poolAutoStart -or $iis.siteState -cne 'Started' -or
         $iis.poolState -cne 'Started' -or $iis.workerCount -ne 1) {
         Stop-ClcError Clc.IisStateUnknown 'Could not confirm the commissioned IIS site, pool, worker and automatic-start flags.'
     }
+    Assert-ClcEffectContext $Context
     return $iis
 }
 
@@ -117,6 +119,7 @@ function New-ClcDeploymentResult {
     param([string] $Status,$Context,$Reference,$Paths,$Iis,[string] $ReleaseId)
     return [pscustomobject][ordered]@{status=$Status;applicationId=$Context.target.applicationId;targetId=$Context.target.targetId;
         releaseId=$ReleaseId;attemptId=$Reference.attemptId;retainedPath=$Paths.root;siteState=$Iis.siteState;poolState=$Iis.poolState;
+        configuredBindings=$Context.bindings.configured;validBindings=$Context.bindings.valid;readiness=$Context.readiness;
         workerCount=$Iis.workerCount;siteAutoStart=$Iis.siteAutoStart;poolAutoStart=$Iis.poolAutoStart}
 }
 function Stop-ClcFailedAttempt {

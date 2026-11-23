@@ -6,19 +6,14 @@ Use a dedicated Windows Server 2022 x64 IIS server for each target. Install IIS,
 
 ## 2. Preview and initialize
 
-Choose the names and readiness hostname for the target explicitly. The following uses a fictional application.
+Both IIS names default to the application ID. For SSRS Web on its DEV server, run:
 
-```powershell
-$target = @{
-    ApplicationId = 'example-app'
-    TargetId = 'example-app-dev'
-    SiteName = 'Example App DEV'
-    ApplicationPoolName = 'ExampleApp.Dev'
-    ReadinessUri = 'https://example-app-dev.example.org/health/ready'
-}
-Initialize-ClcDeploymentHost -Operation Preview @target
-Initialize-ClcDeploymentHost -Operation Initialize @target
-```
+~~~powershell
+Initialize-ClcDeploymentHost -Operation Preview -ApplicationId ssrs-web -TargetId ssrs-web-dev
+Initialize-ClcDeploymentHost -Operation Initialize -ApplicationId ssrs-web -TargetId ssrs-web-dev
+~~~
+
+Use `-SiteName` or `-ApplicationPoolName` independently for a new installation that needs a different name. On an initialized host, omitted names reuse the recorded names and explicit names must match.
 
 Review Preview's planned paths and IIS settings. For a blocked Preview, inspect the reported findings and existing resources. Completed initialization returns `InitializedNeedsConfiguration`. A matching repeat returns `AlreadyInitialized`. An incomplete scaffold requires manual inspection. Preserve its evidence and account for every existing resource before deciding how to proceed.
 
@@ -26,7 +21,7 @@ The new site has zero bindings and the pool uses an inert ApplicationPoolIdentit
 
 ## 3. Configure the stopped site and pool
 
-In IIS Manager, configure the pool with the expected specific, distinct nonadministrator service account. Configure the site's dedicated HTTPS DNS hostname and port matching the readiness URI. Select an unexpired matching certificate with a private key from LocalMachine. Use a single HTTPS binding with a locally installed certificate. Set `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` to `Production` on the Production target. On the DEV target, match `devRuntimeEnvironment` in the consumer's `.clc/release.json`. The example uses `Production`, as required for the SSRS Web DEV pilot. Applications that use `Staging` on DEV can select it explicitly. Leave the site and pool stopped with both auto-start flags disabled for the first deployment. [Shared workflow routing](shared-release-orchestration.md)
+In IIS Manager, configure the pool with the expected specific, distinct nonadministrator service account. Add one or more HTTPS bindings with explicit DNS hostnames and ports. Select a current hostname-matching certificate with a private key in a local machine store for each. Install the server-authentication chain so local machine trust can validate it offline. Use SNI for distinct names sharing an address and port. Configure DNS to reach the managed site from the runner. Set `ASPNETCORE_ENVIRONMENT` or `DOTNET_ENVIRONMENT` to `Production` on the Production target. On the DEV target, match `devRuntimeEnvironment` in the consumer's `.clc/release.json`. The example uses `Production`, as required for the SSRS Web DEV pilot. Applications that use `Staging` on DEV can select it explicitly. Leave the site and pool stopped with both auto-start flags disabled for the first deployment. [Shared workflow routing](shared-release-orchestration.md)
 
 The administrator provides the application dependencies and operational settings. The app root is always under the operating system's ProgramData known folder. Assign the following access to the service account SID. Keep Administrators and SYSTEM as the trusted owners of protected paths.
 
@@ -45,8 +40,8 @@ Grant the runtime account only its required access. Provision existing Data Prot
 
 ```powershell
 $hostInputs = @{
-    ApplicationId = $target.ApplicationId
-    TargetId = $target.TargetId
+    ApplicationId = 'ssrs-web'
+    TargetId = 'ssrs-web-dev'
     ExpectedRuntimeAccount = $expectedServiceAccount
     RuntimeEnvironment = 'Production'
 }
